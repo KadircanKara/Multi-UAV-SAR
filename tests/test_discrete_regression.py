@@ -14,9 +14,11 @@ N_PROB_STEPS = 31
 
 
 def test_discrete_metrics_unchanged(small_solution):
+    from SensingReplay import SensingConfig
     m, _ = sensing_and_discrete_info_sharing(
-        small_solution, merging_strategy="onboard",
-        target_locations=[12], B=0.7, p=0.7, q=0.2)
+        small_solution,
+        SensingConfig(merge_topology="onboard", time_model="discrete", target_locations=[12],
+                      belief_threshold=0.7, detection_prob=0.7, false_alarm_prob=0.2))
     for key, expected in SNAPSHOT.items():
         assert m[key] == expected, f"{key} drifted: {m[key]} != {expected}"
     assert int(np.sum(m["occupancy status"])) == OCCUPANCY_SUM

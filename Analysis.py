@@ -1,4 +1,5 @@
 from Sensing import sensing_and_discrete_info_sharing, sensing_and_realtime_info_sharing
+from SensingReplay import SensingConfig
 from PathSolution import *
 from PathFileManagement import load_pickle
 from FilePaths import *
@@ -68,8 +69,10 @@ def get_path_snapshot_at_step(B, p, p0, model, direction, objective, n_targets, 
     # Randomly select target locations
     target_locations = np.random.choice(range(1, 64), n_targets, replace=False)
 
-    # TODO(Task 11): replace hardcoded topology with SensingConfig.merge_topology
-    time_metrics, new_sol = sensing_and_discrete_info_sharing(sol=sol, merging_strategy="onboard", target_locations=target_locations, B=B, p=p, q=q)
+    cfg = SensingConfig.from_info(sol.info, merge_topology="onboard", time_model="discrete",
+                                  target_locations=target_locations,
+                                  detection_prob=p, false_alarm_prob=q, belief_threshold=B)
+    time_metrics, new_sol = sensing_and_discrete_info_sharing(sol=sol, config=cfg)
 
     # Draw paths and grid (copy from PathAnimation)
 
@@ -162,8 +165,10 @@ def animate_mission(B, p, p0, model, direction, objective, n_targets, number_of_
     # Randomly select target locations
     target_locations = np.random.choice(range(1, 64), n_targets, replace=False)
 
-    # TODO(Task 11): replace hardcoded topology with SensingConfig.merge_topology
-    time_metrics, new_sol = sensing_and_discrete_info_sharing(sol=sol, merging_strategy="onboard", target_locations=target_locations, B=B, p=p, q=q)
+    cfg = SensingConfig.from_info(sol.info, merge_topology="onboard", time_model="discrete",
+                                  target_locations=target_locations,
+                                  detection_prob=p, false_alarm_prob=q, belief_threshold=B)
+    time_metrics, new_sol = sensing_and_discrete_info_sharing(sol=sol, config=cfg)
 
     # print(time_metrics["detection time"])
 
@@ -366,14 +371,14 @@ def plot_time_metrics_specific_models(n_runs, p0, B_list, p_list, comm_range_lis
                                     F = pd.read_pickle(f"{objective_values_filepath}{scenario}-ObjectiveValues.pkl")
                                     X = pd.read_pickle(f"{solutions_filepath}{scenario}-SolutionObjects.pkl")
                                     sol = X[F[objective].idxmin()] if direction=="Best" else X[get_median_index_of_scenario(scenario)]
-                                    # TODO(Task 11): replace hardcoded topology with SensingConfig.merge_topology
-                                    if merging_strategy == "discrete":
-                                        time_metrics, updated_sol = sensing_and_discrete_info_sharing(sol=sol, merging_strategy="onboard", target_locations=target_locations, B=B, p=p, q=q)
-                                    elif merging_strategy == "realtime":
-                                        time_metrics, updated_sol = sensing_and_realtime_info_sharing(sol=sol, merging_strategy="onboard", target_locations=target_locations, B=B, p=p, q=q)
+                                    cfg = SensingConfig.from_info(sol.info, merge_topology="onboard",
+                                                                  time_model=merging_strategy,
+                                                                  target_locations=target_locations,
+                                                                  detection_prob=p, false_alarm_prob=q, belief_threshold=B)
+                                    if cfg.time_model == "discrete":
+                                        time_metrics, updated_sol = sensing_and_discrete_info_sharing(sol=sol, config=cfg)
                                     else:
-                                        print("Incorrect merging strategy: 'discrete' or 'realtime' allowed")
-                                        return
+                                        time_metrics, updated_sol = sensing_and_realtime_info_sharing(sol=sol, config=cfg)
                                     # print(f"Run {run+1} Target Locations: {target_locations} Model: {model['Exp']} {objective_name_legend_dict[objective]} Path")
                                     y_detection_time[y_ind][number_of_drones_no] += time_metrics["detection time"] if time_metrics["detection time"] != np.inf else 0
                                     y_inform_time[y_ind][number_of_drones_no] += time_metrics["inform time"] if time_metrics["inform time"] != np.inf else 0
