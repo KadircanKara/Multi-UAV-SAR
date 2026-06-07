@@ -227,6 +227,59 @@ scenario dict ──> PathUnitTest ──> Results/{Solutions,Objectives,...}/<s
   when they arrive).
 - `Analysis.py` structural refactor.
 
+## Addendum A (2026-06-07): Realtime pipeline completion
+
+Investigation (Explore + Plan agents, claims verified against code) answered:
+*does `time_model` genuinely affect sensing calculations?* **Yes — and the
+realtime pipeline is genuinely distinct but was abandoned mid-implementation.**
+Realtime uses continuous interpolated positions (`get_real_paths`,
+`Time.py:227-259`, ~1-second resolution by construction), per-second dynamic
+connectivity (`get_real_connectivity_matrix`, `Time.py:493-513`) so drones can
+merge **mid-flight between cells** (the value proposition of realtime merging),
+and sparse Bayesian sensing only at on-grid positions. It is never exercised
+by current experiment code and cannot currently produce correct metrics.
+Completing it is **added to this round's scope** — `time_model='realtime'`
+must work, not just dispatch.
+
+### Verified defects
+
+| # | Defect | Evidence |
+|---|---|---|
+| A1 | `deepcopy` never imported (`from copy import copy` then `import copy` shadowing, `Sensing.py:13-14`) — **both pipelines crash on entry today** | `'deepcopy' in dir(Sensing)` → False; `Sensing.py:124,386` |
+| A2 | Realtime early-return detection never fires (Python `list == int` → `False`, not elementwise) → Effective Mission Time always `inf` | `Sensing.py:357,361` |
+| A3 | Realtime return dict omits `"cell occupancy probabilities"` (required by ReplayResult for belief plots/animations) | `Sensing.py:382` vs `:531` |
+| A4 | `isCoordinateDiscrete` uses exact float equality on interpolated coords → silent under-sensing risk | `Time.py:9-15` |
+| A5 | ~100 lines of abandoned/commented code inside the realtime function, incl. an unfinished identifier | `Sensing.py:219-242,271-278,310-354` |
+| A6 | Leg-seam double-sensing: `get_real_paths` uses endpoint-inclusive `linspace`, so leg i's last column == leg i+1's first column → the same physical cell arrival is sensed twice, inflating `n_obs` | `Time.py:242-252` |
+| — | **Not** a defect: realtime's 1-second-per-step mission time is correct by construction (interpolation density is `ceil(dist/speed)`); only `ceil` rounding makes it slightly coarser than discrete | `Sensing.py:267-270` |
+
+### Decisions
+
+| # | Decision | Rationale |
+|---|---|---|
+| AD1 | Return-dict contract: both pipelines return the same 7 keys (`cell occupancy probabilities`, `search map`, `occupancy status`, `detection time`, `inform time`, `mission time`, `time at least one drone knows all targets`) plus the mutated solution copy. `replay()` must not know which pipeline ran. | Uniform dispatch in `SensingReplay`. |
+| AD2 | Keep the all-drones-aligned `discrete_step` concept (geometrically sound: `get_real_paths` gives every drone the same `dt` per leg) but gate sensing on *cell change since previous column* (kills the A6 seam double-count) and compute `n_obs` from discrete-path arrivals exactly as the discrete pipeline does — same arrival ⇒ same `n_obs` in both pipelines. | Cross-pipeline parity must be testable. |
+| AD3 | Realtime early-return truncation also rewrites `x.real_time_path_matrix` (discrete recipe, `Sensing.py:503-508`) and stashes truncated realtime arrays on the solution — because `PathAnimation` re-derives trajectories via `get_real_paths(sol)`, this is what makes animations show the early return. The bare `try/except` around the path rewrite becomes explicit length reconciliation. | Animations are a primary spec artifact. |
+| AD4 | Extract only four provably-identical helpers shared by both loops (search-map init, occupancy status + per-cell max probs, detection-time update, metric finalization); do **not** merge the two loops. Discrete behavior locked by a regression snapshot test before refactoring. | Spec requires discrete behavior preservation; full merge is high-risk. |
+| AD5 | Preserve `merge_maps` being called every interpolated second in realtime (only sensing is on-grid-gated; merging is not). A dedicated test pins mid-flight merging — two drones within comm range between cells must exchange beliefs. | This is the realtime-vs-discrete behavioral distinction. |
+| AD6 | No `realtime ≤ discrete` detection-time assertion: realtime senses sparser per wall-clock second but shares earlier — the effects fight, the sign is solution-dependent. Test only provable invariants. | Honest tests. |
+
+### Additional tests (extends the Testing section)
+
+5. **Contract:** both pipelines return identical metric key sets; realtime
+   runs without `NameError`; realtime Effective Mission Time finite (and ≤
+   planned `sol.mission_time`) on a fixture that triggers early return;
+   detection time finite when a target lies on a visited cell, `inf` when not.
+6. **Within-time-model property:** onboard detection ≤ none detection holds
+   inside realtime as well (append-only merging argument unchanged).
+7. **Mid-flight merge distinction (AD5):** belief transfer observed at a step
+   where neither drone is on a grid coordinate.
+8. **Discrete regression snapshot (AD4):** discrete metrics byte-identical
+   before/after helper extraction.
+9. **Animation-shape consistency (AD3):** after a realtime early return,
+   `get_real_paths(x)` yields the truncated trajectory and
+   `cell occupancy probabilities` column counts line up with it.
+
 ## Future considerations
 
 - The FastAPI view-section endpoint wraps `compare()`; importance sliders wrap
