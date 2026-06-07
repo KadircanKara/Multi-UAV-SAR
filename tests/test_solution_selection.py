@@ -92,3 +92,38 @@ def test_balanced_centroid_nearest():
     # centroid = (.5,.5) -> nearest is index 2 exactly.
     idx, sol, label = front_selector().balanced()
     assert idx == 2
+
+
+def test_by_weights_one_hot_equals_best():
+    sel = front_selector()
+    idx_w, _, _ = sel.by_weights({"Mission Time": 1.0})
+    idx_b, _, _ = sel.best("Mission Time")
+    assert idx_w == idx_b
+
+
+def test_by_weights_validates_keys_and_zeroes():
+    sel = front_selector()
+    with pytest.raises(StrategyUnavailableError):
+        sel.by_weights({"Nonexistent Objective": 1.0})
+    with pytest.raises(StrategyUnavailableError):
+        sel.by_weights({"Mission Time": 0.0})
+
+
+def test_knee_on_kneed_front():
+    # Convex front with a pronounced knee at index 1.
+    F = pd.DataFrame({"Mission Time": [100.0, 120.0, 300.0, 500.0],
+                      "Percentage Connectivity": [-0.20, -0.80, -0.85, -0.90]})
+    sel = SolutionSelector(F, list("abcd"), TC_MOO_NSGA2)
+    idx, sol, label = sel.knee()
+    assert idx == 1
+
+
+def test_knee_falls_back_to_balanced_with_warning():
+    # Perfectly linear front: HighTradeoffPoints().do returns None (verified
+    # against pymoo 0.6.1.6 in this venv).
+    F = pd.DataFrame({"Mission Time": [100.0, 200.0, 300.0],
+                      "Percentage Connectivity": [-0.9, -0.5, -0.1]})
+    sel = SolutionSelector(F, list("abc"), TC_MOO_NSGA2)
+    with pytest.warns(UserWarning, match="balanced"):
+        idx, sol, label = sel.knee()
+    assert label == "Balanced (knee fallback)"

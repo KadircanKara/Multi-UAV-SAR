@@ -103,6 +103,48 @@ class SolutionSelector:
         idx = int(np.argmin(dists))
         return idx, self.solutions[idx], "Balanced"
 
-    def by_weights(self, weights):
+    def by_weights(self, weights: dict):
         self._require_front("by_weights")
-        raise NotImplementedError  # completed in Task 17
+        from pymoo.mcdm.pseudo_weights import PseudoWeights
+        unknown = set(weights) - set(self.model["F"])
+        if unknown:
+            raise StrategyUnavailableError(
+                f"Unknown objective(s) {sorted(unknown)}; valid: {list(self.model['F'])}")
+        w = np.array([float(weights.get(name, 0.0)) for name in self.model["F"]])
+        if w.sum() <= 0:
+            raise StrategyUnavailableError("at least one weight must be positive")
+        w = w / w.sum()
+        idx = int(PseudoWeights(w).do(self.F.values))
+        pretty = {name: round(float(wi), 3) for name, wi in zip(self.model["F"], w)}
+        return idx, self.solutions[idx], f"Weights {pretty}"
+
+    def knee(self):
+        self._require_front("knee")
+        if self.F.shape[1] < 2 or len(self.solutions) < 3:
+            raise StrategyUnavailableError(
+                "knee() needs >= 2 objectives and >= 3 solutions on the front")
+        from pymoo.mcdm.high_tradeoff import HighTradeoffPoints
+        try:
+            # HighTradeoffPoints uses raw values for neighbor-finding (no built-in
+            # normalization), so normalize to [0,1] per objective first.
+            # Wrap in catch_warnings: pymoo._do calls warnings.filterwarnings('ignore')
+            # globally, which would swallow our UserWarning if emitted afterwards.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                idxs = HighTradeoffPoints().do(self._normalized_F().values)
+        except Exception:
+            idxs = None    # numerically degenerate fronts: treat as no knee
+        if idxs is None or len(np.atleast_1d(idxs)) == 0:
+            warnings.warn("No high-tradeoff point found; falling back to balanced().",
+                          UserWarning, stacklevel=2)
+            idx, sol, _ = self.balanced()
+            return idx, sol, "Balanced (knee fallback)"
+        idxs = np.atleast_1d(idxs)
+        if len(idxs) > 1:    # spec: nearest-to-centroid among knee candidates
+            F_norm = self._normalized_F()
+            centroid = F_norm.mean(axis=0)
+            d = np.linalg.norm(F_norm.values[idxs] - centroid.values, axis=1)
+            idx = int(idxs[int(np.argmin(d))])
+        else:
+            idx = int(idxs[0])
+        return idx, self.solutions[idx], "Knee"
