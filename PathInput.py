@@ -1,9 +1,7 @@
 from PathOptimizationModel import *
 
-# CHANGE ALGORITHM INPUTS FROM HERE
-
-# MODEL
-model = TCDT_MOO_NSGA2# TCDT_MOO_NSGA2
-# ALG
+# Select the optimization model by registry name (see list_models()).
+model_name = "TCDT_MOO_NSGA2"
+model = AVAILABLE_MODELS[model_name]
 pop_size = 250
 n_gen = 800

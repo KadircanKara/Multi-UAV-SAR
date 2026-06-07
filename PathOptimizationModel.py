@@ -268,3 +268,22 @@ CD_MOO_NSGA3 = {
 
 # objectives = get_objectives_from_weighted_sum_model(TCDT_SOO_GA)
 # ws = get_weighted_sum_objective_name_from_objectives(objectives)
+
+# --- Model registry (spec section 5): the ready-made, tried-and-tested models.
+AVAILABLE_MODELS = {
+    "MTSP": MTSP, "CONN": CONN,
+    "TC_WS": TC_WS, "TC_MOO_NSGA2": TC_MOO_NSGA2, "TC_MOO_NSGA3": TC_MOO_NSGA3,
+    "TT_WS": TT_WS, "TT_MOO_NSGA2": TT_MOO_NSGA2, "TT_MOO_NSGA3": TT_MOO_NSGA3,
+    "TCT_WS": TCT_WS, "TCT_MOO_NSGA2": TCT_MOO_NSGA2, "TCT_MOO_NSGA3": TCT_MOO_NSGA3,
+    "TCDT_WS": TCDT_WS, "TCDT_MOO_NSGA2": TCDT_MOO_NSGA2, "TCDT_MOO_NSGA3": TCDT_MOO_NSGA3,
+    "TCD_WS": TCD_WS, "TCD_MOO_NSGA2": TCD_MOO_NSGA2, "TCD_MOO_NSGA3": TCD_MOO_NSGA3,
+    "CD_WS": CD_WS, "CD_MOO_NSGA2": CD_MOO_NSGA2, "CD_MOO_NSGA3": CD_MOO_NSGA3,
+}
+
+
+def list_models():
+    """Dropdown-ready model metadata (one row per ready-made model)."""
+    rows = [{"name": name, "type": m["Type"], "algorithm": m["Alg"],
+             "objectives": list(m["F"]), "constraints": list(m["G"]) + list(m["H"])}
+            for name, m in AVAILABLE_MODELS.items()]
+    return pd.DataFrame(rows)
