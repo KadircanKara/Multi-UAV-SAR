@@ -1,0 +1,10 @@
+# Multi-UAV-SAR — runtime dependencies
+# Pin exact versions after first successful `pip install` in a clean venv.
+pymoo>=0.6.1,<0.7
+numpy>=1.24,<2.0   # pymoo 0.6.x compiled ops are not yet numpy>=2.0 safe; confirm in venv
+scipy>=1.10
+matplotlib>=3.7
+pandas>=2.0
+seaborn>=0.12
+autograd>=1.6      # used by PathProblem.py
+sympy>=1.12        # used by Report.py
