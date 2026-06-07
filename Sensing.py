@@ -58,12 +58,19 @@ def interpolate_between_cities(sol:PathSolution, city_prev, city):
     pass
 
 
-def merge_maps(conn_comp, search_map, merging_strategy="ondrone"):
+VALID_MERGE_TOPOLOGIES = ("none", "onboard", "gcs")
+
+def merge_maps(conn_comp, search_map, merge_topology="onboard"):
+    if merge_topology not in VALID_MERGE_TOPOLOGIES:
+        raise ValueError(
+            f"Unknown merge_topology {merge_topology!r}; valid: {VALID_MERGE_TOPOLOGIES}")
+    if merge_topology == "none":
+        return search_map
     number_of_nodes, number_of_cells = search_map.shape
     # number_of_nodes -= 1  # Exclude base station (node 0)
 
     for clique in conn_comp:
-        if merging_strategy == "gcs" and 0 not in clique:
+        if merge_topology == "gcs" and 0 not in clique:
             continue
 
         for cell in range(number_of_cells):
