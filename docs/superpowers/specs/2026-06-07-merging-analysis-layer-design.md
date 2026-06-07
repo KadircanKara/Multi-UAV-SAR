@@ -112,25 +112,39 @@ artifacts:
 `time_model` selects which pipeline runs; topology is forwarded to
 `merge_maps` — the two never share a parameter again.
 
-### 4. `SolutionSelector` (new `SolutionSelection.py`)
+### 4. `SolutionSelector` (new `SolutionSelection.py`) — model-aware
 
 Constructed from a scenario's saved results (ObjectiveValues DataFrame +
-SolutionObjects list) or passed them directly.
+SolutionObjects list) **and the model dict**. The model and result shape
+determine which strategies exist; the selector is self-describing so UIs
+never hardcode these rules.
 
-| Method | Returns | Notes |
+```python
+selector.result_kind     # 'front' | 'single'
+selector.capabilities()  # machine-readable: which strategies are valid,
+                         # which objective names best() accepts, max index
+```
+
+`result_kind` is `'single'` when the model Type is SOO or WS, **or** when a
+MOO front collapsed to one non-dominated point (degenerate front — also
+surfaced as a warning, since it is a convergence signal for the engineer).
+
+| Method | Availability | Notes |
 |---|---|---|
-| `best(objective_name)` | extreme solution for that objective | Polarity-aware via `model_metric_info` (connectivity is maximized). |
-| `balanced()` | centroid-nearest solution | Delegates to existing `get_median_index_of_scenario` logic (`PathOptimizationModel.py:43-56`). |
-| `knee()` | high-tradeoff solution | `pymoo.mcdm.high_tradeoff`. Zero candidates → fall back to `balanced()` with a warning. Multiple → nearest to centroid among them. |
-| `by_weights({name: w, ...})` | pseudo-weight pick | `pymoo.mcdm.pseudo_weights` on polarity-normalized F. Keys validated against the model's objectives; weights normalized to sum 1. Maps to web-UI importance sliders. |
-| `by_index(i)` | direct pick | Bounds-checked. Maps to clicking a Pareto-front point. |
+| `best(objective_name)` | `'front'` only; `objective_name` must be in the model's F | Polarity-aware via `model_metric_info` (connectivity is maximized). Best-of-a-non-optimized-metric (e.g. `best('Max Mean TBV')` on a TC run) is rejected — the front was never shaped by it, so the answer would be a sampling accident. Error lists valid names. |
+| `balanced()` | `'front'` only | Delegates to existing centroid logic (`PathOptimizationModel.py:43-56`), which already asserts MOO. |
+| `knee()` | `'front'` only, ≥ 2 objectives, ≥ 3 points | `pymoo.mcdm.high_tradeoff`. Zero candidates → fall back to `balanced()` with a warning. Multiple → nearest to centroid among them. |
+| `by_weights({name: w, ...})` | `'front'` only | `pymoo.mcdm.pseudo_weights` on polarity-normalized F. Keys ⊆ model's F (missing = weight 0, at least one nonzero); normalized to sum 1. Maps to web-UI importance sliders. For WS models the error explains that weights were fixed at optimization time: re-run with different WS weights, or use the MOO variant to explore trade-offs interactively. |
+| `by_index(i)` | always | Bounds-checked against result size. Maps to clicking a Pareto-front point. |
+| `the_solution()` | `'single'` only | The only meaningful accessor for SOO/WS/degenerate results; the view section skips front navigation and goes straight to the merging comparison. |
 
-All methods return `(index, solution, label)`. WS/SOO models yield a single
-solution: the selector returns index 0 for every strategy (graceful
-degradation; the future view section skips front navigation for these).
+All methods return `(index, solution, label)`. Calling an unavailable
+strategy raises `StrategyUnavailableError` naming the reason and the valid
+alternatives; UIs are expected to consult `capabilities()` first.
 
 Front visualization guidance (for the later web round, recorded here):
-2 objectives → scatter; 3 → 3-D scatter; 4-5 (TCD/TCDT) → parallel coordinates.
+2 objectives → scatter; 3 → 3-D scatter; 4-5 (TCD/TCDT) → parallel
+coordinates; `'single'` results → solution card, no front plot.
 
 ### 5. Model registry (in `PathOptimizationModel.py`)
 
@@ -153,7 +167,8 @@ bug). No structural refactor in this round.
 ```
 scenario dict ──> PathUnitTest ──> Results/{Solutions,Objectives,...}/<scenario>-*.pkl
                                             │
-                       SolutionSelector(scenario) ── best()/balanced()/knee()/by_weights()/by_index()
+                       SolutionSelector(scenario, model) ── capabilities()-gated:
+                              best()/balanced()/knee()/by_weights()/by_index()/the_solution()
                                             │  (index, solution, label)
         SensingConfig.from_info(info, merge_topology=..., ...)  × N configs
                                             │
@@ -170,7 +185,12 @@ scenario dict ──> PathUnitTest ──> Results/{Solutions,Objectives,...}/<s
 - `merge_maps` raises `ValueError` on unknown topology (replacing today's
   silent anything-that-isn't-gcs-behaves-as-onboard).
 - `knee()` fallback to `balanced()` emits a warning naming the fallback.
-- `by_weights()` rejects weight keys not in the model's F.
+- Unavailable selection strategies raise `StrategyUnavailableError` with the
+  reason and valid alternatives (e.g., `by_weights` on a WS model explains
+  that WS weights are fixed pre-run and points to the MOO variant).
+- `by_weights()` rejects weight keys not in the model's F and all-zero weights.
+- Degenerate MOO fronts (single non-dominated point) downgrade the selector to
+  `'single'` kind with a warning — a convergence signal for the engineer.
 - Undetected targets yield `inf` metrics, rendered as `inf` in tables (and
   "not detected" in plots/legends), never silently dropped.
 - Old pickled solutions (pre-migration `PathInfo` without newer attributes)
@@ -186,7 +206,13 @@ scenario dict ──> PathUnitTest ──> Results/{Solutions,Objectives,...}/<s
 3. **Selector:** `best()` = polarity-aware argmin/argmax per F column;
    `balanced()` agrees with `get_median_index_of_scenario`; one-hot
    `by_weights()` picks the same solution as `best()` of that objective;
-   `by_index` bounds-checked; single-solution (WS) degradation returns index 0.
+   `by_index` bounds-checked.
+4. **Capability matrix:** SOO/WS selectors expose only
+   `the_solution()`/`by_index()` (no weights, knee, balanced, best); MOO
+   selectors expose all strategies; `best()` rejects objectives outside the
+   model's F (e.g. `Max Mean TBV` on TC); degenerate single-point MOO front
+   downgrades to `'single'` with a warning; unavailable strategies raise
+   `StrategyUnavailableError`.
 4. **Integration smoke:** tiny scenario (grid 8, 4 drones, few generations)
    end-to-end: optimize → select → `compare()` over the three topologies →
    assert table, plot files, and animation files exist.
