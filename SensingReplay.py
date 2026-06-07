@@ -60,6 +60,7 @@ class SensingConfig:
 
 @dataclass
 class ReplayResult:
+    """One sensing replay's outputs: spec-named metrics (Effective Mission Time etc.), per-step belief artifacts for plots/animations, and the truncated solution copy whose path matrices reflect any early return."""
     config: SensingConfig
     label: str
     effective_mission_time: float
@@ -67,8 +68,8 @@ class ReplayResult:
     inform_time: float
     time_at_least_one_drone_knows_all: float
     cell_occupancy_probabilities: list
-    occupancy_status: object        # np.ndarray (nodes x cells)
-    search_map: object              # np.ndarray of per-node observation lists
+    occupancy_status: np.ndarray    # (nodes x cells) int flags
+    search_map: np.ndarray          # (nodes x cells) object array of per-node observation lists
     solution: object                # truncated PathSolution copy (for animation)
 
 
