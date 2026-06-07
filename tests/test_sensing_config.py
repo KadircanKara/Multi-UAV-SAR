@@ -17,6 +17,9 @@ def test_defaults_valid():
     ("detection_prob", 1.0),
     ("false_alarm_prob", -0.1),
     ("belief_threshold", 1.5),
+    ("false_alarm_prob", 0.0),
+    ("false_alarm_prob", 1.0),
+    ("belief_threshold", 0.0),
 ])
 def test_invalid_values_raise(field, value):
     with pytest.raises(ValueError):
@@ -43,3 +46,8 @@ def test_from_info_tolerates_old_pickled_pathinfo(small_solution):
 def test_from_info_rejects_out_of_grid_target(small_solution):
     with pytest.raises(ValueError):
         SensingConfig.from_info(small_solution.info, target_locations=[999])
+
+
+def test_non_integer_targets_rejected():
+    with pytest.raises(ValueError):
+        SensingConfig(target_locations=[12.5])
