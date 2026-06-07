@@ -5,7 +5,7 @@ from pymoo.core.problem import ElementwiseProblem
 from scipy.spatial import distance
 from typing import List, Dict
 import itertools
-from math import sin, cos, atan2, ceil
+from math import sin, cos, atan2, ceil, floor
 from scipy import io
 # from scipy.stats import itemfreq
 import subprocess
