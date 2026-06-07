@@ -3,6 +3,7 @@
 The selector is self-describing via capabilities(); UIs must consult it instead
 of hardcoding which strategies exist for which model type.
 """
+import os
 import warnings
 
 import numpy as np
@@ -34,8 +35,17 @@ class SolutionSelector:
 
     @classmethod
     def from_scenario(cls, scenario: str, model: dict):
-        F = pd.read_pickle(f"{objective_values_filepath}{scenario}-ObjectiveValues.pkl")
-        solutions = load_pickle(f"{solutions_filepath}{scenario}-SolutionObjects.pkl")
+        obj_path = f"{objective_values_filepath}{scenario}-ObjectiveValues.pkl"
+        sol_path = f"{solutions_filepath}{scenario}-SolutionObjects.pkl"
+        missing = [p for p in (obj_path, sol_path) if not os.path.isfile(p)]
+        if missing:
+            raise FileNotFoundError(
+                f"No saved results for scenario {scenario!r} "
+                f"(missing: {', '.join(missing)}). Did the optimization run converge? "
+                f"Infeasible runs save nothing — PathUnitTest reports "
+                f"'NO SOLUTION FOUND' and writes no pickles.")
+        F = pd.read_pickle(obj_path)
+        solutions = load_pickle(sol_path)
         return cls(F, list(solutions), model)
 
     # --- capability discovery ------------------------------------------------

@@ -280,6 +280,17 @@ must work, not just dispatch.
    `get_real_paths(x)` yields the truncated trajectory and
    `cell occupancy probabilities` column counts line up with it.
 
+## Addendum B (2026-06-07): post-validation decisions
+
+A real NSGA-II run (TC_MOO_NSGA2, pop 200 × gen 300, 4-drone mutation tuning
+per main.py annotations) validated `SolutionSelector.from_scenario` against
+on-disk pickles end-to-end. Two findings, two decisions:
+
+| # | Decision | Rationale |
+|---|---|---|
+| B1 | `from_scenario` raises a clear `FileNotFoundError` ("Did the optimization run converge? Infeasible runs save nothing...") when a scenario has no saved results. | Infeasible runs (constraint violation never reaches 0) save no pickles; the raw pandas path error was unhelpful. The future web tool needs this distinction ("no results" vs "bad path"). |
+| B2 | **Owner-confirmed doctrine:** drones that know all target locations return to the GCS by going to **cell 0 first, then to the GCS position, to avoid going out of the map**. This containment detour is intended even though it can lengthen the discrete-replay Effective Mission Time relative to `none` (observed on real data: onboard 1178.8s vs none 1130.5s) while Inform Time improves dramatically (∞ → 76.6s). Not a defect; no straight-home option planned. | Map containment is a hard operational constraint of the mission model. |
+
 ## Future considerations
 
 - The FastAPI view-section endpoint wraps `compare()`; importance sliders wrap

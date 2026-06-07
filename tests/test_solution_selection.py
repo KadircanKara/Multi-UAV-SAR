@@ -127,3 +127,10 @@ def test_knee_falls_back_to_balanced_with_warning():
     with pytest.warns(UserWarning, match="balanced"):
         idx, sol, label = sel.knee()
     assert label == "Balanced (knee fallback)"
+
+
+def test_from_scenario_missing_results_clear_error():
+    # Infeasible/unrun scenarios save no pickles; the error must say so instead
+    # of leaking a raw pickle path (validated need: 2026-06-07 manual NSGA-II run).
+    with pytest.raises(FileNotFoundError, match="Did the optimization run converge"):
+        SolutionSelector.from_scenario("NO_SUCH_SCENARIO", TC_MOO_NSGA2)
