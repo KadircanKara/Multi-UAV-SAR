@@ -6,6 +6,10 @@ Merging parameters live HERE, never in the scenario dict / PathInfo / filenames
 import numpy as np
 from dataclasses import dataclass, field
 
+# Sensing is imported at module level: grep confirms Sensing.py does NOT import
+# SensingReplay, so there is no circular dependency.
+from Sensing import sensing_and_discrete_info_sharing, sensing_and_realtime_info_sharing
+
 VALID_MERGE_TOPOLOGIES = ("none", "onboard", "gcs")
 VALID_TIME_MODELS = ("discrete", "realtime")
 
@@ -52,3 +56,38 @@ class SensingConfig:
             if bad:
                 raise ValueError(f"target_locations {bad} outside grid (0..{n_cells - 1})")
         return cfg
+
+
+@dataclass
+class ReplayResult:
+    config: SensingConfig
+    label: str
+    effective_mission_time: float
+    detection_time: float
+    inform_time: float
+    time_at_least_one_drone_knows_all: float
+    cell_occupancy_probabilities: list
+    occupancy_status: object        # np.ndarray (nodes x cells)
+    search_map: object              # np.ndarray of per-node observation lists
+    solution: object                # truncated PathSolution copy (for animation)
+
+
+def replay(solution, config, label=None):
+    """Run one sensing replay. Dispatch is the ONLY thing that looks at
+    time_model — the pipelines satisfy one return contract (spec AD1)."""
+    if config.time_model == "discrete":
+        metrics, x = sensing_and_discrete_info_sharing(solution, config)
+    else:
+        metrics, x = sensing_and_realtime_info_sharing(solution, config)
+    return ReplayResult(
+        config=config,
+        label=label if label is not None else config.merge_topology,
+        effective_mission_time=metrics["mission time"],
+        detection_time=metrics["detection time"],
+        inform_time=metrics["inform time"],
+        time_at_least_one_drone_knows_all=metrics["time at least one drone knows all targets"],
+        cell_occupancy_probabilities=metrics["cell occupancy probabilities"],
+        occupancy_status=metrics["occupancy status"],
+        search_map=metrics["search map"],
+        solution=x,
+    )
