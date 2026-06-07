@@ -10,8 +10,7 @@ from Connectivity import get_connected_node_ids, connected_components, PathSolut
 # from Distance import interpolate_between_cities
 # from array_operations import create_array_of_lists
 import itertools
-from copy import copy
-import copy
+from copy import copy, deepcopy
 import math
 from math import inf, ceil, log10
 from scipy.optimize import linear_sum_assignment
