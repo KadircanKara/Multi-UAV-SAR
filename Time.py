@@ -6,13 +6,19 @@ from statistics import median_low
 from copy import deepcopy
 from math import inf, atan2, cos, sin, hypot
 
-def isCoordinateDiscrete(x, y, sol:PathSolution):
-    discrete_coords = [sol.get_coords(-1)[0] + sol.info.cell_side_length*i for i in range(sol.info.grid_size+1)]
-    # print(discrete_coords)
-    if x in discrete_coords and y in discrete_coords:
-        return True
-    else:
-        return False
+def isCoordinateDiscrete(x, y, sol: PathSolution, atol=None):
+    """True iff (x, y) lies on a grid cell center, within float tolerance.
+
+    atol defaults to a millionth of a cell side: far above linspace float
+    error, far below half a cell, so misclassification is impossible.
+    """
+    if atol is None:
+        atol = sol.info.cell_side_length * 1e-6
+    base = sol.get_coords(-1)[0]
+    discrete_coords = np.array(
+        [base + sol.info.cell_side_length * i for i in range(sol.info.grid_size + 1)])
+    return bool(np.min(np.abs(discrete_coords - x)) <= atol
+                and np.min(np.abs(discrete_coords - y)) <= atol)
 
 def max_tbv_as_constraint(sol:PathSolution):
     return sol.max_mean_tbv - 40

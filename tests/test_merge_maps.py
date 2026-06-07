@@ -45,3 +45,16 @@ def test_gcs_requires_bs_in_clique():
     m2[1, 0].append({"n_obs": 1, "timestep": 5, "prob": 0.9})
     out2 = merge_maps([[0, 1, 2]], m2, "gcs")         # BS present
     assert out2[2, 0][-1]["prob"] == 0.9
+
+
+from Time import isCoordinateDiscrete
+
+
+def test_isCoordinateDiscrete_tolerates_float_error(small_solution):
+    x_exact, y_exact = small_solution.get_coords(12)
+    assert isCoordinateDiscrete(x_exact, y_exact, small_solution)
+    # interpolation-grade float error must still classify as on-grid
+    assert isCoordinateDiscrete(x_exact + 1e-9, y_exact - 1e-9, small_solution)
+    # mid-cell must NOT
+    half = small_solution.info.cell_side_length / 2
+    assert not isCoordinateDiscrete(x_exact + half, y_exact, small_solution)
