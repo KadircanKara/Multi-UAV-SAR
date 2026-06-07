@@ -313,11 +313,22 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, merging_strategy="onboa
                     realtime_y[m + 1, step:] = ret_y
                     # Mirror into the DISCRETE path matrix so PathAnimation (which
                     # re-derives trajectories from it via get_real_paths) shows the
-                    # early return (AD3). Same recipe as the discrete pipeline.
+                    # early return (AD3). Adapted from the discrete pipeline's recipe,
+                    # but indexed by discrete waypoint (leg), NOT the realtime step —
+                    # realtime has ~dt× more columns; using step here would corrupt the mirror.
                     leg = max(discrete_step, 0)
-                    current_cell = drone_positions[m] if drone_positions[m] != -1 else 0
+                    current_cell = drone_positions[m] if drone_positions[m] != -1 else 0  # step-0 fallback; trigger can't actually fire there
                     path_to_0 = interpolate_between_cities(x, current_cell, 0)
                     n_cols = x.real_time_path_matrix.shape[1]
+                    # Invariant: the return route always fits the remaining columns
+                    # (slack is exactly 1 today because interpolate_between_cities
+                    # produces Chebyshev-length paths and n_cols was sized with the
+                    # same interpolator). Fail loudly if a future change breaks it,
+                    # otherwise the mirrored path silently loses its BS arrival and
+                    # replay animations break.
+                    assert len(path_to_0) <= n_cols - leg, (
+                        f"return route ({len(path_to_0)}) exceeds remaining mirror "
+                        f"columns ({n_cols - leg})")
                     padded_path = path_to_0 + [-1] * (n_cols - leg - len(path_to_0))
                     x.real_time_path_matrix[m + 1, leg:] = padded_path[:n_cols - leg]
 
