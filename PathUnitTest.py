@@ -89,7 +89,6 @@ class PathUnitTest(object):
                         seed=1,
                         output=output,
                         verbose=True,
-                        # callback=PathCallback(model)
                         )
         
         t_end = time.time()

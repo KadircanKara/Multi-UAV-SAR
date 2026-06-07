@@ -8,7 +8,6 @@ from PathFileManagement import load_pickle
 from Connectivity import get_connected_node_ids, connected_components, PathSolution, connected_nodes_at_step # get_connected_nodes
 # from PathOptimizationModel import *
 # from Distance import interpolate_between_cities
-# from array_operations import create_array_of_lists
 import itertools
 from copy import copy, deepcopy
 import math
