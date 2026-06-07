@@ -3,6 +3,7 @@
 Merging parameters live HERE, never in the scenario dict / PathInfo / filenames
 (spec D1). This module is also the future web view-section's parameter schema.
 """
+import numpy as np
 from dataclasses import dataclass, field
 
 VALID_MERGE_TOPOLOGIES = ("none", "onboard", "gcs")
@@ -11,12 +12,14 @@ VALID_TIME_MODELS = ("discrete", "realtime")
 
 @dataclass
 class SensingConfig:
+    """Sensing & merging parameters for replay analysis (the future web UI's parameter schema). merge_topology: who shares beliefs; time_model: which replay pipeline; p/q/B control the Bayesian filter; target_locations are 0-indexed grid cell ids."""
+
     merge_topology: str = "onboard"
     time_model: str = "discrete"
     detection_prob: float = 0.7        # p
     false_alarm_prob: float = 0.2      # q
     belief_threshold: float = 0.9      # B
-    target_locations: list = field(default_factory=lambda: [12])
+    target_locations: list[int] = field(default_factory=lambda: [12])
 
     def __post_init__(self):
         if self.merge_topology not in VALID_MERGE_TOPOLOGIES:
@@ -29,6 +32,8 @@ class SensingConfig:
                 raise ValueError(f"{name} must be in (0, 1), got {v}")
         if not self.target_locations:
             raise ValueError("target_locations must not be empty")
+        if not all(isinstance(t, (int, np.integer)) for t in self.target_locations):
+            raise ValueError(f"target_locations must be integer cell ids, got {self.target_locations!r}")
 
     @classmethod
     def from_info(cls, info, **overrides):
