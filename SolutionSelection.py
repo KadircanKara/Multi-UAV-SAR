@@ -76,6 +76,33 @@ class SolutionSelector:
                 f"index {i} out of range (0..{len(self.solutions) - 1})")
         return i, self.solutions[i], f"Solution #{i}"
 
+    def _normalized_F(self):
+        F_norm = (self.F - self.F.min(axis=0)) / (self.F.max(axis=0) - self.F.min(axis=0))
+        return F_norm.fillna(0.5)    # zero-range column -> all solutions equal
+
+    def best(self, objective_name):
+        self._require_front("best")
+        if objective_name not in self.model["F"]:
+            raise StrategyUnavailableError(
+                f"{objective_name!r} was not optimized by this model "
+                f"(valid: {list(self.model['F'])}). Best-of-a-non-optimized metric "
+                f"would be a sampling accident, not an answer.")
+        # ObjectiveValues stores SIGNED values (polarity already applied by
+        # PathProblem), so min is best for every objective.
+        idx = int(self.F[objective_name].idxmin())
+        return idx, self.solutions[idx], f"Best {objective_name}"
+
+    # Reimplements get_median_index_of_scenario's normalize-centroid-argmin formula
+    # (PathOptimizationModel.py:43-56) on in-memory F instead of re-reading pickles;
+    # fillna additionally guards zero-range columns.
+    def balanced(self):
+        self._require_front("balanced")
+        F_norm = self._normalized_F()
+        centroid = F_norm.mean(axis=0)
+        dists = np.linalg.norm(F_norm.values - centroid.values, axis=1)
+        idx = int(np.argmin(dists))
+        return idx, self.solutions[idx], "Balanced"
+
     def by_weights(self, weights):
         self._require_front("by_weights")
         raise NotImplementedError  # completed in Task 17
