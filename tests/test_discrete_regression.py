@@ -1,5 +1,6 @@
 import numpy as np
 from Sensing import sensing_and_discrete_info_sharing
+from SensingReplay import SensingConfig
 
 # Frozen 2026-06-07 from the pre-refactor discrete pipeline (Task 4 Step 1).
 # If a behavior-preserving refactor changes ANY of these, the refactor is wrong.
@@ -14,7 +15,6 @@ N_PROB_STEPS = 31
 
 
 def test_discrete_metrics_unchanged(small_solution):
-    from SensingReplay import SensingConfig
     m, _ = sensing_and_discrete_info_sharing(
         small_solution,
         SensingConfig(merge_topology="onboard", time_model="discrete", target_locations=[12],
