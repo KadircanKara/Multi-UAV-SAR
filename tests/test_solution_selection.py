@@ -67,3 +67,28 @@ def test_by_index_bounds():
 def test_ws_error_message_teaches():
     with pytest.raises(StrategyUnavailableError, match="MOO variant"):
         single_selector(TC_WS).by_weights({"Mission Time": 1.0})
+
+
+def test_best_polarity_aware():
+    sel = front_selector()
+    idx, sol, label = sel.best("Mission Time")
+    assert idx == 0                       # 100 s is fastest
+    idx, sol, label = sel.best("Percentage Connectivity")
+    assert idx == 4                       # -0.90 signed == 90% connectivity, the most
+
+
+def test_best_rejects_non_model_objective():
+    with pytest.raises(StrategyUnavailableError, match="Max Mean TBV"):
+        front_selector().best("Max Mean TBV")   # TC never optimized TBV
+
+
+def test_best_unavailable_for_single():
+    with pytest.raises(StrategyUnavailableError):
+        single_selector(MTSP).best("Mission Time")
+
+
+def test_balanced_centroid_nearest():
+    # normalized F: MT = [0,.25,.5,.75,1], PC = [1,.75,.5,.25,0] (after min-max);
+    # centroid = (.5,.5) -> nearest is index 2 exactly.
+    idx, sol, label = front_selector().balanced()
+    assert idx == 2
