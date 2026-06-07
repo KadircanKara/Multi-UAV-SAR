@@ -60,6 +60,63 @@ def interpolate_between_cities(sol:PathSolution, city_prev, city):
 
 VALID_MERGE_TOPOLOGIES = ("none", "onboard", "gcs")
 
+
+def _init_search_map(number_of_nodes, number_of_cells):
+    default_obs = [{"n_obs": 0, "timestep": -1, "prob": 0.5}]
+    search_map = np.full((number_of_nodes, number_of_cells), fill_value=None, dtype=object)
+    for i in range(number_of_nodes):
+        for j in range(number_of_cells):
+            search_map[i, j] = default_obs.copy()
+    return search_map
+
+
+def _compute_occupancy_status(search_map, B, number_of_nodes, number_of_cells):
+    """Occupancy flags (any historical prob > B) + per-cell max of LATEST probs."""
+    occupancy_status = np.zeros((number_of_nodes, number_of_cells), dtype=int)
+    per_cell_max_probs = []
+    for col in range(number_of_cells):
+        cell_probs = []
+        for row in range(number_of_nodes):
+            cell_probs.append(search_map[row, col][-1]["prob"])
+            probs = [entry["prob"] for entry in search_map[row, col]]
+            if any(prob > B for prob in probs):
+                occupancy_status[row, col] = 1
+        per_cell_max_probs.append(max(cell_probs))
+    return occupancy_status, per_cell_max_probs
+
+
+def _update_detection_timesteps(occupancy_status, target_locations, step,
+                                t_all_known, t_bs_knows, t_one_knows):
+    if t_all_known == np.inf:
+        if len(np.unique(np.where(occupancy_status == 1)[1])) >= len(target_locations):
+            t_all_known = step
+    if t_bs_knows == np.inf:
+        if np.sum(occupancy_status[0]) >= len(target_locations):
+            t_bs_knows = step
+    if t_one_knows == np.inf:
+        if np.any(np.sum(occupancy_status[1:], axis=1) >= len(target_locations)):
+            t_one_knows = step
+    return t_all_known, t_bs_knows, t_one_knows
+
+
+def _update_target_detection_times(x, occupancy_status, step):
+    missing_targets = [t for t in list(x.target_detection_times.keys())
+                       if x.target_detection_times[t] is None]
+    if len(missing_targets) != 0:
+        if np.sum(occupancy_status[:, missing_targets]) != 0:
+            for target in missing_targets:
+                if occupancy_status[:, target].any():
+                    x.target_detection_times[target] = sum(x.time_elapsed_at_steps[:step])
+
+
+def _finalize_metrics(time_elapsed_at_steps, t_all_known, t_bs_knows, t_one_knows, t_back):
+    time_at_least_one = sum(time_elapsed_at_steps[:t_one_knows]) if t_one_knows != np.inf else np.inf
+    detection_time = sum(time_elapsed_at_steps[:t_all_known]) if t_all_known != np.inf else np.inf
+    inform_time = sum(time_elapsed_at_steps[t_all_known:t_bs_knows]) if t_bs_knows != np.inf else np.inf
+    mission_time = sum(time_elapsed_at_steps[:t_back]) if t_back != np.inf else np.inf
+    return detection_time, inform_time, mission_time, time_at_least_one
+
+
 def merge_maps(conn_comp, search_map, merge_topology="onboard"):
     if merge_topology not in VALID_MERGE_TOPOLOGIES:
         raise ValueError(
@@ -398,19 +455,7 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, merging_strategy="onboa
     connectivity_matrix = x.connectivity_matrix
     cell_occupancy_probabilities = [ [] for _ in range(info.number_of_cells) ]
 
-    default_obs = [{"n_obs": 0, "timestep": -1, "prob": 0.5}]
-    search_map = np.full(
-        (x.info.number_of_nodes, x.info.number_of_cells),
-        fill_value=None,
-        dtype=object
-    )
-    for i in range(x.info.number_of_nodes):
-        for j in range(x.info.number_of_cells):
-            search_map[i, j] = default_obs.copy()  # ensure each cell has its own list
-    # search_map = np.array([[ [{"n_obs": 0, "timestep": -1, "prob": 0.5}]
-    #                          for _ in range(info.number_of_cells)]
-    #                          for _ in range(info.number_of_nodes)], dtype=object)
-    
+    search_map = _init_search_map(x.info.number_of_nodes, x.info.number_of_cells)
 
     drone_search_status = [True for _ in range(number_of_drones)]
     timestep_bs_knows_all_targets = np.inf
@@ -449,35 +494,17 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, merging_strategy="onboa
         search_map = merge_maps(conn_comp, search_map, merging_strategy)
 
         # Occupancy Status Check
-        occupancy_status = np.zeros((info.number_of_nodes, info.number_of_cells), dtype=int)
+        occupancy_status, per_cell_max = _compute_occupancy_status(
+            search_map, B, info.number_of_nodes, info.number_of_cells)
         for col in range(info.number_of_cells):
-            cell_probs = []
-            for row in range(info.number_of_nodes):
-                cell_probs.append(search_map[row, col][-1]["prob"])
-                probs = [entry["prob"] for entry in search_map[row, col]]
-                if any(prob > B for prob in probs):
-                    occupancy_status[row, col] = 1
-            max_cell_prob = max(cell_probs)
-            cell_occupancy_probabilities[col].append(max_cell_prob)
-
-        # for row in range(info.number_of_nodes):
-        #     for col in range(info.number_of_cells):
-        #         probs = [entry["prob"] for entry in search_map[row, col]]
-        #         if any(prob > B for prob in probs):
-        #             occupancy_status[row, col] = 1
+            cell_occupancy_probabilities[col].append(per_cell_max[col])
 
         # Track detection/inform time steps
-        if timestep_all_targets_are_known == np.inf:
-            if len(np.unique(np.where(occupancy_status == 1)[1])) >= len(target_locations):
-                timestep_all_targets_are_known = step
-
-        if timestep_bs_knows_all_targets == np.inf:
-            if np.sum(occupancy_status[0]) >= len(target_locations):
-                timestep_bs_knows_all_targets = step
-
-        if timestep_at_least_one_drone_knows_all_targets == np.inf:
-            if np.any(np.sum(occupancy_status[1:], axis=1) >= len(target_locations)):
-                timestep_at_least_one_drone_knows_all_targets = step
+        (timestep_all_targets_are_known, timestep_bs_knows_all_targets,
+         timestep_at_least_one_drone_knows_all_targets) = _update_detection_timesteps(
+            occupancy_status, target_locations, step,
+            timestep_all_targets_are_known, timestep_bs_knows_all_targets,
+            timestep_at_least_one_drone_knows_all_targets)
 
         # Compute time elapsed at step
         positions_now = x.real_time_path_matrix[1:, step]
@@ -490,13 +517,7 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, merging_strategy="onboa
             x.mission_time += time_elapsed
 
         # Check if targets are detected and update target detection timesteps if detected
-        missing_targets = [target for target in list(x.target_detection_times.keys()) if x.target_detection_times[target] is None]
-        if len(missing_targets) != 0:
-            if np.sum(occupancy_status[:,missing_targets]) != 0:
-                for target in missing_targets:
-                    if occupancy_status[:, target].any():
-                        x.target_detection_times[target] = sum(x.time_elapsed_at_steps[:step])
-
+        _update_target_detection_times(x, occupancy_status, step)
 
         # Drones that know enough info return to base
         for m in range(number_of_drones):
@@ -524,17 +545,10 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, merging_strategy="onboa
             break
 
 
-    detection_time = inform_time = time_at_least_one = np.inf
-    # Final time metrics
-    time_at_least_one = sum(x.time_elapsed_at_steps[:timestep_at_least_one_drone_knows_all_targets]) \
-        if timestep_at_least_one_drone_knows_all_targets != np.inf else np.inf
-    detection_time = sum(x.time_elapsed_at_steps[:timestep_all_targets_are_known]) \
-        if timestep_all_targets_are_known != np.inf else np.inf
-    inform_time = sum(x.time_elapsed_at_steps[timestep_all_targets_are_known : timestep_bs_knows_all_targets]) \
-        if timestep_bs_knows_all_targets != np.inf else np.inf
-    mission_time = sum(x.time_elapsed_at_steps[:timestep_drones_are_back_at_bs]) \
-        if timestep_drones_are_back_at_bs != np.inf else np.inf
-
+    detection_time, inform_time, mission_time, time_at_least_one = _finalize_metrics(
+        x.time_elapsed_at_steps, timestep_all_targets_are_known,
+        timestep_bs_knows_all_targets, timestep_at_least_one_drone_knows_all_targets,
+        timestep_drones_are_back_at_bs)
 
     return  {"cell occupancy probabilities": cell_occupancy_probabilities, "search map": search_map, "occupancy status": occupancy_status, "detection time": detection_time, "inform time": inform_time, "mission time": mission_time, "time at least one drone knows all targets": time_at_least_one}, x
 
