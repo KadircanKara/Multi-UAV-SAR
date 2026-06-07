@@ -178,40 +178,24 @@ def merge_maps(conn_comp, search_map, merge_topology="onboard"):
     return search_map
 
 
-def sensing_and_realtime_info_sharing(sol: PathSolution, merging_strategy="onboard", target_locations=[12], B=0.9, p=0.9, q=0.2):
-
-    # for cell in range(-1, sol.info.number_of_cells):
-    #     cell_xy = sol.get_coords(cell)
-    #     print(f"Cell {cell} Coordinates: {cell_xy} IsDiscrete: {isCoordinateDiscrete(cell_xy[0], cell_xy[1], sol)}")
-
-
+def sensing_and_realtime_info_sharing(sol: PathSolution, merging_strategy="onboard",
+                                      target_locations=[12], B=0.9, p=0.9, q=0.2):
+    """Realtime sensing + merging: continuous positions, per-second connectivity,
+    mid-flight merging. Sensing fires only on NEW grid arrivals (seam-deduped).
+    Returns the same 7-key metrics dict as the discrete pipeline (contract AD1).
+    """
     x = deepcopy(sol)
     info = x.info
-    path_matrix = x.real_time_path_matrix
-    drone_path_matrix = path_matrix[1:, :]
+    drone_path_matrix = x.real_time_path_matrix[1:, :]
     realtime_x, realtime_y = get_real_paths(x)
 
-    # final_search_steps = [len(q) - 2 for q in list(x.drone_dict.values())]
-    # drone_path_matrix = x.real_time_path_matrix[1:, :]
-    number_of_nodes, timesteps = realtime_x.shape # drone_path_matrix.shape
-    number_of_drones = number_of_nodes - 1  # Exclude base station (node 0)
+    number_of_nodes, timesteps = realtime_x.shape
+    number_of_drones = number_of_nodes - 1
 
-    # print("->", number_of_drones)
     connectivity_matrix = get_real_connectivity_matrix(realtime_x, realtime_y, sol)
 
-    default_obs = [{"n_obs": 0, "timestep": -1, "prob": 0.5}]
-    search_map = np.full(
-        (x.info.number_of_nodes, x.info.number_of_cells),
-        fill_value=None,
-        dtype=object
-    )
-    for i in range(x.info.number_of_nodes):
-        for j in range(x.info.number_of_cells):
-            search_map[i, j] = default_obs.copy()  # ensure each cell has its own list
-    # search_map = np.array([[ [{"n_obs": 0, "timestep": -1, "prob": 0.5}]
-    #                          for _ in range(info.number_of_cells)]
-    #                          for _ in range(info.number_of_nodes)], dtype=object)
-    
+    search_map = _init_search_map(info.number_of_nodes, info.number_of_cells)
+    cell_occupancy_probabilities = [[] for _ in range(info.number_of_cells)]
 
     drone_search_status = [True for _ in range(number_of_drones)]
     timestep_bs_knows_all_targets = np.inf
@@ -221,230 +205,158 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, merging_strategy="onboa
 
     x.mission_time = 0
     x.time_elapsed_at_steps = []
+    x.target_detection_times = {target: None for target in target_locations}
 
-    x.target_detection_times = {target:None for target in target_locations}
-
-    drones_at_center = {drone:False for drone in range(sol.info.number_of_drones)}
     drone_positions = {drone: -1 for drone in range(number_of_drones)}
     discrete_step = -1
 
-    cell_0_coords = sol.get_coords(0)
-    cell_0_x, cell_0_y = cell_0_coords
-
-    cell_bs_coords = sol.get_coords(-1)
-    cell_bs_x, cell_bs_y = cell_bs_coords
+    cell_0_x, cell_0_y = sol.get_coords(0)
+    cell_bs_x, cell_bs_y = sol.get_coords(-1)
 
     for step in range(timesteps):
 
-        # Increment discrete step if all drones are at discrete cell locations
+        # --- locate drones; detect grid alignment -------------------------------
+        all_on_grid = True
+        drone_on_grid = [False] * number_of_drones
         for drone in range(number_of_drones):
-            pos_x = realtime_x[drone+1, step]
-            pos_y = realtime_y[drone+1, step]
-            # print(f"Coords: ({pos_x, pos_y}), Discrete: {isCoordinateDiscrete(pos_x, pos_y, sol)}")
+            pos_x = realtime_x[drone + 1, step]
+            pos_y = realtime_y[drone + 1, step]
             drone_positions[drone] = sol.get_city((pos_x, pos_y))
-            if isCoordinateDiscrete(pos_x, pos_y, sol):
-                drones_at_center[drone] = True
-            else:
-                drones_at_center[drone] = False
-        if all(list(drones_at_center.values())):
-            # print(list(zip(realtime_x[:,step].ravel(), realtime_y[:,step].ravel())))
-            is_step_discrete = True
+            on_grid = isCoordinateDiscrete(pos_x, pos_y, sol)
+            drone_on_grid[drone] = on_grid
+            if not on_grid:
+                all_on_grid = False
+
+        # Seam dedup (AD2): get_real_paths uses endpoint-inclusive linspace, so the
+        # last column of leg i duplicates the first column of leg i+1. A column only
+        # counts as a NEW grid arrival if any coordinate changed since the previous
+        # column; duplicates still merge/track time but never sense twice.
+        is_new_grid_arrival = all_on_grid and (
+            step == 0
+            or not (np.array_equal(realtime_x[:, step], realtime_x[:, step - 1])
+                    and np.array_equal(realtime_y[:, step], realtime_y[:, step - 1])))
+        if is_new_grid_arrival:
             discrete_step += 1
-        else:
-            is_step_discrete = False
 
         adj_mat = connectivity_matrix[step]
         conn_comp = connected_components(adj_mat)
-        # search_map = merge_maps(conn_comp, search_map, merging_strategy)
 
-        if is_step_discrete:
+        # --- sensing: only on new grid arrivals ---------------------------------
+        if is_new_grid_arrival:
             for drone in range(number_of_drones):
-                # print(f"Position: {drone_positions[drone]}", end=" ")
-                if drone_positions[drone] == -1:
-                    continue
-                # if drone_positions[drone] in target_locations:
-                #     print(f"Drone {drone+1} Sensing Target {drone_positions[drone]} Cell ...", end=" ")
-                # else:
-                #     print(f"Drone {drone+1} Sensing Empty Cell ...", end=" ")
                 pos = drone_positions[drone]
+                if pos == -1:
+                    continue
                 prior = search_map[drone + 1, pos][-1]["prob"]
                 if pos in target_locations:
                     new_prob = p * prior / (p * prior + q * (1 - prior))
                 else:
                     new_prob = (1 - p) * prior / ((1 - p) * prior + (1 - q) * (1 - prior))
+                # n_obs counted from discrete-path arrivals, matching the discrete
+                # pipeline's bookkeeping for the same physical visit (AD2).
                 n_obs = len(np.where(drone_path_matrix[drone, :discrete_step + 1] == pos)[0])
-                prev_obs = search_map[drone + 1, pos][-1]["n_obs"]
-                # search_map[drone + 1, pos].append({"n_obs": prev_obs+1, "timestep": discrete_step, "prob": new_prob})
-                search_map[drone + 1, pos].append({"n_obs": n_obs, "timestep": discrete_step, "prob": new_prob})
+                search_map[drone + 1, pos].append(
+                    {"n_obs": n_obs, "timestep": discrete_step, "prob": new_prob})
 
-                # print(f"Prior prob: {prior}, New prob: {new_prob} New obs: {search_map[drone + 1, pos][-1]}")
-            
-
-        # Drones update probabilities if they are at discrete cell locations
-        # for drone in range(number_of_drones):
-        #     # if step > final_search_steps[drone]:
-        #     #     continue
-        #     # pos = drone_path_matrix[drone, step]
-        #     pos_x = realtime_x[drone+1, step]
-        #     pos_y = realtime_y[drone+1, step]
-        #     if isCoordinateDiscrete(pos_x, pos_y, sol):
-        #         discrete_
-
-        #     pos = sol.get_city((pos_x, pos_y))
-        #     if pos == -1:
-        #         continue
-        #     if isCoordinateDiscrete(pos_x, pos_y, sol):
-        #         prior = search_map[drone + 1, pos][-1]["prob"]
-        #         if pos in target_locations:
-        #             new_prob = p * prior / (p * prior + q * (1 - prior))
-        #         else:
-        #             new_prob = (1 - p) * prior / ((1 - p) * prior + (1 - q) * (1 - prior))
-        #         print(f"Sensing in process at {(pos_x, pos_y)}. Prior prob: {prior}, New prob: {new_prob} ")
-        #         # n_obs = np.count_nonzero(drone_path_matrix[drone, :step + 1] == pos)
-        #         # n_obs = len(np.where(drone_path_matrix[drone, :step + 1] == pos)[0])
-        #         n_obs = len(np.where(drone_path_matrix[drone, :step + 1] == pos)[0])
-        #         search_map[drone + 1, pos].append({"n_obs": n_obs, "timestep": step, "prob": new_prob})
-
+        # --- merging: EVERY second, including mid-flight (AD5) ------------------
         # merging_strategy here is a merge topology ("none"/"onboard"/"gcs"); Task 11 renames it via SensingConfig
         search_map = merge_maps(conn_comp, search_map, merging_strategy)
 
-        # Occupancy Status Check
-        occupancy_status = np.zeros((info.number_of_nodes, info.number_of_cells), dtype=int)
-        for row in range(info.number_of_nodes):
-            for col in range(info.number_of_cells):
-                probs = [entry["prob"] for entry in search_map[row, col]]
-                if any(prob > B for prob in probs):
-                    occupancy_status[row, col] = 1
+        # --- occupancy + tracking (shared helpers) ------------------------------
+        occupancy_status, per_cell_max = _compute_occupancy_status(
+            search_map, B, info.number_of_nodes, info.number_of_cells)
+        for col in range(info.number_of_cells):
+            cell_occupancy_probabilities[col].append(per_cell_max[col])
 
-        # Track detection/inform time steps
-        if timestep_all_targets_are_known == np.inf:
-            if len(np.unique(np.where(occupancy_status == 1)[1])) >= len(target_locations):
-                timestep_all_targets_are_known = step
+        (timestep_all_targets_are_known, timestep_bs_knows_all_targets,
+         timestep_at_least_one_drone_knows_all_targets) = _update_detection_timesteps(
+            occupancy_status, target_locations, step,
+            timestep_all_targets_are_known, timestep_bs_knows_all_targets,
+            timestep_at_least_one_drone_knows_all_targets)
 
-        if timestep_bs_knows_all_targets == np.inf:
-            if np.sum(occupancy_status[0]) >= len(target_locations):
-                timestep_bs_knows_all_targets = step
-
-        if timestep_at_least_one_drone_knows_all_targets == np.inf:
-            if np.any(np.sum(occupancy_status[1:], axis=1) >= len(target_locations)):
-                timestep_at_least_one_drone_knows_all_targets = step
-
-        # Compute time elapsed at step
-        # Since this is realtime coordinates, time elapsed will always be 1 second
+        # Realtime columns are ~1-second apart by construction of get_real_paths
+        # (dt = ceil(dist/speed) per leg) — see spec Addendum A "not a defect".
         x.time_elapsed_at_steps.append(1)
         x.mission_time += 1
-        # positions_now = x.real_time_path_matrix[1:, step]
-        # if step < timesteps - 1:
-        #     positions_next = x.real_time_path_matrix[1:, step + 1]
-        #     dists = [info.D[pos_now, pos_next] for pos_now, pos_next in zip(positions_now, positions_next)]
-        #     max_dist = max(dists)
-        #     time_elapsed = max_dist / info.max_drone_speed
-        #     x.time_elapsed_at_steps.append(time_elapsed)
-        #     x.mission_time += time_elapsed
 
-        # Check if targets are detected and update target detection timesteps if detected
-        missing_targets = [target for target in list(x.target_detection_times.keys()) if x.target_detection_times[target] is None]
-        if len(missing_targets) != 0:
-            if np.sum(occupancy_status[:,missing_targets]) != 0:
-                for target in missing_targets:
-                    if occupancy_status[:, target].any():
-                        x.target_detection_times[target] = sum(x.time_elapsed_at_steps[:step])
+        _update_target_detection_times(x, occupancy_status, step)
 
-
-
-
-        # Drones that know enough info return to base
+        # --- early return-to-base (AD3) ------------------------------------------
         for m in range(number_of_drones):
-            drone_cell_pos = drone_positions[m]
-            drone_xy_pos = (realtime_x[m+1, step], realtime_y[m+1, step])
-            # if step > 0 and sol.get_city((realtime_x[m+1, step], realtime_y[m+1, step]))==-1: # x.real_time_path_matrix[m + 1, step] == -1:
-            if step > 0 and drone_cell_pos==-1: # x.real_time_path_matrix[m + 1, step] == -1:
+            if step > 0 and drone_positions[m] == -1:
                 continue
             if drone_search_status[m]:
                 knows_all = np.sum(occupancy_status[m + 1]) >= len(target_locations)
                 is_connected_to_bs = m + 1 in get_connected_node_ids(adj_mat, 0)
-                if timestep_bs_knows_all_targets != np.inf and is_connected_to_bs or knows_all:
+                if (timestep_bs_knows_all_targets != np.inf and is_connected_to_bs) or knows_all:
                     drone_search_status[m] = False
-                    # Make drone m return to cell 0 and then to Base Station (to avoid going out of the map)
-                    drone_x_pos, drone_y_pos = drone_xy_pos
-                    x_mid_1, y_mid_1 = intp_between_coords(drone_x_pos, drone_y_pos, cell_0_x, cell_0_y, info.max_drone_speed)
-                    x_mid_2, y_mid_2 = intp_between_coords(cell_0_x, cell_0_y, cell_bs_x, cell_bs_y, info.max_drone_speed)
-                    x_mid, y_mid = np.hstack((x_mid_1, x_mid_2)), np.hstack((y_mid_1, y_mid_2))
-                    x_mid, y_mid = np.hstack((x_mid, np.full(timesteps-(step+len(x_mid)), fill_value=cell_bs_x))), np.hstack((y_mid, np.full(timesteps-(step+len(y_mid)), fill_value=cell_bs_y)))
+                    drone_x_pos = realtime_x[m + 1, step]
+                    drone_y_pos = realtime_y[m + 1, step]
+                    # continuous return: current pos -> cell 0 -> BS, explicit length
+                    # reconciliation instead of the old swallowed try/except
+                    ret_x1, ret_y1 = intp_between_coords(drone_x_pos, drone_y_pos,
+                                                         cell_0_x, cell_0_y,
+                                                         info.max_drone_speed)
+                    ret_x2, ret_y2 = intp_between_coords(cell_0_x, cell_0_y,
+                                                         cell_bs_x, cell_bs_y,
+                                                         info.max_drone_speed)
+                    ret_x = np.hstack((ret_x1, ret_x2))
+                    ret_y = np.hstack((ret_y1, ret_y2))
+                    remaining = timesteps - step
+                    if len(ret_x) >= remaining:
+                        ret_x, ret_y = ret_x[:remaining], ret_y[:remaining]
+                    else:
+                        pad = remaining - len(ret_x)
+                        ret_x = np.hstack((ret_x, np.full(pad, cell_bs_x)))
+                        ret_y = np.hstack((ret_y, np.full(pad, cell_bs_y)))
+                    realtime_x[m + 1, step:] = ret_x
+                    realtime_y[m + 1, step:] = ret_y
+                    # Mirror into the DISCRETE path matrix so PathAnimation (which
+                    # re-derives trajectories from it via get_real_paths) shows the
+                    # early return (AD3). Same recipe as the discrete pipeline.
+                    leg = max(discrete_step, 0)
+                    current_cell = drone_positions[m] if drone_positions[m] != -1 else 0
+                    path_to_0 = interpolate_between_cities(x, current_cell, 0)
+                    n_cols = x.real_time_path_matrix.shape[1]
+                    padded_path = path_to_0 + [-1] * (n_cols - leg - len(path_to_0))
+                    x.real_time_path_matrix[m + 1, leg:] = padded_path[:n_cols - leg]
 
-                    # dist_to_0 = info.D[drone_cell_pos, 0]
-                    # dt = ceil(dist_to_0 / info.max_drone_speed)
-                    # drone_x_path_to_0, drone_y_path_to_0 = np.hstack((realtime_x[m+1, :step], np.linspace(drone_x_pos, cell_0_x, dt, endpoint=False))), np.hstack((realtime_y[m+1, :step], np.linspace(drone_y_pos, cell_0_y, dt, endpoint=False)))
-                    # dist_from_cell_0_to_bs = info.D[0, -1]
-                    # dt_cell_0_to_bs = ceil(dist_from_cell_0_to_bs / info.max_drone_speed)
-                    # drone_x_path_to_bs, drone_y_path_to_bs = np.hstack((drone_x_path_to_0, np.linspace(cell_0_x, cell_bs_x, dt_cell_0_to_bs, endpoint=False))), np.hstack((drone_y_path_to_0, np.linspace(cell_0_y, cell_bs_y, dt_cell_0_to_bs, endpoint=False)))
-                    # drone_x_path_to_bs = np.hstack((np.linspace(drone_x_pos, cell_0_x, dt), np.linspace(cell_0_x, cell_bs_x, ceil(info.D[0, -1]))[1:]))
-                    # drone_y_path_to_bs = np.hstack((np.linspace(drone_y_pos, cell_0_y, dt), np.linspace(cell_0_y, cell_bs_y, ceil(info.D[0, -1]))[1:]))
-                    try:
-                        realtime_x[m+1][step:], realtime_y[m+1][step:]  = x_mid, y_mid
-                        # realtime_x[m+1] = np.hstack((drone_x_path_to_bs, np.full(shape=timesteps - len(drone_x_path_to_bs), fill_value=cell_bs_x)))
-                        # realtime_y[m+1] = np.hstack((drone_y_path_to_bs, np.full(shape=timesteps - len(drone_y_path_to_bs), fill_value=cell_bs_y)))
-                    except:
-                        print("ERROR: Could not update drone path matrix.")
-                        # with np.printoptions(threshold=np.inf):
-                        #     if drone_path_matrix[m, discrete_step+1]==0:
-                        #         print("OG:")
-                        #         print(list(zip(realtime_x[m+1, step:].ravel(), realtime_y[m+1, step:].ravel())))
-                        #         print("PATH TO BS")
-                        #         print(list(zip(drone_x_path_to_bs[step:].ravel(), drone_y_path_to_bs[step:].ravel())))
-                        # print("LENGTHS:", timesteps, len(drone_x_path_to_bs), len(drone_y_path_to_bs))
-
-
-                    # # current_coords = np.array([realtime_x[m+1, step], realtime_y[m, step]])
-                    # cell_0_coords = sol.get_coords(0)
-                    # coords_diff = cell_0_coords - drone_xy_pos
-                    # # current_pos = sol.get_city(current_coords)  # x.real_time_path_matrix[m + 1, step]
-                    # path_to_0 = interpolate_between_cities(x, drone_cell_pos, 0)
-                    # theta = atan2(coords_diff[1], coords_diff[0])
-                    # coords_to_0 = [sol.get_coords(city) for city in path_to_0]
-                    # # discrete_x_coords_to_0 = [coords[0] for coords in coords_to_0]
-                    # realtime_x_coords_to_0 = [np.arange(current_coords[0], cell_0_coords[0], info.max_drone_speed*np.cos(theta))]
-                    # realtime_y_coords_to_0 = [np.arange(current_coords[1], cell_0_coords[1], info.max_drone_speed*np.sin(theta))]
-                    # # discrete_y_coords_to_0 = [coords[1] for coords in coords_to_0]
-                    # # padded_path = path_to_0 + [-1] * (timesteps - len(path_to_0))
-                    # padded_x_coords = realtime_x_coords_to_0 + [sol.get_coords(-1)[0]] * (timesteps - len(realtime_x_coords_to_0))
-                    # padded_y_coords = realtime_y_coords_to_0 + [sol.get_coords(-1)[1]] * (timesteps - len(realtime_y_coords_to_0))
-                    # # print(padded_path)
-                    # # x.real_time_path_matrix[m + 1, step:] = padded_path
-                    # print(realtime_x[m+1, step:])
-                    # print(padded_x_coords[:timesteps - step])
-                    # realtime_x[m+1, step:] = padded_x_coords[:timesteps - step]
-                    # realtime_y[m+1, step:] = padded_y_coords[:timesteps - step]
-                    # # x.real_time_path_matrix[m + 1, step:] = padded_path[:timesteps - step]
-                    # # print(f"Shortened Drone Path: {x.real_time_path_matrix[m + 1]}")
-
-        
-        positions_now = list(drone_positions.values())
-        # x_positions_now = realtime_x[:, step]
-        # y_positions_now = realtime_y[:, step]
-        # positions_now = [sol.get_city((x_pos, y_pos)) for x_pos, y_pos in zip(x_positions_now, y_positions_now)]
-        if discrete_step > 0 and np.sum(positions_now == -1) == number_of_drones:
+        # --- mission end: every drone home (defect A2 fix: ndarray, not list) ----
+        # A drone counts as "home" only when it is at the BS (get_city == -1) AND
+        # settled on-grid there. In the realtime pipeline get_city also returns -1
+        # for a drone that is merely MID-FLIGHT (off-grid), so the bare
+        # `positions == -1` test the discrete pipeline can safely use (its -1 only
+        # ever means BS in the discrete matrix) would fire spuriously on step 1
+        # when every drone has just left the BS. Requiring on-grid settling
+        # restores the intended "all drones back at base" semantics. (deviation:
+        # see report)
+        positions_now = np.array(list(drone_positions.values()))
+        drones_home = (positions_now == -1) & np.array(drone_on_grid, dtype=bool)
+        if step > 0 and np.sum(drones_home) == number_of_drones:
             timestep_drones_are_back_at_bs = step
             if step < timesteps - 1:
-                # x.real_time_path_matrix = x.real_time_path_matrix[:, :step + 1]
                 realtime_x = realtime_x[:, :step + 1]
                 realtime_y = realtime_y[:, :step + 1]
+                cell_occupancy_probabilities = [col_probs[:step + 1]
+                                                for col_probs in cell_occupancy_probabilities]
             break
 
+    # stash the exact realtime trajectory (incl. truncation) on the solution copy
+    x.real_time_x_matrix = realtime_x
+    x.real_time_y_matrix = realtime_y
 
-    detection_time = inform_time = time_at_least_one = np.inf
-    # Final time metrics
-    time_at_least_one = sum(x.time_elapsed_at_steps[:timestep_at_least_one_drone_knows_all_targets]) \
-        if timestep_at_least_one_drone_knows_all_targets != np.inf else np.inf
-    detection_time = sum(x.time_elapsed_at_steps[:timestep_all_targets_are_known]) \
-        if timestep_all_targets_are_known != np.inf else np.inf
-    inform_time = sum(x.time_elapsed_at_steps[timestep_all_targets_are_known : timestep_bs_knows_all_targets]) \
-        if timestep_bs_knows_all_targets != np.inf else np.inf
-    mission_time = sum(x.time_elapsed_at_steps[:timestep_drones_are_back_at_bs]) \
-        if timestep_drones_are_back_at_bs != np.inf else np.inf
-    
+    detection_time, inform_time, mission_time, time_at_least_one = _finalize_metrics(
+        x.time_elapsed_at_steps, timestep_all_targets_are_known,
+        timestep_bs_knows_all_targets, timestep_at_least_one_drone_knows_all_targets,
+        timestep_drones_are_back_at_bs)
 
-    return  {"search map": search_map, "occupancy status": occupancy_status, "detection time": detection_time, "inform time": inform_time, "mission time": mission_time, "time at least one drone knows all targets": time_at_least_one}, x
+    return {"cell occupancy probabilities": cell_occupancy_probabilities,
+            "search map": search_map,
+            "occupancy status": occupancy_status,
+            "detection time": detection_time,
+            "inform time": inform_time,
+            "mission time": mission_time,
+            "time at least one drone knows all targets": time_at_least_one}, x
 
 
 def sensing_and_discrete_info_sharing(sol: PathSolution, merging_strategy="onboard", target_locations=[12], B=0.9, p=0.9, q=0.2):
