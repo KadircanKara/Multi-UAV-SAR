@@ -8,3 +8,4 @@ pandas>=2.0
 seaborn>=0.12
 autograd>=1.6      # used by PathProblem.py
 sympy>=1.12        # used by Report.py
+pytest>=8.0          # dev/test dependency
