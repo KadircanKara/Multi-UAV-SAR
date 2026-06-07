@@ -16,10 +16,20 @@ Results are written to `Results/` and figures to `Figures/` (relative paths, see
 
 ## Implemented
 
-- Information merging / sharing between connected drones (`Sensing.py`):
-  Bayesian belief updates fused via `merge_maps()` per connectivity clique,
-  with `"ondrone"` (drone-to-drone) and `"gcs"` (base-station-relayed)
-  strategies, in both discrete and real-time variants.
+- Information merging between connected drones (`Sensing.py`): Bayesian belief
+  updates fused via `merge_maps()` per connectivity clique. Merge topologies:
+  `none`, `onboard` (drone-to-drone), `gcs` (base-station-relayed). Time
+  models: `discrete` (per cell-step) and `realtime` (continuous positions,
+  per-second connectivity, mid-flight merging).
+- Analysis layer (`SensingReplay.py`): `SensingConfig` parameter schema,
+  `replay()` for a single run, `compare()` for side-by-side merging-strategy
+  comparisons (metrics CSV, time-series plots, GIF replay animations).
+- Pareto-front navigation (`SolutionSelection.py`): model-aware
+  `SolutionSelector` with `best()/balanced()/knee()/by_weights()/by_index()`
+  gated by `capabilities()`; single-solution models use `the_solution()`.
+- Model registry (`PathOptimizationModel.AVAILABLE_MODELS`, `list_models()`).
+
+Run tests: `python -m pytest tests/ -q`
 
 ## Roadmap
 
