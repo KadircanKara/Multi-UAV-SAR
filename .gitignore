@@ -1,0 +1,33 @@
+# Byte-compiled / caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Scratch test harnesses (kept locally, not versioned)
+high_level_test.py
+low_level_test.py
+
+# Output trees: ignore all contents but keep the directory skeleton
+Results/**
+!Results/
+!Results/**/
+!Results/**/.gitkeep
+
+Figures/**
+!Figures/
+!Figures/**/
+!Figures/**/.gitkeep
+
+# Large binary results that may slip in
+*.pkl
