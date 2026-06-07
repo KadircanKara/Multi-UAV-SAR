@@ -3,8 +3,12 @@
 Merging parameters live HERE, never in the scenario dict / PathInfo / filenames
 (spec D1). This module is also the future web view-section's parameter schema.
 """
-import numpy as np
+import os
 from dataclasses import dataclass, field
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
 
 # Sensing is imported at module level: grep confirms Sensing.py does NOT import
 # SensingReplay, so there is no circular dependency.
@@ -92,3 +96,122 @@ def replay(solution, config, label=None):
         search_map=metrics["search map"],
         solution=x,
     )
+
+
+METRIC_COLUMNS = {
+    "Effective Mission Time": "effective_mission_time",
+    "Detection Time": "detection_time",
+    "Inform Time": "inform_time",
+    "Time At Least One Drone Knows All Targets": "time_at_least_one_drone_knows_all",
+}
+
+DEFAULT_PLOT_DIR = "Figures/Sensing/Merging Comparisons"
+DEFAULT_ANIM_DIR = "Results/Animations"
+
+
+@dataclass
+class ComparisonResult:
+    table: pd.DataFrame
+    csv_path: str
+    plot_paths: list
+    animation_paths: list
+    replays: list
+
+
+def _dedupe_labels(configs, labels):
+    if labels is None:
+        labels = [c.merge_topology for c in configs]
+    if len(set(labels)) != len(labels):
+        labels = [f"{lab}-{i}" for i, lab in enumerate(labels)]
+    return labels
+
+
+def _targets_known_curve(r):
+    """targets-known count per step, derived from per-cell max-prob history."""
+    cfg, probs = r.config, r.cell_occupancy_probabilities
+    n_steps = len(probs[0])
+    curve = []
+    for step in range(n_steps):
+        known = sum(1 for t in cfg.target_locations
+                    if any(p > cfg.belief_threshold for p in probs[t][:step + 1]))
+        curve.append(known)
+    return curve
+
+
+def compare(solution, configs, labels=None, scenario_label="scenario",
+            output_dir=None, plot_dir=None, anim_dir=None, animations=True):
+    """Replay one solution under each config; emit table + plots (+ animations).
+
+    output_dir, when given, overrides plot_dir/anim_dir/csv location (used by
+    tests); otherwise artifacts land in the standard Figures/Results trees.
+    """
+    labels = _dedupe_labels(configs, labels)
+    replays = [replay(solution, c, label=l) for c, l in zip(configs, labels)]
+
+    plot_dir = output_dir or plot_dir or DEFAULT_PLOT_DIR
+    anim_dir = output_dir or anim_dir or DEFAULT_ANIM_DIR
+    csv_dir = output_dir or plot_dir
+    for d in (plot_dir, anim_dir, csv_dir):
+        os.makedirs(d, exist_ok=True)
+
+    # 1) metrics table -------------------------------------------------------
+    table = pd.DataFrame(
+        {col: [getattr(r, attr) for r in replays] for col, attr in METRIC_COLUMNS.items()},
+        index=labels)
+    csv_path = os.path.join(csv_dir, f"{scenario_label}-comparison.csv")
+    table.to_csv(csv_path)
+
+    # 2) time-series plots ---------------------------------------------------
+    plot_paths = []
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for r in replays:
+        curve = _targets_known_curve(r)
+        ax.plot(range(len(curve)), curve, label=r.label)
+    ax.set_xlabel("step"); ax.set_ylabel("targets known")
+    ax.set_title(f"Targets known over time — {scenario_label}")
+    ax.legend()
+    p1 = os.path.join(plot_dir, f"{scenario_label}-targets-over-time.png")
+    fig.savefig(p1, dpi=150, bbox_inches="tight"); plt.close(fig)
+    plot_paths.append(p1)
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    first_target = replays[0].config.target_locations[0]
+    for r in replays:
+        probs = r.cell_occupancy_probabilities[first_target]
+        ax.plot(range(len(probs)), probs, label=r.label)
+    ax.axhline(replays[0].config.belief_threshold, linestyle="--", color="grey",
+               label=f"B = {replays[0].config.belief_threshold}")
+    ax.set_xlabel("step"); ax.set_ylabel(f"max belief, cell {first_target}")
+    ax.set_title(f"Belief evolution — {scenario_label}")
+    ax.legend()
+    p2 = os.path.join(plot_dir, f"{scenario_label}-belief-evolution.png")
+    fig.savefig(p2, dpi=150, bbox_inches="tight"); plt.close(fig)
+    plot_paths.append(p2)
+
+    # 3) animations ----------------------------------------------------------
+    animation_paths = []
+    if animations:
+        from matplotlib.animation import FuncAnimation, PillowWriter
+        from PathAnimation import PathAnimation
+        for r in replays:
+            fig, ax = plt.subplots(figsize=(6, 6))
+            anim_obj = PathAnimation(
+                r.solution, fig, ax,
+                target_locations=r.config.target_locations,
+                cell_occupancy_probabilities=r.cell_occupancy_probabilities,
+                B=r.config.belief_threshold)
+            frames = anim_obj.paths[0].shape[1]
+            # interval must be > 0: matplotlib's anim.save() computes a fallback
+            # fps = 1000/interval when no fps arg is passed, and a pre-built
+            # writer (PillowWriter) forbids passing fps to save(); interval=0
+            # would ZeroDivisionError. 100 ms <=> 10 fps, matching the writer.
+            anim = FuncAnimation(fig, anim_obj.update, frames=frames,
+                                 init_func=anim_obj.initialize_figure,
+                                 blit=False, interval=100)
+            path = os.path.join(anim_dir, f"{scenario_label}-{r.label}-replay.gif")
+            anim.save(path, writer=PillowWriter(fps=10))
+            plt.close(fig)
+            animation_paths.append(path)
+
+    return ComparisonResult(table=table, csv_path=csv_path, plot_paths=plot_paths,
+                            animation_paths=animation_paths, replays=replays)
