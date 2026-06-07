@@ -100,6 +100,7 @@ def _update_detection_timesteps(occupancy_status, target_locations, step,
 
 
 def _update_target_detection_times(x, occupancy_status, step):
+    """Mutate x.target_detection_times in-place for any newly-detected targets."""
     missing_targets = [t for t in list(x.target_detection_times.keys())
                        if x.target_detection_times[t] is None]
     if len(missing_targets) != 0:
@@ -472,7 +473,6 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, merging_strategy="onboa
 
         adj_mat = connectivity_matrix[step]
         conn_comp = connected_components(adj_mat)
-        # search_map = merge_maps(conn_comp, search_map, merging_strategy)
 
         # Drones update probabilities
         for drone in range(number_of_drones):
@@ -532,10 +532,7 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, merging_strategy="onboa
                     current_pos = x.real_time_path_matrix[m + 1, step]
                     path_to_0 = interpolate_between_cities(x, current_pos, 0)
                     padded_path = path_to_0 + [-1] * (timesteps - len(path_to_0))
-                    # print(padded_path)
-                    # x.real_time_path_matrix[m + 1, step:] = padded_path
                     x.real_time_path_matrix[m + 1, step:] = padded_path[:timesteps - step]
-                    # print(f"Shortened Drone Path: {x.real_time_path_matrix[m + 1]}")
 
 
         if step > 0 and np.sum(positions_now == -1) == number_of_drones:
