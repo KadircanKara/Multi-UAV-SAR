@@ -340,8 +340,7 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
         # `positions == -1` test the discrete pipeline can safely use (its -1 only
         # ever means BS in the discrete matrix) would fire spuriously on step 1
         # when every drone has just left the BS. Requiring on-grid settling
-        # restores the intended "all drones back at base" semantics. (deviation:
-        # see report)
+        # restores the intended "all drones back at base" semantics.
         positions_now = np.array(list(drone_positions.values()))
         drones_home = (positions_now == -1) & np.array(drone_on_grid, dtype=bool)
         if step > 0 and np.sum(drones_home) == number_of_drones:
@@ -475,26 +474,4 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, config):
         timestep_drones_are_back_at_bs)
 
     return  {"cell occupancy probabilities": cell_occupancy_probabilities, "search map": search_map, "occupancy status": occupancy_status, "detection time": detection_time, "inform time": inform_time, "mission time": mission_time, "time at least one drone knows all targets": time_at_least_one}, x
-
-
-
-
-# mtsp_sol = load_pickle("Results/Solutions/SOO_GA_MTSP_g_8_a_50_n_4_v_2.5_r_2_nvisits_3-SolutionObjects.pkl")[0]
-# # print(sample_sol.percentage_connectivity)
-# tct_sols = load_pickle("Results/Solutions/MOO_NSGA2_TCT_g_8_a_50_n_4_v_2.5_r_2_nvisits_3-SolutionObjects.pkl")
-# tc_sols = load_pickle("Results/Solutions/MOO_NSGA2_TC_g_8_a_50_n_4_v_2.5_r_2_nvisits_3-SolutionObjects.pkl")
-# tct_F = pd.read_pickle(f"{objective_values_filepath}MOO_NSGA2_TCT_g_8_a_50_n_4_v_2.5_r_2_nvisits_3-ObjectiveValues.pkl")
-# tc_F = pd.read_pickle(f"{objective_values_filepath}MOO_NSGA2_TC_g_8_a_50_n_4_v_2.5_r_2_nvisits_3-ObjectiveValues.pkl")
-# tct_best_time_sol, tct_best_conn_sol = tct_sols[tct_F["Mission Time"].idxmin()], tct_sols[tct_F["Percentage Connectivity"].idxmin()]
-# tc_best_time_sol, tc_best_conn_sol = tc_sols[tc_F["Mission Time"].idxmin()], tc_sols[tc_F["Percentage Connectivity"].idxmin()]
-
-# mtsp_metrics = sensing_and_info_sharing(mtsp_sol, merging_strategy="ondrone", target_locations=[12, 50, 63], B=0.9, p=0.8, q=0.2)
-# tct_best_time_metrics = sensing_and_info_sharing(tct_best_time_sol, merging_strategy="ondrone", target_locations=[12, 50, 63], B=0.9, p=0.8, q=0.2)
-# tc_best_time_metrics = sensing_and_info_sharing(tc_best_time_sol, merging_strategy="ondrone", target_locations=[12, 50, 63], B=0.9, p=0.8, q=0.2)
-# tct_best_conn_metrics = sensing_and_info_sharing(tct_best_conn_sol, merging_strategy="ondrone", target_locations=[12, 50, 63], B=0.9, p=0.8, q=0.2)
-# tc_best_conn_metrics = sensing_and_info_sharing(tc_best_conn_sol, merging_strategy="ondrone", target_locations=[12, 50, 63], B=0.9, p=0.8, q=0.2)
-# print(f"MTSP Metrics:\n{mtsp_metrics}")
-# print(f"TCT Best Time Metrics:\n{tct_best_time_metrics}")
-# print(f"TC Best Time Metrics:\n{tc_best_time_metrics}")
-# print(f"TCT Best Conn Metrics:\n{tct_best_conn_metrics}")
 # print(f"TC Best Conn Metrics:\n{tc_best_conn_metrics}")
