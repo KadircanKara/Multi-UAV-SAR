@@ -68,21 +68,29 @@ def test_onboard_le_none_detection_within_discrete(small_solution):
     assert onboard["detection time"] <= none_["detection time"]
 
 
-def test_realtime_merges_midflight(small_solution):
-    """The realtime pipeline must exchange beliefs BETWEEN grid cells.
+def test_realtime_merging_propagates_to_non_visiting_drones(small_solution):
+    """Merged beliefs must reach drones that never visit the target themselves.
 
-    Evidence accepted: with onboard merging, some drone's search_map holds an
-    observation of the target cell that its own discrete path could not have
-    produced before its first own visit — i.e. it was received via a merge.
-    Strict mid-flight verification: rerun with merging disabled ('none') and
-    assert the receive disappears while per-drone self-observations are equal.
+    Fixture geometry: only drone 0's subtour (cells 0-15) contains target cell
+    12; drones 1-3 (search_map rows 2-4) never visit it, so ANY observation of
+    cell 12 in their maps can only have arrived via merge_maps. With merging
+    'none' those rows must hold exactly the initial default observation.
+    B=0.999 disables early return so both runs fly identical full paths.
+
+    Note: this pins belief PROPAGATION through the realtime pipeline's
+    every-second merge cadence; it does not isolate strictly-between-cells
+    merge events (that would require receive-time provenance the observation
+    dicts don't carry).
     """
-    onboard, x_on = sensing_and_realtime_info_sharing(
+    onboard, _ = sensing_and_realtime_info_sharing(
         small_solution, merging_strategy="onboard", target_locations=[12], B=0.999, p=0.7, q=0.2)
-    none_, x_off = sensing_and_realtime_info_sharing(
+    none_, _ = sensing_and_realtime_info_sharing(
         small_solution, merging_strategy="none", target_locations=[12], B=0.999, p=0.7, q=0.2)
-    # B=0.999 disables early return so both runs fly identical full paths.
     target = 12
-    received_on = sum(len(onboard["search map"][node, target]) for node in range(5))
-    received_off = sum(len(none_["search map"][node, target]) for node in range(5))
-    assert received_on > received_off  # merging propagated target observations
+    n_nodes = onboard["search map"].shape[0]
+    non_visiting_rows = range(2, n_nodes)   # drones 1-3: subtours exclude cell 12
+    for row in non_visiting_rows:
+        assert len(none_["search map"][row, target]) == 1, \
+            f"row {row}: 'none' must leave only the default observation"
+        assert len(onboard["search map"][row, target]) > 1, \
+            f"row {row}: 'onboard' must have delivered a merged observation"
