@@ -57,7 +57,7 @@
   mode must treat `tests/` as a plain directory so `from conftest import ...`
   works in test modules)
 
-- [ ] **Step 1: Add pytest to requirements**
+- [x] **Step 1: Add pytest to requirements**
 
 Append to `requirements.txt`:
 
@@ -68,7 +68,7 @@ pytest>=8.0          # dev/test dependency
 Run: `.venv/bin/pip install pytest`
 Expected: `Successfully installed pytest-...`
 
-- [ ] **Step 2: Create the fixtures**
+- [x] **Step 2: Create the fixtures**
 
 Create `tests/conftest.py`:
 
@@ -115,12 +115,12 @@ def small_solution():
                         calculate_pathplan=True, calculate_connectivity=True)
 ```
 
-- [ ] **Step 3: Verify the fixture builds**
+- [x] **Step 3: Verify the fixture builds**
 
 Run: `.venv/bin/python -m pytest tests/ --collect-only -q`
 Expected: `no tests ran` (collection succeeds, no import errors). If `PathSolution` construction fails on `start_points` shape, check `PathSampling.py` for the exact representation and adjust the fixture (start_points are sorted path indices, first one 0, length = number_of_drones).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add requirements.txt tests/
@@ -136,7 +136,7 @@ git commit -m "test: add pytest infrastructure and deterministic solution fixtur
 
 These encode the spec's Addendum-A contract. They MUST fail now (both pipelines crash on `deepcopy`); that is the red state.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_sensing_contract.py`:
 
@@ -211,12 +211,12 @@ def test_onboard_le_none_detection_within_discrete(small_solution):
     assert onboard["detection time"] <= none_["detection time"]
 ```
 
-- [ ] **Step 2: Run and verify they fail with NameError**
+- [x] **Step 2: Run and verify they fail with NameError**
 
 Run: `.venv/bin/python -m pytest tests/test_sensing_contract.py -x -q`
 Expected: FAIL — `NameError: name 'deepcopy' is not defined` (and `merge_maps` rejects nothing yet — `"onboard"` currently behaves as merging because only `"gcs"` is special-cased; that becomes correct semantics in Task 5).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add tests/test_sensing_contract.py
@@ -230,7 +230,7 @@ git commit -m "test: add failing sensing-pipeline contract tests (red)"
 **Files:**
 - Modify: `Sensing.py:13-14`
 
-- [ ] **Step 1: Fix the imports**
+- [x] **Step 1: Fix the imports**
 
 In `Sensing.py`, replace lines 13-14:
 
@@ -247,12 +247,12 @@ from copy import copy, deepcopy
 
 (Nothing in `Sensing.py` uses the `copy` *module*; only bare `copy(...)` at most and `deepcopy(...)` at lines 124 and 386 — verify with `grep -n "copy\." Sensing.py` → expect no `copy.something` hits.)
 
-- [ ] **Step 2: Verify the NameError tests now get past entry**
+- [x] **Step 2: Verify the NameError tests now get past entry**
 
 Run: `.venv/bin/python -m pytest tests/test_sensing_contract.py::test_discrete_runs_without_nameerror -x -q`
 Expected: PASS (discrete pipeline is otherwise intact). Realtime tests may still fail on later defects — that is expected until Task 7.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add Sensing.py
@@ -266,7 +266,7 @@ git commit -m "fix: import deepcopy correctly in Sensing (both pipelines crashed
 **Files:**
 - Create: `tests/test_discrete_regression.py`
 
-- [ ] **Step 1: Capture the current discrete output as the snapshot**
+- [x] **Step 1: Capture the current discrete output as the snapshot**
 
 Run this ONCE to print the values to freeze:
 
@@ -292,7 +292,7 @@ print("n occupancy prob steps:", len(m["cell occupancy probabilities"][0]))
 EOF
 ```
 
-- [ ] **Step 2: Write the snapshot test with the printed literals**
+- [x] **Step 2: Write the snapshot test with the printed literals**
 
 Create `tests/test_discrete_regression.py`, substituting `<...>` with the literals printed in Step 1:
 
@@ -324,12 +324,12 @@ def test_discrete_metrics_unchanged(small_solution):
 
 (Task 11 changes only the call shape to `SensingConfig`; the literals stay.)
 
-- [ ] **Step 3: Run, verify green**
+- [x] **Step 3: Run, verify green**
 
 Run: `.venv/bin/python -m pytest tests/test_discrete_regression.py -q`
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tests/test_discrete_regression.py
@@ -344,7 +344,7 @@ git commit -m "test: freeze discrete pipeline behavior snapshot before refactors
 - Create: `tests/test_merge_maps.py`
 - Modify: `Sensing.py:62-114` (merge_maps), plus its two call sites `Sensing.py:244` and `:441`
 
-- [ ] **Step 1: Write the failing topology tests**
+- [x] **Step 1: Write the failing topology tests**
 
 Create `tests/test_merge_maps.py`:
 
@@ -400,7 +400,7 @@ def test_gcs_requires_bs_in_clique():
 Run: `.venv/bin/python -m pytest tests/test_merge_maps.py -q`
 Expected: FAIL (`merge_maps` currently treats every non-"gcs" string as merging; no ValueError, no "none").
 
-- [ ] **Step 2: Rework merge_maps**
+- [x] **Step 2: Rework merge_maps**
 
 In `Sensing.py`, change the function signature and add the guard (line 62; the loop body from `for clique in conn_comp:` onward is UNCHANGED except the topology comparison):
 
@@ -445,12 +445,12 @@ elif merging_strategy == "realtime":
 
 and the other two discrete call sites (`Analysis.py:71` and `:164`) likewise get `merging_strategy="onboard"` instead of forwarding the time-model string.
 
-- [ ] **Step 3: Run merge_maps tests + regression**
+- [x] **Step 3: Run merge_maps tests + regression**
 
 Run: `.venv/bin/python -m pytest tests/test_merge_maps.py tests/test_discrete_regression.py -q`
 Expected: PASS (regression still green: snapshot used `"onboard"`, which behaves exactly as the old fallthrough did).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add Sensing.py Analysis.py tests/test_merge_maps.py
@@ -465,7 +465,7 @@ git commit -m "feat: explicit merge topologies (none/onboard/gcs) with validatio
 - Modify: `Time.py:9-15`
 - Test: append to `tests/test_merge_maps.py` (small, sensing-adjacent unit test)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_merge_maps.py`:
 
@@ -486,7 +486,7 @@ def test_isCoordinateDiscrete_tolerates_float_error(small_solution):
 Run: `.venv/bin/python -m pytest tests/test_merge_maps.py::test_isCoordinateDiscrete_tolerates_float_error -q`
 Expected: FAIL on the `+1e-9` assertion (exact `in` comparison).
 
-- [ ] **Step 2: Replace the implementation**
+- [x] **Step 2: Replace the implementation**
 
 Replace `Time.py:9-15` with:
 
@@ -506,12 +506,12 @@ def isCoordinateDiscrete(x, y, sol: PathSolution, atol=None):
                 and np.min(np.abs(discrete_coords - y)) <= atol)
 ```
 
-- [ ] **Step 3: Run the test + full suite**
+- [x] **Step 3: Run the test + full suite**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
 Expected: tolerance test PASS; realtime contract tests still failing (Task 7 fixes them); everything else green.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add Time.py tests/test_merge_maps.py
@@ -525,7 +525,7 @@ git commit -m "fix: tolerance-based isCoordinateDiscrete (exact float equality d
 **Files:**
 - Modify: `Sensing.py` (add 4 module-level helpers; refactor `sensing_and_discrete_info_sharing` to use them)
 
-- [ ] **Step 1: Add the helpers** (place directly above `merge_maps`)
+- [x] **Step 1: Add the helpers** (place directly above `merge_maps`)
 
 ```python
 def _init_search_map(number_of_nodes, number_of_cells):
@@ -584,7 +584,7 @@ def _finalize_metrics(time_elapsed_at_steps, t_all_known, t_bs_knows, t_one_know
     return detection_time, inform_time, mission_time, time_at_least_one
 ```
 
-- [ ] **Step 2: Refactor the discrete function to call them**
+- [x] **Step 2: Refactor the discrete function to call them**
 
 In `sensing_and_discrete_info_sharing`:
 - Replace the search-map init block (Sensing.py:394-405) with `search_map = _init_search_map(x.info.number_of_nodes, x.info.number_of_cells)`.
@@ -617,12 +617,12 @@ In `sensing_and_discrete_info_sharing`:
         timestep_drones_are_back_at_bs)
 ```
 
-- [ ] **Step 3: The regression snapshot is the gate**
+- [x] **Step 3: The regression snapshot is the gate**
 
 Run: `.venv/bin/python -m pytest tests/test_discrete_regression.py tests/test_merge_maps.py -q`
 Expected: PASS, identical snapshot values. If any value drifts, the refactor changed behavior — fix the refactor, never the snapshot.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add Sensing.py
@@ -636,7 +636,7 @@ git commit -m "refactor: extract shared sensing helpers; discrete pipeline locke
 **Files:**
 - Modify: `Sensing.py:117-382` (`sensing_and_realtime_info_sharing` — full body replacement)
 
-- [ ] **Step 1: Replace the function body**
+- [x] **Step 1: Replace the function body**
 
 Replace the entire `sensing_and_realtime_info_sharing` function (current lines 117-382) with:
 
@@ -811,14 +811,14 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, merging_strategy="onboa
 
 This deletes all the dead blocks (old lines 119-121, 130-131, 219-242, 271-278, 310-354) by replacement.
 
-- [ ] **Step 2: Run the full contract suite**
+- [x] **Step 2: Run the full contract suite**
 
 Run: `.venv/bin/python -m pytest tests/test_sensing_contract.py tests/test_discrete_regression.py -q`
 Expected: ALL PASS. Debug notes if not:
 - `test_realtime_early_return_shortens_mission` failing → check the early-return branch actually fires (drop into `pytest --pdb`, inspect `occupancy_status` after the target cell's first visit with B=0.7: posterior = 0.7·0.5/(0.7·0.5+0.2·0.5) ≈ 0.778 > 0.7 must flag).
 - Key-parity failing → discrete dict still built inline somewhere; re-check Task 7 Step 2.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add Sensing.py
@@ -832,7 +832,7 @@ git commit -m "feat: complete realtime sensing pipeline (early return, occupancy
 **Files:**
 - Test: append to `tests/test_sensing_contract.py`
 
-- [ ] **Step 1: Write the test**
+- [x] **Step 1: Write the test**
 
 Append to `tests/test_sensing_contract.py`:
 
@@ -857,12 +857,12 @@ def test_realtime_merges_midflight(small_solution):
     assert received_on > received_off  # merging propagated target observations
 ```
 
-- [ ] **Step 2: Run it**
+- [x] **Step 2: Run it**
 
 Run: `.venv/bin/python -m pytest tests/test_sensing_contract.py::test_realtime_merges_midflight -q`
 Expected: PASS (comm_cell_range=2 → 100 m range on 50 m cells guarantees contact in the fixture).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add tests/test_sensing_contract.py
@@ -878,7 +878,7 @@ git commit -m "test: pin mid-flight merging as the realtime pipeline's distingui
 **Files:**
 - Create: `SensingReplay.py` (config part), `tests/test_sensing_config.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_sensing_config.py`:
 
@@ -933,7 +933,7 @@ def test_from_info_rejects_out_of_grid_target(small_solution):
 Run: `.venv/bin/python -m pytest tests/test_sensing_config.py -q`
 Expected: FAIL — `ModuleNotFoundError: No module named 'SensingReplay'`
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 Create `SensingReplay.py`:
 
@@ -989,12 +989,12 @@ class SensingConfig:
         return cfg
 ```
 
-- [ ] **Step 3: Run, verify green**
+- [x] **Step 3: Run, verify green**
 
 Run: `.venv/bin/python -m pytest tests/test_sensing_config.py -q`
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add SensingReplay.py tests/test_sensing_config.py
@@ -1008,7 +1008,7 @@ git commit -m "feat: SensingConfig — validated analysis-layer parameter schema
 **Files:**
 - Modify: `Sensing.py` (both pipeline signatures), `Analysis.py:1,71,164,368-370`, `tests/test_sensing_contract.py`, `tests/test_discrete_regression.py`
 
-- [ ] **Step 1: Flip the two signatures**
+- [x] **Step 1: Flip the two signatures**
 
 In `Sensing.py`, change
 
@@ -1027,7 +1027,7 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, config):
 
 and identically for `sensing_and_realtime_info_sharing`. Inside both bodies, replace the `merge_maps(conn_comp, search_map, merging_strategy)` calls with `merge_maps(conn_comp, search_map, merge_topology)`. No other body changes.
 
-- [ ] **Step 2: Update Analysis.py call sites**
+- [x] **Step 2: Update Analysis.py call sites**
 
 Add to `Analysis.py` imports: `from SensingReplay import SensingConfig`. Replace the three call sites:
 
@@ -1055,7 +1055,7 @@ Add to `Analysis.py` imports: `from SensingReplay import SensingConfig`. Replace
 
 (The old `else: print("Incorrect merging strategy...")` branch is dead — `SensingConfig` validation now raises instead.)
 
-- [ ] **Step 3: Update the test call shapes (asserts unchanged)**
+- [x] **Step 3: Update the test call shapes (asserts unchanged)**
 
 In `tests/test_sensing_contract.py` replace the KW constants and every call:
 
@@ -1073,12 +1073,12 @@ CFG = lambda topo, **kw: SensingConfig(merge_topology=topo, target_locations=[12
 In `tests/test_discrete_regression.py` the call becomes
 `sensing_and_discrete_info_sharing(small_solution, CFG("onboard"))` with the same `CFG` helper (import it or redefine inline). **Snapshot literals unchanged.**
 
-- [ ] **Step 4: Full suite green**
+- [x] **Step 4: Full suite green**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
 Expected: ALL PASS, snapshot identical.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sensing.py Analysis.py tests/
@@ -1093,7 +1093,7 @@ git commit -m "feat: pipelines take SensingConfig; Analysis call sites migrated"
 - Modify: `SensingReplay.py`
 - Create: `tests/test_replay.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_replay.py`:
 
@@ -1132,7 +1132,7 @@ def test_replay_result_carries_metrics_and_solution(small_solution):
 Run: `.venv/bin/python -m pytest tests/test_replay.py -q`
 Expected: FAIL — `ImportError: cannot import name 'replay'`
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 Append to `SensingReplay.py`:
 
@@ -1175,12 +1175,12 @@ def replay(solution, config, label=None):
     )
 ```
 
-- [ ] **Step 3: Run, verify green**
+- [x] **Step 3: Run, verify green**
 
 Run: `.venv/bin/python -m pytest tests/test_replay.py -q`
 Expected: first 3 tests PASS (`compare` import fails → temporarily comment the `compare` import in the test file, restore it in Task 13; or implement Task 13 immediately after).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add SensingReplay.py tests/test_replay.py
@@ -1194,7 +1194,7 @@ git commit -m "feat: replay() — uniform dispatch over both sensing pipelines"
 **Files:**
 - Modify: `SensingReplay.py`, `tests/test_replay.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_replay.py`:
 
@@ -1235,7 +1235,7 @@ def test_compare_animations_render(small_solution, tmp_path):
 Run: `.venv/bin/python -m pytest tests/test_replay.py -q -m "not slow"`
 Expected: FAIL — `compare` not defined.
 
-- [ ] **Step 2: Implement compare()**
+- [x] **Step 2: Implement compare()**
 
 Append to `SensingReplay.py`:
 
@@ -1369,14 +1369,14 @@ markers =
     slow: long-running tests (animations, end-to-end)
 ```
 
-- [ ] **Step 3: Run fast tests, then the slow animation test once**
+- [x] **Step 3: Run fast tests, then the slow animation test once**
 
 Run: `.venv/bin/python -m pytest tests/test_replay.py -q -m "not slow"`
 Expected: PASS
 Run: `.venv/bin/python -m pytest tests/test_replay.py -q -m slow`
 Expected: PASS (GIF rendered). If `PathAnimation.update` raises an index error on occupancy columns, the fix belongs in Task 8's occupancy/truncation bookkeeping (lengths must satisfy `len(probs[cell]) >= number of executed steps`) — not in `PathAnimation`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add SensingReplay.py tests/test_replay.py pytest.ini
@@ -1393,7 +1393,7 @@ git commit -m "feat: compare() — metrics table, time-series plots, replay anim
 - Modify: `PathOptimizationModel.py` (append at end), `PathInput.py`
 - Create: `tests/test_model_registry.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_model_registry.py`:
 
@@ -1422,7 +1422,7 @@ def test_list_models_dropdown_ready():
 Run: `.venv/bin/python -m pytest tests/test_model_registry.py -q`
 Expected: FAIL — `ImportError`
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 Append to `PathOptimizationModel.py`:
 
@@ -1461,12 +1461,12 @@ n_gen = 800
 
 (Note: the spec said "17 ready-made models"; the actual count in `PathOptimizationModel.py` is 20 — the registry is the source of truth.)
 
-- [ ] **Step 3: Run, verify green, plus import smoke**
+- [x] **Step 3: Run, verify green, plus import smoke**
 
 Run: `.venv/bin/python -m pytest tests/test_model_registry.py -q && .venv/bin/python -c "import PathUnitTest; print('imports OK')"`
 Expected: PASS + `imports OK`
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add PathOptimizationModel.py PathInput.py tests/test_model_registry.py
@@ -1480,7 +1480,7 @@ git commit -m "feat: AVAILABLE_MODELS registry + list_models(); PathInput resolv
 **Files:**
 - Create: `SolutionSelection.py`, `tests/test_solution_selection.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_solution_selection.py`:
 
@@ -1559,7 +1559,7 @@ def test_ws_error_message_teaches():
 Run: `.venv/bin/python -m pytest tests/test_solution_selection.py -q`
 Expected: FAIL — `ModuleNotFoundError`
 
-- [ ] **Step 2: Implement the core**
+- [x] **Step 2: Implement the core**
 
 Create `SolutionSelection.py`:
 
@@ -1643,7 +1643,7 @@ class SolutionSelector:
         return i, self.solutions[i], f"Solution #{i}"
 ```
 
-- [ ] **Step 3: Run — the core tests pass, strategy tests still red**
+- [x] **Step 3: Run — the core tests pass, strategy tests still red**
 
 Run: `.venv/bin/python -m pytest tests/test_solution_selection.py -q`
 Expected: kind/capabilities/the_solution/by_index/WS-message tests PASS (the WS message test passes because `by_weights` doesn't exist yet → add a stub raising via `_require_front`):
@@ -1654,7 +1654,7 @@ Expected: kind/capabilities/the_solution/by_index/WS-message tests PASS (the WS 
         raise NotImplementedError  # completed in Task 17
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add SolutionSelection.py tests/test_solution_selection.py
@@ -1668,7 +1668,7 @@ git commit -m "feat: model-aware SolutionSelector core (kind, capabilities, the_
 **Files:**
 - Modify: `SolutionSelection.py`, `tests/test_solution_selection.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_solution_selection.py`:
 
@@ -1701,7 +1701,7 @@ def test_balanced_centroid_nearest():
 Run: `.venv/bin/python -m pytest tests/test_solution_selection.py -q`
 Expected: new tests FAIL — methods missing.
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 Append to `SolutionSelector`:
 
@@ -1733,12 +1733,12 @@ Append to `SolutionSelector`:
 
 (`balanced()` reimplements `get_median_index_of_scenario`'s normalize-centroid-argmin formula (PathOptimizationModel.py:43-56) on the in-memory F instead of re-reading pickles from disk; the `fillna(0.5)` guard additionally protects degenerate zero-range columns.)
 
-- [ ] **Step 3: Run, verify green**
+- [x] **Step 3: Run, verify green**
 
 Run: `.venv/bin/python -m pytest tests/test_solution_selection.py -q`
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add SolutionSelection.py tests/test_solution_selection.py
@@ -1752,7 +1752,7 @@ git commit -m "feat: best() and balanced() selection strategies (signed-F aware)
 **Files:**
 - Modify: `SolutionSelection.py`, `tests/test_solution_selection.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_solution_selection.py`:
 
@@ -1795,7 +1795,7 @@ def test_knee_falls_back_to_balanced_with_warning():
 Run: `.venv/bin/python -m pytest tests/test_solution_selection.py -q`
 Expected: new tests FAIL.
 
-- [ ] **Step 2: Implement** (replace the Task 15 `by_weights` stub)
+- [x] **Step 2: Implement** (replace the Task 15 `by_weights` stub)
 
 ```python
     def by_weights(self, weights: dict):
@@ -1838,12 +1838,12 @@ Expected: new tests FAIL.
         return idx, self.solutions[idx], "Knee"
 ```
 
-- [ ] **Step 3: Run, verify green**
+- [x] **Step 3: Run, verify green**
 
 Run: `.venv/bin/python -m pytest tests/test_solution_selection.py -q`
 Expected: PASS. If `test_knee_on_kneed_front` picks a different index, print `HighTradeoffPoints().do(F.values)` for that front and adjust the FIXTURE front (not the implementation) until it has one unambiguous knee — the assertion's purpose is "knee() returns a HighTradeoffPoints pick", not a specific geometry.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add SolutionSelection.py tests/test_solution_selection.py
@@ -1858,7 +1858,7 @@ git commit -m "feat: knee() with balanced() fallback and by_weights() pseudo-wei
 - Create: `tests/test_integration.py`
 - Modify: `README.md`
 
-- [ ] **Step 1: Write the integration test** (hand-built mini result set — deterministic and fast; a real NSGA-II run stays a manual check because hyperparameters are module-level globals)
+- [x] **Step 1: Write the integration test** (hand-built mini result set — deterministic and fast; a real NSGA-II run stays a manual check because hyperparameters are module-level globals)
 
 Create `tests/test_integration.py`:
 
@@ -1920,12 +1920,12 @@ def test_realtime_compare_end_to_end(mini_result_set, tmp_path):
     assert np.isfinite(result.table.loc["onboard", "Effective Mission Time"])
 ```
 
-- [ ] **Step 2: Run the FULL suite including slow**
+- [x] **Step 2: Run the FULL suite including slow**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
 Expected: ALL PASS.
 
-- [ ] **Step 3: Update README**
+- [x] **Step 3: Update README**
 
 In `README.md`, replace the `## Implemented` section body with:
 
@@ -1948,11 +1948,11 @@ In `README.md`, replace the `## Implemented` section body with:
 Run tests: `python -m pytest tests/ -q`
 ```
 
-- [ ] **Step 4: Manual sanity check (not automated): one real optimizer run**
+- [x] **Step 4: Manual sanity check (not automated): one real optimizer run**
 
 Optionally edit `PathInput.py` to `pop_size = 50`, `n_gen = 20` and `main.py`'s scenario loop, run `.venv/bin/python main.py`, then on the produced scenario pickles run `SolutionSelector.from_scenario(...)` + `compare(...)`. Revert hyperparameters afterward. This validates the disk path (`from_scenario`) against real optimizer output.
 
-- [ ] **Step 5: Final commit**
+- [x] **Step 5: Final commit**
 
 ```bash
 git add tests/test_integration.py README.md
