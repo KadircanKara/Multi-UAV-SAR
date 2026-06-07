@@ -178,12 +178,14 @@ def merge_maps(conn_comp, search_map, merge_topology="onboard"):
     return search_map
 
 
-def sensing_and_realtime_info_sharing(sol: PathSolution, merging_strategy="onboard",
-                                      target_locations=[12], B=0.9, p=0.9, q=0.2):
+def sensing_and_realtime_info_sharing(sol: PathSolution, config):
     """Realtime sensing + merging: continuous positions, per-second connectivity,
     mid-flight merging. Sensing fires only on NEW grid arrivals (seam-deduped).
     Returns the same 7-key metrics dict as the discrete pipeline (contract AD1).
     """
+    merge_topology = config.merge_topology
+    target_locations = config.target_locations
+    B, p, q = config.belief_threshold, config.detection_prob, config.false_alarm_prob
     x = deepcopy(sol)
     info = x.info
     drone_path_matrix = x.real_time_path_matrix[1:, :]
@@ -259,8 +261,7 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, merging_strategy="onboa
                     {"n_obs": n_obs, "timestep": discrete_step, "prob": new_prob})
 
         # --- merging: EVERY second, including mid-flight (AD5) ------------------
-        # merging_strategy here is a merge topology ("none"/"onboard"/"gcs"); Task 11 renames it via SensingConfig
-        search_map = merge_maps(conn_comp, search_map, merging_strategy)
+        search_map = merge_maps(conn_comp, search_map, merge_topology)
 
         # --- occupancy + tracking (shared helpers) ------------------------------
         occupancy_status, per_cell_max = _compute_occupancy_status(
@@ -370,7 +371,10 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, merging_strategy="onboa
             "time at least one drone knows all targets": time_at_least_one}, x
 
 
-def sensing_and_discrete_info_sharing(sol: PathSolution, merging_strategy="onboard", target_locations=[12], B=0.9, p=0.9, q=0.2):
+def sensing_and_discrete_info_sharing(sol: PathSolution, config):
+    merge_topology = config.merge_topology
+    target_locations = config.target_locations
+    B, p, q = config.belief_threshold, config.detection_prob, config.false_alarm_prob
     x = deepcopy(sol)
     info = x.info
     final_search_steps = [len(q) - 2 for q in list(x.drone_dict.values())]
@@ -413,8 +417,7 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, merging_strategy="onboa
             n_obs = len(np.where(drone_path_matrix[drone, :step + 1] == pos)[0])
             search_map[drone + 1, pos].append({"n_obs": n_obs, "timestep": step, "prob": new_prob})
 
-        # merging_strategy here is a merge topology ("none"/"onboard"/"gcs"); Task 11 renames it via SensingConfig
-        search_map = merge_maps(conn_comp, search_map, merging_strategy)
+        search_map = merge_maps(conn_comp, search_map, merge_topology)
 
         # Occupancy Status Check
         occupancy_status, per_cell_max = _compute_occupancy_status(
