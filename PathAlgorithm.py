@@ -7,13 +7,6 @@ from PathOutput import *
 from pymoo.core.repair import NoRepair
 from PathProblem import *
 
-from PathFitness import ws_fitness_evaluation
-from pymoo.operators.selection.tournament import compare, TournamentSelection
-from pymoo.core.survival import Survival
-from pymoo.algorithms.base.genetic import GeneticAlgorithm
-
-
-
 from pymoo.operators.crossover.nox import NoCrossover
 from PathCrossover import PathCrossover
 # from pymoo.operators.crossover. import pmx
@@ -41,62 +34,6 @@ from PathInput import *
 
 from main import scenario, pop_size, path_eliminate_duplicates, path_sampling, path_mutation, path_crossover, path_repair
 
-# Create a Custom GA with novel weighted sum consideration
-class FitnessSurvival(Survival):
-
-    def __init__(self) -> None:
-        super().__init__(filter_infeasible=False)
-
-    def _do(self, problem, pop, n_survive=None, **kwargs):
-        F, cv = pop.get("weighted_F", "cv")
-        assert F.shape[1] == 1, "FitnessSurvival can only used for single objective single!"
-        S = np.lexsort([F[:, 0], cv])
-        pop.set("rank", np.argsort(S))
-        return pop[S[:n_survive]]
-    
-def comp_by_cv_and_fitness(pop, P, **kwargs):
-    S = np.full(P.shape[0], np.nan)
-
-    for i in range(P.shape[0]):
-        a, b = P[i, 0], P[i, 1]
-
-        # if at least one solution is infeasible
-        if pop[a].CV > 0.0 or pop[b].CV > 0.0:
-            S[i] = compare(a, pop[a].CV, b, pop[b].CV, method='smaller_is_better', return_random_if_equal=True)
-
-        # both solutions are feasible just set random
-        else:
-            S[i] = compare(a, pop[a].F, b, pop[b].F, method='smaller_is_better', return_random_if_equal=True)
-
-    return S[:, None].astype(int)
-
-
-class WeightedSumGA(GeneticAlgorithm):
-    def __init__(self,
-                 pop_size=pop_size,
-                 sampling=PathSampling(),
-                 selection=TournamentSelection(func_comp=comp_by_cv_and_fitness),
-                 crossover=PathCrossover(),
-                 mutation=PathMutation(),
-                 survival=FitnessSurvival(),
-                 eliminate_duplicates=True,
-                 n_offsprings=None,
-                 # output=PathOutput(),
-                 **kwargs):
-        super().__init__(pop_size=pop_size,
-                         sampling=sampling,
-                         selection=selection,
-                         crossover=crossover,
-                         mutation=mutation,
-                         survival=survival,
-                         eliminate_duplicates=eliminate_duplicates,
-                         n_offsprings=n_offsprings,
-                         # output=output,
-                         **kwargs)
-
-        self.termination = DefaultSingleObjectiveTermination()
-
-
 algorithm_dict = {
 
     'PSO': PSO(
@@ -116,16 +53,6 @@ algorithm_dict = {
         eliminate_duplicates=path_eliminate_duplicates,
         repair=path_repair
     ),
-
-    'Weighted Sum GA': WeightedSumGA(
-        pop_size=pop_size,
-        sampling=path_sampling,
-        mutation=path_mutation,
-        crossover=path_crossover,
-        eliminate_duplicates=path_eliminate_duplicates,
-        repair=path_repair
-    ),
-
 
     'NSGA2' : NSGA2(
                         pop_size=pop_size,
