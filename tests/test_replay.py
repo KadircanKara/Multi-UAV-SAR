@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import pytest
 
@@ -51,7 +53,7 @@ def test_compare_table_and_artifacts(small_solution, tmp_path):
     assert (tmp_path / "testscn-comparison.csv").exists()
     assert len(result.plot_paths) == 2          # targets-over-time + belief evolution
     for p in result.plot_paths:
-        import os; assert os.path.exists(p)
+        assert os.path.exists(p)
 
 
 def test_compare_duplicate_topology_labels_deduped(small_solution, tmp_path):
@@ -65,7 +67,6 @@ def test_compare_duplicate_topology_labels_deduped(small_solution, tmp_path):
 def test_compare_animations_render(small_solution, tmp_path):
     result = compare(small_solution, [cfg("onboard")], output_dir=str(tmp_path),
                      scenario_label="anim", animations=True)
-    import os
     assert len(result.animation_paths) == 1
     assert os.path.exists(result.animation_paths[0])
     assert result.animation_paths[0].endswith(".gif")

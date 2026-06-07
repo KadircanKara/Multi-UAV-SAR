@@ -121,20 +121,31 @@ class ComparisonResult:
 def _dedupe_labels(configs, labels):
     if labels is None:
         labels = [c.merge_topology for c in configs]
-    if len(set(labels)) != len(labels):
-        labels = [f"{lab}-{i}" for i, lab in enumerate(labels)]
-    return labels
+    counts = {}
+    for lab in labels:
+        counts[lab] = counts.get(lab, 0) + 1
+    seen = {}
+    out = []
+    for lab in labels:
+        if counts[lab] > 1:
+            out.append(f"{lab}-{seen.get(lab, 0)}")
+            seen[lab] = seen.get(lab, 0) + 1
+        else:
+            out.append(lab)
+    return out
 
 
 def _targets_known_curve(r):
-    """targets-known count per step, derived from per-cell max-prob history."""
+    """Targets-known count per step: belief time series for each target cell,
+    counted once its belief first exceeds the config's threshold."""
     cfg, probs = r.config, r.cell_occupancy_probabilities
-    n_steps = len(probs[0])
+    known_set = set()
     curve = []
-    for step in range(n_steps):
-        known = sum(1 for t in cfg.target_locations
-                    if any(p > cfg.belief_threshold for p in probs[t][:step + 1]))
-        curve.append(known)
+    for step in range(len(probs[0])):
+        for t in cfg.target_locations:
+            if t not in known_set and probs[t][step] > cfg.belief_threshold:
+                known_set.add(t)
+        curve.append(len(known_set))
     return curve
 
 
@@ -144,6 +155,7 @@ def compare(solution, configs, labels=None, scenario_label="scenario",
 
     output_dir, when given, overrides plot_dir/anim_dir/csv location (used by
     tests); otherwise artifacts land in the standard Figures/Results trees.
+    Re-using the same scenario_label and directory overwrites prior artifacts.
     """
     labels = _dedupe_labels(configs, labels)
     replays = [replay(solution, c, label=l) for c, l in zip(configs, labels)]
@@ -179,8 +191,8 @@ def compare(solution, configs, labels=None, scenario_label="scenario",
     for r in replays:
         probs = r.cell_occupancy_probabilities[first_target]
         ax.plot(range(len(probs)), probs, label=r.label)
-    ax.axhline(replays[0].config.belief_threshold, linestyle="--", color="grey",
-               label=f"B = {replays[0].config.belief_threshold}")
+    for B in sorted({r.config.belief_threshold for r in replays}):
+        ax.axhline(B, linestyle="--", color="grey", label=f"B = {B}")
     ax.set_xlabel("step"); ax.set_ylabel(f"max belief, cell {first_target}")
     ax.set_title(f"Belief evolution — {scenario_label}")
     ax.legend()
