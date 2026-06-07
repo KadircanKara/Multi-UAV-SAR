@@ -372,12 +372,13 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
 
 
 def sensing_and_discrete_info_sharing(sol: PathSolution, config):
+    """Discrete sensing + merging: per-cell-step sensing on the discrete path matrix, clique merging each step, early return-to-base. Returns the same 7-key metrics dict as the realtime pipeline (contract AD1)."""
     merge_topology = config.merge_topology
     target_locations = config.target_locations
     B, p, q = config.belief_threshold, config.detection_prob, config.false_alarm_prob
     x = deepcopy(sol)
     info = x.info
-    final_search_steps = [len(q) - 2 for q in list(x.drone_dict.values())]
+    final_search_steps = [len(dpath) - 2 for dpath in list(x.drone_dict.values())]
     drone_path_matrix = x.real_time_path_matrix[1:, :]
     number_of_drones, timesteps = drone_path_matrix.shape
     connectivity_matrix = x.connectivity_matrix

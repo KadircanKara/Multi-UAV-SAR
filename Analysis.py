@@ -69,6 +69,7 @@ def get_path_snapshot_at_step(B, p, p0, model, direction, objective, n_targets, 
     # Randomly select target locations
     target_locations = np.random.choice(range(1, 64), n_targets, replace=False)
 
+    # TODO: merging_strategy param is currently ignored; wire merge_topology=merging_strategy when these plots need topology comparisons
     cfg = SensingConfig.from_info(sol.info, merge_topology="onboard", time_model="discrete",
                                   target_locations=target_locations,
                                   detection_prob=p, false_alarm_prob=q, belief_threshold=B)
@@ -165,6 +166,7 @@ def animate_mission(B, p, p0, model, direction, objective, n_targets, number_of_
     # Randomly select target locations
     target_locations = np.random.choice(range(1, 64), n_targets, replace=False)
 
+    # TODO: merging_strategy param is currently ignored; wire merge_topology=merging_strategy when these plots need topology comparisons
     cfg = SensingConfig.from_info(sol.info, merge_topology="onboard", time_model="discrete",
                                   target_locations=target_locations,
                                   detection_prob=p, false_alarm_prob=q, belief_threshold=B)
