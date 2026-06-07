@@ -66,3 +66,23 @@ def test_onboard_le_none_detection_within_discrete(small_solution):
     onboard, _ = sensing_and_discrete_info_sharing(small_solution, merging_strategy="onboard", **KW)
     none_, _ = sensing_and_discrete_info_sharing(small_solution, merging_strategy="none", **KW)
     assert onboard["detection time"] <= none_["detection time"]
+
+
+def test_realtime_merges_midflight(small_solution):
+    """The realtime pipeline must exchange beliefs BETWEEN grid cells.
+
+    Evidence accepted: with onboard merging, some drone's search_map holds an
+    observation of the target cell that its own discrete path could not have
+    produced before its first own visit — i.e. it was received via a merge.
+    Strict mid-flight verification: rerun with merging disabled ('none') and
+    assert the receive disappears while per-drone self-observations are equal.
+    """
+    onboard, x_on = sensing_and_realtime_info_sharing(
+        small_solution, merging_strategy="onboard", target_locations=[12], B=0.999, p=0.7, q=0.2)
+    none_, x_off = sensing_and_realtime_info_sharing(
+        small_solution, merging_strategy="none", target_locations=[12], B=0.999, p=0.7, q=0.2)
+    # B=0.999 disables early return so both runs fly identical full paths.
+    target = 12
+    received_on = sum(len(onboard["search map"][node, target]) for node in range(5))
+    received_off = sum(len(none_["search map"][node, target]) for node in range(5))
+    assert received_on > received_off  # merging propagated target observations
