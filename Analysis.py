@@ -68,6 +68,7 @@ def get_path_snapshot_at_step(B, p, p0, model, direction, objective, n_targets, 
     # Randomly select target locations
     target_locations = np.random.choice(range(1, 64), n_targets, replace=False)
 
+    # TODO(Task 11): replace hardcoded topology with SensingConfig.merge_topology
     time_metrics, new_sol = sensing_and_discrete_info_sharing(sol=sol, merging_strategy="onboard", target_locations=target_locations, B=B, p=p, q=q)
 
     # Draw paths and grid (copy from PathAnimation)
@@ -161,6 +162,7 @@ def animate_mission(B, p, p0, model, direction, objective, n_targets, number_of_
     # Randomly select target locations
     target_locations = np.random.choice(range(1, 64), n_targets, replace=False)
 
+    # TODO(Task 11): replace hardcoded topology with SensingConfig.merge_topology
     time_metrics, new_sol = sensing_and_discrete_info_sharing(sol=sol, merging_strategy="onboard", target_locations=target_locations, B=B, p=p, q=q)
 
     # print(time_metrics["detection time"])
@@ -364,6 +366,7 @@ def plot_time_metrics_specific_models(n_runs, p0, B_list, p_list, comm_range_lis
                                     F = pd.read_pickle(f"{objective_values_filepath}{scenario}-ObjectiveValues.pkl")
                                     X = pd.read_pickle(f"{solutions_filepath}{scenario}-SolutionObjects.pkl")
                                     sol = X[F[objective].idxmin()] if direction=="Best" else X[get_median_index_of_scenario(scenario)]
+                                    # TODO(Task 11): replace hardcoded topology with SensingConfig.merge_topology
                                     if merging_strategy == "discrete":
                                         time_metrics, updated_sol = sensing_and_discrete_info_sharing(sol=sol, merging_strategy="onboard", target_locations=target_locations, B=B, p=p, q=q)
                                     elif merging_strategy == "realtime":

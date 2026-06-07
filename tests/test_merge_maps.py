@@ -13,9 +13,9 @@ def _map(n_nodes=3, n_cells=4):
 
 
 def test_unknown_topology_raises():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"valid:"):
         merge_maps([[0, 1, 2]], _map(), "ondrone")   # legacy name must be rejected
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"valid:"):
         merge_maps([[0, 1, 2]], _map(), "discrete")  # the old vocabulary-collision value
 
 
@@ -25,6 +25,7 @@ def test_none_never_propagates():
     out = merge_maps([[0, 1, 2]], m, "none")
     assert out[2, 0][-1]["prob"] == 0.5   # node 2 learned nothing
     assert out[0, 0][-1]["prob"] == 0.5   # BS learned nothing
+    assert out is m
 
 
 def test_onboard_merges_any_clique():

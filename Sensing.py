@@ -120,7 +120,7 @@ def merge_maps(conn_comp, search_map, merge_topology="onboard"):
     return search_map
 
 
-def sensing_and_realtime_info_sharing(sol: PathSolution, merging_strategy="ondrone", target_locations=[12], B=0.9, p=0.9, q=0.2):
+def sensing_and_realtime_info_sharing(sol: PathSolution, merging_strategy="onboard", target_locations=[12], B=0.9, p=0.9, q=0.2):
 
     # for cell in range(-1, sol.info.number_of_cells):
     #     cell_xy = sol.get_coords(cell)
@@ -247,6 +247,7 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, merging_strategy="ondro
         #         n_obs = len(np.where(drone_path_matrix[drone, :step + 1] == pos)[0])
         #         search_map[drone + 1, pos].append({"n_obs": n_obs, "timestep": step, "prob": new_prob})
 
+        # merging_strategy here is a merge topology ("none"/"onboard"/"gcs"); Task 11 renames it via SensingConfig
         search_map = merge_maps(conn_comp, search_map, merging_strategy)
 
         # Occupancy Status Check
@@ -388,7 +389,7 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, merging_strategy="ondro
     return  {"search map": search_map, "occupancy status": occupancy_status, "detection time": detection_time, "inform time": inform_time, "mission time": mission_time, "time at least one drone knows all targets": time_at_least_one}, x
 
 
-def sensing_and_discrete_info_sharing(sol: PathSolution, merging_strategy="ondrone", target_locations=[12], B=0.9, p=0.9, q=0.2):
+def sensing_and_discrete_info_sharing(sol: PathSolution, merging_strategy="onboard", target_locations=[12], B=0.9, p=0.9, q=0.2):
     x = deepcopy(sol)
     info = x.info
     final_search_steps = [len(q) - 2 for q in list(x.drone_dict.values())]
@@ -444,6 +445,7 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, merging_strategy="ondro
             n_obs = len(np.where(drone_path_matrix[drone, :step + 1] == pos)[0])
             search_map[drone + 1, pos].append({"n_obs": n_obs, "timestep": step, "prob": new_prob})
 
+        # merging_strategy here is a merge topology ("none"/"onboard"/"gcs"); Task 11 renames it via SensingConfig
         search_map = merge_maps(conn_comp, search_map, merging_strategy)
 
         # Occupancy Status Check
