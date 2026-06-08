@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "multi-uav-sar-backend"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic>=2",
+    "orjson",
+    "httpx",
+    "pytest",
+]
+
+[tool.pytest.ini_options]
+# ".."  = backend/  parent = repo root  (flat root modules)
+# "."   = backend/  itself              (app.* package)
+pythonpath = ["..", "."]
+testpaths = ["tests"]
+addopts = "-m 'not slow'"
+markers = [
+    "slow: long-running tests",
+]
