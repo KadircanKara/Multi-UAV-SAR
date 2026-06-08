@@ -9,10 +9,7 @@ from Connectivity import get_connected_node_ids, connected_components, PathSolut
 # from PathOptimizationModel import *
 # from Distance import interpolate_between_cities
 import itertools
-from copy import copy, deepcopy
-import math
-from math import inf, ceil, log10
-from scipy.optimize import linear_sum_assignment
+from copy import deepcopy
 
 from PathAnimation import *
 from Time import get_real_connectivity_matrix, get_real_paths, isCoordinateDiscrete, intp_between_coords
@@ -21,8 +18,6 @@ from Time import get_real_connectivity_matrix, get_real_paths, isCoordinateDiscr
 # import seaborn as sns
 
 from PathSolution import *
-
-import sys
 
 
 def sign(x):
