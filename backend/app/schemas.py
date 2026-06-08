@@ -74,3 +74,31 @@ class ModelInfo(BaseModel):
     algorithm: str
     objectives: list[str]
     constraints: list[str]
+
+
+class ScenarioSummary(BaseModel):
+    """One row returned by GET /api/library."""
+
+    scenario: str
+    model_key: str
+    type: str
+    algorithm: str
+    objectives: list[str]
+    n_solutions: int
+    result_kind: str
+    grid_size: Optional[int] = None
+    number_of_drones: Optional[int] = None
+    comm_range: Optional[str] = None
+    variant: Optional[str] = None
+    variant_value: Optional[int] = None
+    has_solutions: bool
+
+
+class ScenarioDetail(BaseModel):
+    """Full detail returned by GET /api/library/{scenario}."""
+
+    scenario: str
+    model: ModelInfo
+    n_solutions: int
+    result_kind: str
+    params: dict
