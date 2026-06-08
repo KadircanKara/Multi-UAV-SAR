@@ -18,6 +18,37 @@ from PathOptimizationModel import AVAILABLE_MODELS
 
 
 # ---------------------------------------------------------------------------
+# Security: path-traversal containment
+# ---------------------------------------------------------------------------
+
+# Accept only known-safe chars: alphanumerics, underscore, dot, hyphen,
+# parentheses (needed for "sqrt(8)").  Slashes, backslashes, and NUL bytes
+# are caught by the explicit checks above before this regex runs.
+_SAFE_SCENARIO_RE = re.compile(r"^[A-Za-z0-9_.()-]+$")
+
+
+def _is_safe_scenario_name(scenario: str) -> bool:
+    """Return True iff *scenario* is a safe, non-traversal scenario name."""
+    if not scenario:
+        return False
+    if ".." in scenario:
+        return False
+    if "/" in scenario or "\\" in scenario:
+        return False
+    if os.sep in scenario:
+        return False
+    if "\x00" in scenario:
+        return False
+    return bool(_SAFE_SCENARIO_RE.match(scenario))
+
+
+def _assert_path_in_results_root(path: str) -> bool:
+    """Return True iff the resolved *path* is inside RESULTS_ROOT."""
+    root = os.path.abspath(settings.RESULTS_ROOT) + os.sep
+    return os.path.abspath(path).startswith(root)
+
+
+# ---------------------------------------------------------------------------
 # Model-key resolution
 # ---------------------------------------------------------------------------
 
@@ -137,6 +168,64 @@ def _sol_path(scenario: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Private shared helper
+# ---------------------------------------------------------------------------
+
+def _read_scenario_meta(scenario: str) -> Optional[dict]:
+    """
+    Shared core logic used by both list_scenarios() and get_scenario().
+
+    Resolves model key, reads the (small) objectives pickle, parses params.
+    Returns a dict with keys:
+        model_key, model_dict, objectives, n_solutions, result_kind, params
+    Returns None if anything is missing/invalid.
+
+    Caller must have already validated the scenario name with
+    _is_safe_scenario_name() before calling this helper.
+    """
+    # Require matching solutions pickle
+    if not os.path.isfile(_sol_path(scenario)):
+        return None
+
+    try:
+        model_key = resolve_model_key(scenario)
+    except Exception:
+        return None
+    if model_key not in AVAILABLE_MODELS:
+        return None
+
+    model_dict = AVAILABLE_MODELS[model_key]
+
+    obj_path = _obj_path(scenario)
+    if not _assert_path_in_results_root(obj_path):
+        return None
+
+    try:
+        df: pd.DataFrame = pd.read_pickle(obj_path)
+        n_solutions: int = int(df.shape[0])
+        objectives: list[str] = list(df.columns)
+    except Exception:
+        return None
+
+    result_kind = (
+        "front"
+        if model_dict["Type"] == "MOO" and n_solutions > 1
+        else "single"
+    )
+
+    params = parse_scenario_params(scenario)
+
+    return {
+        "model_key": model_key,
+        "model_dict": model_dict,
+        "objectives": objectives,
+        "n_solutions": n_solutions,
+        "result_kind": result_kind,
+        "params": params,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Public service functions
 # ---------------------------------------------------------------------------
 
@@ -161,53 +250,34 @@ def list_scenarios() -> list[dict]:
     rows: list[dict] = []
 
     for fname in sorted(os.listdir(obj_dir)):
+        # The endswith filter already excludes *-ObjectiveValuesAbs.pkl because
+        # those end with "Abs.pkl", not "-ObjectiveValues.pkl".
         if not fname.endswith("-ObjectiveValues.pkl"):
-            continue
-        if "ObjectiveValuesAbs" in fname:
             continue
 
         scenario = fname[: -len("-ObjectiveValues.pkl")]
 
-        # Require matching solutions pickle
-        if not os.path.isfile(_sol_path(scenario)):
+        if not _is_safe_scenario_name(scenario):
             continue
 
-        # Resolve model key
-        try:
-            model_key = resolve_model_key(scenario)
-        except Exception:
-            continue
-        if model_key not in AVAILABLE_MODELS:
+        meta = _read_scenario_meta(scenario)
+        if meta is None:
             continue
 
-        model = AVAILABLE_MODELS[model_key]
-
-        # Read objectives DataFrame (small — just need shape + columns)
-        try:
-            df: pd.DataFrame = pd.read_pickle(_obj_path(scenario))
-            n_solutions: int = int(df.shape[0])
-            objectives: list[str] = list(df.columns)
-        except Exception:
-            continue
-
-        result_kind = (
-            "front"
-            if model["Type"] == "MOO" and n_solutions > 1
-            else "single"
-        )
-
-        params = parse_scenario_params(scenario)
+        params = meta["params"]
 
         # Build row — flat fields for ScenarioSummary
         row: dict = {
             "scenario": scenario,
-            "model_key": model_key,
-            "type": model["Type"],
-            "algorithm": model["Alg"],
-            "objectives": objectives,
-            "n_solutions": n_solutions,
-            "result_kind": result_kind,
+            "model_key": meta["model_key"],
+            "type": meta["model_dict"]["Type"],
+            "algorithm": meta["model_dict"]["Alg"],
+            "objectives": meta["objectives"],
+            "n_solutions": meta["n_solutions"],
+            "result_kind": meta["result_kind"],
             "grid_size": params.get("grid_size"),
+            "cell_side_length": params.get("cell_side_length"),
+            "max_drone_speed": params.get("max_drone_speed"),
             "number_of_drones": params.get("number_of_drones"),
             "comm_range": params.get("comm_range"),
             "variant": params.get("variant"),
@@ -228,49 +298,36 @@ def list_scenarios() -> list[dict]:
 
 def get_scenario(scenario: str) -> Optional[dict]:
     """
-    Return a detailed dict for a single scenario, or None if pickles are missing
-    or the scenario cannot be resolved.
+    Return a detailed dict for a single scenario, or None if pickles are missing,
+    the scenario name is unsafe, or the scenario cannot be resolved.
     """
-    if not os.path.isfile(_sol_path(scenario)):
+    # Security: reject path-traversal attempts before any filesystem access
+    if not _is_safe_scenario_name(scenario):
         return None
 
-    try:
-        model_key = resolve_model_key(scenario)
-    except Exception:
-        return None
-    if model_key not in AVAILABLE_MODELS:
+    sol_path = _sol_path(scenario)
+    if not _assert_path_in_results_root(sol_path):
         return None
 
-    model_dict = AVAILABLE_MODELS[model_key]
-
-    try:
-        df: pd.DataFrame = pd.read_pickle(_obj_path(scenario))
-        n_solutions: int = int(df.shape[0])
-        objectives: list[str] = list(df.columns)
-    except Exception:
+    meta = _read_scenario_meta(scenario)
+    if meta is None:
         return None
 
-    result_kind = (
-        "front"
-        if model_dict["Type"] == "MOO" and n_solutions > 1
-        else "single"
-    )
-
-    params = parse_scenario_params(scenario)
+    model_dict = meta["model_dict"]
 
     # Build ModelInfo-compatible sub-dict
     model_info = {
-        "name": model_key,
+        "name": meta["model_key"],
         "type": model_dict["Type"],
         "algorithm": model_dict["Alg"],
-        "objectives": objectives,
+        "objectives": meta["objectives"],
         "constraints": model_dict.get("G", []),
     }
 
     return {
         "scenario": scenario,
         "model": model_info,
-        "n_solutions": n_solutions,
-        "result_kind": result_kind,
-        "params": params,
+        "n_solutions": meta["n_solutions"],
+        "result_kind": meta["result_kind"],
+        "params": meta["params"],
     }

@@ -87,6 +87,8 @@ class ScenarioSummary(BaseModel):
     n_solutions: int
     result_kind: str
     grid_size: Optional[int] = None
+    cell_side_length: Optional[Union[int, float]] = None
+    max_drone_speed: Optional[float] = None
     number_of_drones: Optional[int] = None
     comm_range: Optional[str] = None
     variant: Optional[str] = None

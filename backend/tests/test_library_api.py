@@ -3,11 +3,12 @@ Tests for the precomputed-scenario library service and endpoints.
 
 Layer 1 — pure unit tests of resolve_model_key and parse_scenario_params
           (no filesystem, always run).
+Layer 1b — unit tests for _is_safe_scenario_name (security, no filesystem).
 Layer 2 — integration tests via TestClient, guarded on seed presence.
 """
 import pytest
 
-from app.library_service import parse_scenario_params, resolve_model_key
+from app.library_service import _is_safe_scenario_name, parse_scenario_params, resolve_model_key
 
 # ---------------------------------------------------------------------------
 # Layer 1 — unit tests (no filesystem, no pickles)
@@ -146,3 +147,105 @@ def test_library_list_nonempty_with_seeds(client):
     if len(data) == 0:
         pytest.skip("no seeded scenarios present")
     assert len(data) > 0
+
+
+# ---------------------------------------------------------------------------
+# Layer 1b — _is_safe_scenario_name unit tests (security, no filesystem)
+# ---------------------------------------------------------------------------
+
+class TestIsSafeScenarioName:
+    # --- names that MUST be rejected ---
+
+    def test_rejects_dotdot_slash(self):
+        assert _is_safe_scenario_name("../x") is False
+
+    def test_rejects_dotdot_alone(self):
+        assert _is_safe_scenario_name("..") is False
+
+    def test_rejects_dotdot_embedded(self):
+        assert _is_safe_scenario_name("a/../b") is False
+
+    def test_rejects_forward_slash(self):
+        assert _is_safe_scenario_name("a/b") is False
+
+    def test_rejects_backslash(self):
+        assert _is_safe_scenario_name("a\\b") is False
+
+    def test_rejects_empty_string(self):
+        assert _is_safe_scenario_name("") is False
+
+    def test_rejects_nul_byte(self):
+        assert _is_safe_scenario_name("abc\x00def") is False
+
+    def test_rejects_absolute_path(self):
+        assert _is_safe_scenario_name("/etc/passwd") is False
+
+    # --- names that MUST be accepted ---
+
+    def test_accepts_real_seed_name(self):
+        assert _is_safe_scenario_name(
+            "MOO_NSGA2_TC_g_8_a_50_n_4_v_2.5_r_2_nvisits_2"
+        ) is True
+
+    def test_accepts_sqrt_range_name(self):
+        assert _is_safe_scenario_name(
+            "WS_GA_TCDT_g_8_a_50_n_8_v_2.5_r_sqrt(8)_ntours_2"
+        ) is True
+
+
+# ---------------------------------------------------------------------------
+# Layer 2 — traversal endpoint tests (integration, always run)
+# ---------------------------------------------------------------------------
+
+class TestPathTraversal:
+    def test_url_encoded_traversal_returns_404(self, client):
+        """Percent-encoded '../../../etc/passwd' must yield 404, never 500."""
+        resp = client.get("/api/library/..%2F..%2F..%2Fetc%2Fpasswd")
+        assert resp.status_code == 404
+
+    def test_literal_dotdot_returns_404(self, client):
+        """A literal '..' segment must yield 404."""
+        resp = client.get("/api/library/..")
+        assert resp.status_code in (404, 422)  # FastAPI may 422 on routing edge cases
+
+    def test_slash_in_name_returns_404(self, client):
+        """A name with a forward slash must yield 404 (or 422 via router)."""
+        resp = client.get("/api/library/a%2Fb")
+        assert resp.status_code in (404, 422)
+
+    def test_no_500_on_traversal_attempt(self, client):
+        """Any traversal attempt must never produce a 500."""
+        for bad in [
+            "..%2F..%2Fetc%2Fpasswd",
+            "..%5C..%5Cwindows%5Csystem32",
+            "..",
+            "a%2Fb",
+        ]:
+            resp = client.get(f"/api/library/{bad}")
+            assert resp.status_code != 500, (
+                f"Got 500 for traversal probe {bad!r}: {resp.text}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Layer 2 — summary field tests
+# ---------------------------------------------------------------------------
+
+def test_library_summary_has_cell_side_length(client):
+    data = client.get("/api/library").json()
+    if len(data) == 0:
+        pytest.skip("no seeded scenarios present")
+    for row in data:
+        assert "cell_side_length" in row, (
+            f"cell_side_length missing from {row['scenario']}"
+        )
+
+
+def test_library_summary_has_max_drone_speed(client):
+    data = client.get("/api/library").json()
+    if len(data) == 0:
+        pytest.skip("no seeded scenarios present")
+    for row in data:
+        assert "max_drone_speed" in row, (
+            f"max_drone_speed missing from {row['scenario']}"
+        )
