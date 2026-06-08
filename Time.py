@@ -514,7 +514,11 @@ def get_real_connectivity_matrix(real_x, real_y, sol:PathSolution):
              # print( "-->", (node_1_x_coord - node_2_x_coord)**2)
              if sqrt( (node_1_x_coord - node_2_x_coord)**2 + (node_1_y_coord - node_2_y_coord)**2 ) <= comm_range:
              # if info.D[node_1_cell, node_2_cell] <= comm_range:
+                # Connectivity is symmetric: fill both triangles so the BFS/DFS
+                # consumers (connected_components, get_connected_node_ids) don't
+                # fragment cliques whose connectivity isn't index-monotonic.
                 real_connectivity_matrix[step, node_1, node_2] = 1
+                real_connectivity_matrix[step, node_2, node_1] = 1
 
     return real_connectivity_matrix
 
