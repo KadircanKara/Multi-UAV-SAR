@@ -104,3 +104,44 @@ class ScenarioDetail(BaseModel):
     n_solutions: int
     result_kind: str
     params: dict
+
+
+# ---------------------------------------------------------------------------
+# Pareto-front / solution-selection schemas
+# ---------------------------------------------------------------------------
+
+class ParetoSolution(BaseModel):
+    index: int
+    objectives_signed: dict[str, float]
+    objectives_abs: dict[str, float]
+
+
+class ParetoFront(BaseModel):
+    scenario: str
+    model_key: str
+    objectives: list[str]
+    polarities: dict[str, int]
+    result_kind: str
+    n_solutions: int
+    solutions: list[ParetoSolution]
+    capabilities: dict
+
+
+class SelectRequest(BaseModel):
+    model_key: Optional[str] = None
+    strategy: str
+    objective_name: Optional[str] = None
+    weights: Optional[dict[str, float]] = None
+    index: Optional[int] = None
+
+
+class SolutionDetail(BaseModel):
+    index: int
+    label: str
+    objectives_abs: dict[str, float]
+
+
+class SelectResponse(BaseModel):
+    index: int
+    label: str
+    detail: SolutionDetail
