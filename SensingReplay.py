@@ -107,7 +107,7 @@ class ReplayResult:
             ),
             # per-cell belief time series (nested list of plain Python float)
             "cell_occupancy_probabilities": [
-                [float(p) for p in cell_series]
+                [_finite_or_none(p) for p in cell_series]
                 for cell_series in self.cell_occupancy_probabilities
             ],
         }

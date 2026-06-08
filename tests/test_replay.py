@@ -29,11 +29,11 @@ def test_replay_result_to_dict_is_json_safe(small_solution):
     assert "solution" not in d and "search_map" not in d and "occupancy_status" not in d
     assert d["merge_topology"] == "onboard" and d["time_model"] == "discrete"
     assert isinstance(d["cell_occupancy_probabilities"][0][0], float)
-    json.dumps(d)  # must round-trip
+    json.dumps(d, allow_nan=False)  # must round-trip without nan/inf (matches orjson strictness)
 
 
 def test_compare_rejects_empty_configs(small_solution):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="at least one"):
         compare(small_solution, [], animations=False)
 
 
