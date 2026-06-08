@@ -21,9 +21,6 @@ class PathAnimation:
         self.cell_occupancy_probabilities = np.array(cell_occupancy_probabilities)
         self.B = B
         self.p0 = p0
-        
-        print("Cell Occupancy Probabilities Steps:", self.cell_occupancy_probabilities.shape)
-        print("Path Steps:", self.sol.real_time_path_matrix.shape[1])
 
         # Set ticks and labels
         x_ticks_values = [i for i in range(-self.sol.info.cell_side_length, 

@@ -129,8 +129,6 @@ class PathAlgorithm(object):
 
     def __call__(self, *args: Any, **kwds: Any) -> Any:
 
-        print("-->", self.algorithm)
-
         if self.algorithm == 'NSGA3':
             # print(len(algorithm_dict['NSGA3'].ref_dirs))
             return algorithm_dict['NSGA3']

@@ -22,7 +22,7 @@ def get_visit_times(sol:PathSolution):
 
 def calculate_tbv(sol:PathSolution):
 
-    debug_mode = True
+    debug_mode = False
 
     if sol.info.n_visits > 1:
         # Calculate REAL-TIME TBV instead of timestep TBV

@@ -52,7 +52,6 @@ def get_mean_turning_angle(sol:PathSolution):
             theta = np.arctan2(y_diff, x_diff)
             drone_penalties += int(bool(not (np.isclose(theta, 0) or np.isclose(theta, np.pi/2))))
         penalties = np.append(penalties, drone_penalties)
-    print(f"mean turning angle{np.mean(penalties)}")
     return np.mean(penalties) - 2
             
             
@@ -233,8 +232,6 @@ def calculate_max_long_jumps_per_drone(sol:PathSolution):
     if not sol.drone_long_jump_violations:
         calculate_drone_speed_violations(sol)
 
-    print(f"max long jumps: {max(sol.drone_long_jump_violations)}")
-    
     return max(sol.drone_long_jump_violations) - 2 # Allows max 2 long jumps per drone
 
 

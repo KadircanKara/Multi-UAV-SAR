@@ -1,17 +1,14 @@
 from math import atan, atan2
 import numpy as np
 import pandas as pd
-from Results import save_best_solutions
 # from PathInfo import *
 # from FilePaths import *
-from PathFileManagement import load_pickle
-from Connectivity import get_connected_node_ids, connected_components, PathSolution, connected_nodes_at_step # get_connected_nodes
+from Connectivity import get_connected_node_ids, connected_components, PathSolution
 # from PathOptimizationModel import *
 # from Distance import interpolate_between_cities
 import itertools
 from copy import deepcopy
 
-from PathAnimation import *
 from Time import get_real_connectivity_matrix, get_real_paths, isCoordinateDiscrete, intp_between_coords
 
 # from matplotlib import pyplot as plt
@@ -47,9 +44,6 @@ def interpolate_between_cities(sol:PathSolution, city_prev, city):
         interpolated_path.append(mid_city)
 
     return interpolated_path
-
-
-    pass
 
 
 VALID_MERGE_TOPOLOGIES = ("none", "onboard", "gcs")
@@ -118,8 +112,7 @@ def merge_maps(conn_comp, search_map, merge_topology="onboard"):
             f"Unknown merge_topology {merge_topology!r}; valid: {VALID_MERGE_TOPOLOGIES}")
     if merge_topology == "none":
         return search_map
-    number_of_nodes, number_of_cells = search_map.shape
-    # number_of_nodes -= 1  # Exclude base station (node 0)
+    number_of_cells = search_map.shape[1]
 
     for clique in conn_comp:
         if merge_topology == "gcs" and 0 not in clique:
