@@ -1,4 +1,5 @@
 """Tests for GET /api/scenarios/default and POST /api/scenarios/validate."""
+from app.schemas import ScenarioConfig
 
 
 # ---------------------------------------------------------------------------
@@ -51,8 +52,7 @@ def test_validate_default_with_model_key(client):
     assert data["derived"]["number_of_cells"] == 64
     assert data["derived"]["number_of_nodes"] == 5
     assert data["scenario_str"] is not None
-    # PathInfo.__str__ formats floats as-is, so cell_side_length=50 becomes "50.0"
-    assert data["scenario_str"].startswith("MOO_NSGA2_TC_g_8_a_50")
+    assert data["scenario_str"] == "MOO_NSGA2_TC_g_8_a_50_n_4_v_2.5_r_2_nvisits_2"
 
 
 def test_validate_no_model_key(client):
@@ -88,3 +88,45 @@ def test_health(client):
     resp = client.get("/api/health")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Schema-level coercion: whole floats must be coerced to int
+# ---------------------------------------------------------------------------
+
+def test_scenario_config_coerces_whole_floats_to_int():
+    """ScenarioConfig must coerce 50.0→50 and 2.0→2 so PathInfo filenames match disk."""
+    from PathInfo import default_scenario
+
+    cfg = ScenarioConfig(**default_scenario)
+    d = cfg.to_scenario_dict()
+    assert d["cell_side_length"] == 50
+    assert type(d["cell_side_length"]) is int
+    assert d["comm_cell_range"] == 2
+    assert type(d["comm_cell_range"]) is int
+
+
+def test_scenario_config_coerces_float_inputs_to_int():
+    """Passing 50.0 and 2.0 as JSON floats must also yield ints after coercion."""
+    from PathInfo import default_scenario
+
+    overrides = {**default_scenario, "cell_side_length": 50.0, "comm_cell_range": 2.0}
+    cfg = ScenarioConfig(**overrides)
+    d = cfg.to_scenario_dict()
+    assert d["cell_side_length"] == 50
+    assert type(d["cell_side_length"]) is int
+    assert d["comm_cell_range"] == 2
+    assert type(d["comm_cell_range"]) is int
+
+
+def test_scenario_config_preserves_non_whole_floats():
+    """Non-whole floats (e.g. sqrt(8) ≈ 2.828) must NOT be coerced to int."""
+    from math import sqrt
+    from PathInfo import default_scenario
+
+    sqrt8 = 2 * sqrt(2)
+    overrides = {**default_scenario, "comm_cell_range": sqrt8}
+    cfg = ScenarioConfig(**overrides)
+    d = cfg.to_scenario_dict()
+    assert d["comm_cell_range"] == sqrt8
+    assert type(d["comm_cell_range"]) is float

@@ -4,9 +4,7 @@ All paths are absolute so they never depend on CWD.
 """
 import os
 
-import app.rootpath  # ensures REPO_ROOT is on sys.path as a side-effect
-
-from app.rootpath import REPO_ROOT
+from app.rootpath import REPO_ROOT  # importing the module triggers its sys.path side-effect
 
 RESULTS_ROOT: str = os.path.join(REPO_ROOT, "Results")
 
