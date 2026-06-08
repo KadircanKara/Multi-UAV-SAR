@@ -193,6 +193,10 @@ def compare(solution, configs, labels=None, scenario_label="scenario",
     tests); otherwise artifacts land in the standard Figures/Results trees.
     Re-using the same scenario_label and directory overwrites prior artifacts.
     """
+    if not configs:
+        raise ValueError(
+            "compare() requires at least one SensingConfig; got an empty list"
+        )
     labels = _dedupe_labels(configs, labels)
     replays = [replay(solution, c, label=l) for c, l in zip(configs, labels)]
 
