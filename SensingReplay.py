@@ -3,6 +3,7 @@
 Merging parameters live HERE, never in the scenario dict / PathInfo / filenames
 (spec D1). This module is also the future web view-section's parameter schema.
 """
+import math
 import os
 from dataclasses import dataclass, field
 
@@ -38,6 +39,11 @@ class SensingConfig:
             v = getattr(self, name)
             if not (0.0 < v < 1.0):
                 raise ValueError(f"{name} must be in (0, 1), got {v}")
+        if self.detection_prob <= self.false_alarm_prob:
+            raise ValueError(
+                f"detection_prob ({self.detection_prob}) must be strictly greater than "
+                f"false_alarm_prob ({self.false_alarm_prob}); p <= q inverts the Bayesian update"
+            )
         if not self.target_locations:
             raise ValueError("target_locations must not be empty")
         if not all(isinstance(t, (int, np.integer)) for t in self.target_locations):
@@ -75,6 +81,36 @@ class ReplayResult:
     occupancy_status: np.ndarray    # (nodes x cells) int flags
     search_map: np.ndarray          # (nodes x cells) object array of per-node observation lists
     solution: object                # truncated PathSolution copy (for animation)
+
+    def to_dict(self) -> dict:
+        """JSON-safe dict for the web API. Bulky/pickle-only fields (solution,
+        search_map, occupancy_status) are intentionally excluded. Non-finite
+        time metrics become None (JSON null) so orjson/json never see Infinity."""
+        def _finite_or_none(v):
+            f = float(v)
+            return f if math.isfinite(f) else None
+
+        return {
+            # config scalars (flattened for convenience)
+            "merge_topology": self.config.merge_topology,
+            "time_model": self.config.time_model,
+            "target_locations": [int(t) for t in self.config.target_locations],
+            "belief_threshold": float(self.config.belief_threshold),
+            # run identity
+            "label": self.label,
+            # time metrics — inf/nan -> None
+            "effective_mission_time": _finite_or_none(self.effective_mission_time),
+            "detection_time": _finite_or_none(self.detection_time),
+            "inform_time": _finite_or_none(self.inform_time),
+            "time_at_least_one_drone_knows_all": _finite_or_none(
+                self.time_at_least_one_drone_knows_all
+            ),
+            # per-cell belief time series (nested list of plain Python float)
+            "cell_occupancy_probabilities": [
+                [float(p) for p in cell_series]
+                for cell_series in self.cell_occupancy_probabilities
+            ],
+        }
 
 
 def replay(solution, config, label=None):

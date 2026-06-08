@@ -18,6 +18,25 @@ def test_replay_dispatches_discrete(small_solution):
     assert r.label == "onboard"
 
 
+def test_replay_result_to_dict_is_json_safe(small_solution):
+    import json
+    r = replay(small_solution, cfg(B=0.999))  # unreachable threshold -> inf metrics
+    d = r.to_dict()
+    # inf -> None so JSON encoders (orjson) don't choke
+    assert d["inform_time"] is None
+    assert isinstance(d["effective_mission_time"], float)
+    # no pickle-only / bulky fields leak into the web view
+    assert "solution" not in d and "search_map" not in d and "occupancy_status" not in d
+    assert d["merge_topology"] == "onboard" and d["time_model"] == "discrete"
+    assert isinstance(d["cell_occupancy_probabilities"][0][0], float)
+    json.dumps(d)  # must round-trip
+
+
+def test_compare_rejects_empty_configs(small_solution):
+    with pytest.raises(ValueError):
+        compare(small_solution, [], animations=False)
+
+
 def test_replay_dispatches_realtime(small_solution):
     r_real = replay(small_solution, cfg(time_model="realtime"))
     r_disc = replay(small_solution, cfg(time_model="discrete"))
