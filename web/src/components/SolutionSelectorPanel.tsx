@@ -20,7 +20,6 @@ import {
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
-import { cn } from "@/lib/utils";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -114,6 +113,24 @@ export default function SolutionSelectorPanel({
   const hasKnee = Boolean(caps.knee);
   const hasByWeights = Boolean(caps.by_weights);
   const hasByIndex = typeof caps.by_index === "number";
+
+  // Solution to display: a strategy result if it matches the current index,
+  // otherwise looked up directly from the front by index — so clicking a
+  // scatter point immediately shows that solution's objective values without
+  // any extra backend round-trip (the front already carries every solution).
+  const currentFromFront =
+    front.solutions.find((s) => s.index === selectedIndex) ??
+    front.solutions[selectedIndex];
+  const shownDetail: SolutionDetail | null =
+    detail && detail.index === selectedIndex
+      ? detail
+      : currentFromFront
+      ? {
+          index: selectedIndex,
+          label: `Solution #${selectedIndex}`,
+          objectives_abs: currentFromFront.objectives_abs,
+        }
+      : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -268,25 +285,17 @@ export default function SolutionSelectorPanel({
         </p>
       )}
 
-      {/* Separator + detail readout */}
+      {/* Separator + active-solution readout (always shows the selected point) */}
       <Separator />
 
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-2">
         <SectionLabel>ACTIVE SOLUTION</SectionLabel>
-        <p className="font-mono text-xs text-muted-foreground tabular-nums">
-          INDEX:{" "}
-          <span
-            className={cn(
-              "font-semibold",
-              detail ? "text-primary" : "text-foreground"
-            )}
-          >
-            {selectedIndex}
-          </span>
-        </p>
+        {shownDetail ? (
+          <DetailCard detail={shownDetail} />
+        ) : (
+          <p className="font-mono text-xs text-muted-foreground">—</p>
+        )}
       </div>
-
-      {detail && <DetailCard detail={detail} />}
     </div>
   );
 }
