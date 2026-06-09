@@ -54,16 +54,16 @@ export function getModels(): Promise<ModelInfo[]> {
   return request<ModelInfo[]>("/api/models");
 }
 
-/** GET /api/scenario/default — fetch the default scenario config. */
+/** GET /api/scenarios/default — fetch the default scenario config. */
 export function getDefaultScenario(): Promise<ScenarioConfig> {
-  return request<ScenarioConfig>("/api/scenario/default");
+  return request<ScenarioConfig>("/api/scenarios/default");
 }
 
-/** POST /api/scenario/validate — validate + derive a scenario config. */
+/** POST /api/scenarios/validate — validate + derive a scenario config. */
 export function validateScenario(
   body: { scenario: ScenarioConfig; model_key?: string | null }
 ): Promise<ScenarioValidateResponse> {
-  return request<ScenarioValidateResponse>("/api/scenario/validate", {
+  return request<ScenarioValidateResponse>("/api/scenarios/validate", {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -81,68 +81,68 @@ export function getScenarioDetail(scenario: string): Promise<ScenarioDetail> {
   );
 }
 
-/** GET /api/library/{scenario}/front[?model_key=] — Pareto front. */
+/** GET /api/fronts/{scenario}[?model_key=] — Pareto front (+ capabilities). */
 export function getFront(
   scenario: string,
   modelKey?: string
 ): Promise<ParetoFront> {
   const qs = modelKey ? `?model_key=${encodeURIComponent(modelKey)}` : "";
   return request<ParetoFront>(
-    `/api/library/${encodeURIComponent(scenario)}/front${qs}`
+    `/api/fronts/${encodeURIComponent(scenario)}${qs}`
   );
 }
 
-/** GET /api/library/{scenario}/capabilities[?model_key=] — model capabilities. */
+/** GET /api/fronts/{scenario}/capabilities[?model_key=] — model capabilities. */
 export function getCapabilities(
   scenario: string,
   modelKey?: string
 ): Promise<Record<string, unknown>> {
   const qs = modelKey ? `?model_key=${encodeURIComponent(modelKey)}` : "";
   return request<Record<string, unknown>>(
-    `/api/library/${encodeURIComponent(scenario)}/capabilities${qs}`
+    `/api/fronts/${encodeURIComponent(scenario)}/capabilities${qs}`
   );
 }
 
-/** POST /api/library/{scenario}/select — select a solution from the Pareto front. */
+/** POST /api/fronts/{scenario}/select — select a solution from the Pareto front. */
 export function selectSolution(
   scenario: string,
   body: SelectRequest
 ): Promise<SelectResponse> {
   return request<SelectResponse>(
-    `/api/library/${encodeURIComponent(scenario)}/select`,
+    `/api/fronts/${encodeURIComponent(scenario)}/select`,
     { method: "POST", body: JSON.stringify(body) }
   );
 }
 
-/** POST /api/library/{scenario}/replay — run a sensing replay. */
+/** POST /api/replay/{scenario} — run a sensing replay. */
 export function replay(
   scenario: string,
   body: ReplayRequest
 ): Promise<ReplayResponse> {
   return request<ReplayResponse>(
-    `/api/library/${encodeURIComponent(scenario)}/replay`,
+    `/api/replay/${encodeURIComponent(scenario)}`,
     { method: "POST", body: JSON.stringify(body) }
   );
 }
 
-/** POST /api/library/{scenario}/compare — compare sensing configs. */
+/** POST /api/compare/{scenario} — compare sensing configs. */
 export function compare(
   scenario: string,
   body: CompareRequest
 ): Promise<CompareResponse> {
   return request<CompareResponse>(
-    `/api/library/${encodeURIComponent(scenario)}/compare`,
+    `/api/compare/${encodeURIComponent(scenario)}`,
     { method: "POST", body: JSON.stringify(body) }
   );
 }
 
-/** POST /api/library/{scenario}/playback — step-wise playback. */
+/** POST /api/playback/{scenario} — step-wise playback. */
 export function playback(
   scenario: string,
   body: PlaybackRequest
 ): Promise<PlaybackResponse> {
   return request<PlaybackResponse>(
-    `/api/library/${encodeURIComponent(scenario)}/playback`,
+    `/api/playback/${encodeURIComponent(scenario)}`,
     { method: "POST", body: JSON.stringify(body) }
   );
 }
