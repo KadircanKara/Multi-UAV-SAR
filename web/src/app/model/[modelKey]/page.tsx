@@ -123,6 +123,14 @@ function fmtObj(v: number | null | undefined): string {
   return v.toFixed(2);
 }
 
+// Max Mean TBV (mean time between visits) is undefined when each cell is
+// visited only once — there is no interval "between visits", so the optimiser
+// reports a spurious 0.00. Exclude/blank it for n_visits === 1 so it doesn't
+// distort the combination table or the parameter-effect plots.
+function tbvMeaningless(objective: string, nVisits: number | null): boolean {
+  return objective.includes("TBV") && nVisits === 1;
+}
+
 // ─── Plain-language model description ────────────────────────────────────────
 
 function modelDescription(grid: ModelGrid): string {
@@ -381,7 +389,9 @@ export default function ModelPage() {
     if (!grid) return {};
     const result: Record<string, EffectPoint[]> = {};
     for (const obj of grid.objectives) {
-      result[obj] = sweepScenarios.map((s) => {
+      result[obj] = sweepScenarios
+        .filter((s) => !tbvMeaningless(obj, s.n_visits))
+        .map((s) => {
         const stats = s.objective_stats[obj];
         return {
           xLabel:
@@ -509,16 +519,33 @@ export default function ModelPage() {
                       : "grid-cols-1 md:grid-cols-2 xl:grid-cols-3"
                   )}
                 >
-                  {grid.objectives.map((obj, idx) => (
-                    <ParameterEffectChart
-                      key={obj}
-                      objective={obj}
-                      polarity={grid.polarities[obj] ?? 1}
-                      sweepLabel={SWEEP_LABELS[sweep]}
-                      points={effectPointsByObj[obj] ?? []}
-                      colorIndex={idx}
-                    />
-                  ))}
+                  {grid.objectives.map((obj, idx) => {
+                    const pts = effectPointsByObj[obj] ?? [];
+                    if (pts.length === 0) {
+                      return (
+                        <div key={obj} className="flex flex-col gap-1">
+                          <p className="text-xs font-mono tracking-wide text-foreground">
+                            {obj}
+                          </p>
+                          <p className="text-xs font-mono text-muted-foreground border border-dashed border-border rounded px-3 py-6 text-center">
+                            {obj.includes("TBV")
+                              ? "Requires n_visits > 1 — undefined when each cell is visited once."
+                              : "No data for the current selection."}
+                          </p>
+                        </div>
+                      );
+                    }
+                    return (
+                      <ParameterEffectChart
+                        key={obj}
+                        objective={obj}
+                        polarity={grid.polarities[obj] ?? 1}
+                        sweepLabel={SWEEP_LABELS[sweep]}
+                        points={pts}
+                        colorIndex={idx}
+                      />
+                    );
+                  })}
                 </div>
               )}
 
@@ -614,7 +641,9 @@ export default function ModelPage() {
                           key={obj}
                           className="font-mono text-xs tabular-nums"
                         >
-                          {fmtObj(s.objective_stats[obj]?.best)}
+                          {tbvMeaningless(obj, s.n_visits)
+                            ? "—"
+                            : fmtObj(s.objective_stats[obj]?.best)}
                         </TableCell>
                       ))}
                     </TableRow>
