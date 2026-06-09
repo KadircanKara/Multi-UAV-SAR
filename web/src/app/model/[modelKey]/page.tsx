@@ -89,14 +89,20 @@ const SWEEP_LABELS: Record<SweepParam, string> = {
 // ─── Helper: collect unique values of a field ─────────────────────────────────
 
 function uniqueDrones(scenarios: ModelGridScenario[]): number[] {
-  return Array.from(new Set(scenarios.map((s) => s.number_of_drones))).sort(
-    (a, b) => a - b
-  );
+  const values: number[] = [];
+  for (const s of scenarios) {
+    if (s.number_of_drones != null) values.push(s.number_of_drones);
+  }
+  return Array.from(new Set(values)).sort((a, b) => a - b);
 }
 
 function uniqueCommRanges(scenarios: ModelGridScenario[]): string[] {
   const seen = new Map<string, number>();
-  for (const s of scenarios) seen.set(s.comm_range, s.comm_range_value);
+  for (const s of scenarios) {
+    if (s.comm_range != null && s.comm_range_value != null) {
+      seen.set(s.comm_range, s.comm_range_value);
+    }
+  }
   return Array.from(seen.entries())
     .sort((a, b) => a[1] - b[1])
     .map(([k]) => k);
@@ -294,12 +300,12 @@ export default function ModelPage() {
       .then((data) => {
         if (!cancelled) {
           setGrid(data);
-          // Set default fixed values from the first scenario
+          // Set default fixed values from the first scenario with non-null fields
           const first = data.scenarios[0];
           if (first) {
-            setFixedDrones(String(first.number_of_drones));
-            setFixedComm(first.comm_range);
-            setFixedNVisits(String(first.n_visits ?? ""));
+            setFixedDrones(first.number_of_drones != null ? String(first.number_of_drones) : "");
+            setFixedComm(first.comm_range ?? "");
+            setFixedNVisits(first.n_visits != null ? String(first.n_visits) : "");
           }
           setLoading(false);
         }
@@ -320,13 +326,25 @@ export default function ModelPage() {
   const sweepScenarios = useMemo(() => {
     if (!grid) return [];
     let filtered = grid.scenarios;
-    if (sweep !== "drones" && fixedDrones) {
-      filtered = filtered.filter(
-        (s) => String(s.number_of_drones) === fixedDrones
-      );
+
+    // When a dimension is being held fixed, exclude scenarios where that
+    // dimension is null (can't match any fixed value) and only keep those
+    // whose value matches the chosen fixed value.
+    if (sweep !== "drones") {
+      // Always exclude null-drones when drones is a fixed dimension
+      filtered = filtered.filter((s) => s.number_of_drones != null);
+      if (fixedDrones) {
+        filtered = filtered.filter(
+          (s) => String(s.number_of_drones) === fixedDrones
+        );
+      }
     }
-    if (sweep !== "comm_range" && fixedComm) {
-      filtered = filtered.filter((s) => s.comm_range === fixedComm);
+    if (sweep !== "comm_range") {
+      // Always exclude null-comm_range when comm_range is a fixed dimension
+      filtered = filtered.filter((s) => s.comm_range != null);
+      if (fixedComm) {
+        filtered = filtered.filter((s) => s.comm_range === fixedComm);
+      }
     }
     if (sweep !== "n_visits" && fixedNVisits !== "") {
       filtered = filtered.filter(
@@ -334,17 +352,26 @@ export default function ModelPage() {
       );
     }
 
-    // Sort by the sweep value
+    // When sweeping a dimension, exclude scenarios where that dimension is
+    // null — they have no meaningful x position on the chart.
     if (sweep === "drones") {
+      filtered = filtered.filter((s) => s.number_of_drones != null);
       filtered = [...filtered].sort(
-        (a, b) => a.number_of_drones - b.number_of_drones
+        (a, b) => (a.number_of_drones as number) - (b.number_of_drones as number)
       );
     } else if (sweep === "comm_range") {
+      filtered = filtered.filter((s) => s.comm_range_value != null);
       filtered = [...filtered].sort(
-        (a, b) => a.comm_range_value - b.comm_range_value
+        (a, b) => (a.comm_range_value as number) - (b.comm_range_value as number)
       );
     } else {
-      filtered = [...filtered].sort((a, b) => (a.n_visits ?? 0) - (b.n_visits ?? 0));
+      // n_visits sweep: null sorts last, then ascending
+      filtered = [...filtered].sort((a, b) => {
+        if (a.n_visits == null && b.n_visits == null) return 0;
+        if (a.n_visits == null) return 1;
+        if (b.n_visits == null) return -1;
+        return a.n_visits - b.n_visits;
+      });
     }
     return filtered;
   }, [grid, sweep, fixedDrones, fixedComm, fixedNVisits]);
@@ -359,15 +386,15 @@ export default function ModelPage() {
         return {
           xLabel:
             sweep === "drones"
-              ? String(s.number_of_drones)
+              ? (s.number_of_drones != null ? String(s.number_of_drones) : "—")
               : sweep === "comm_range"
-              ? s.comm_range
+              ? (s.comm_range ?? "—")
               : String(s.n_visits ?? "—"),
           xNum:
             sweep === "drones"
-              ? s.number_of_drones
+              ? (s.number_of_drones ?? 0)
               : sweep === "comm_range"
-              ? s.comm_range_value
+              ? (s.comm_range_value ?? 0)
               : (s.n_visits ?? 0),
           best: stats?.best ?? null,
           min: stats?.min ?? null,
@@ -466,28 +493,34 @@ export default function ModelPage() {
                 onFixedNVisits={setFixedNVisits}
               />
 
-              {/* One chart per objective */}
-              <div
-                className={cn(
-                  "grid gap-6",
-                  grid.objectives.length === 1
-                    ? "grid-cols-1"
-                    : grid.objectives.length === 2
-                    ? "grid-cols-1 md:grid-cols-2"
-                    : "grid-cols-1 md:grid-cols-2 xl:grid-cols-3"
-                )}
-              >
-                {grid.objectives.map((obj, idx) => (
-                  <ParameterEffectChart
-                    key={obj}
-                    objective={obj}
-                    polarity={grid.polarities[obj] ?? 1}
-                    sweepLabel={SWEEP_LABELS[sweep]}
-                    points={effectPointsByObj[obj] ?? []}
-                    colorIndex={idx}
-                  />
-                ))}
-              </div>
+              {/* One chart per objective, or a note if the filter yields nothing */}
+              {sweepScenarios.length === 0 ? (
+                <p className="text-xs font-mono text-muted-foreground border border-dashed border-border rounded px-4 py-3">
+                  No data for this combination. Try a different fixed-parameter selection.
+                </p>
+              ) : (
+                <div
+                  className={cn(
+                    "grid gap-6",
+                    grid.objectives.length === 1
+                      ? "grid-cols-1"
+                      : grid.objectives.length === 2
+                      ? "grid-cols-1 md:grid-cols-2"
+                      : "grid-cols-1 md:grid-cols-2 xl:grid-cols-3"
+                  )}
+                >
+                  {grid.objectives.map((obj, idx) => (
+                    <ParameterEffectChart
+                      key={obj}
+                      objective={obj}
+                      polarity={grid.polarities[obj] ?? 1}
+                      sweepLabel={SWEEP_LABELS[sweep]}
+                      points={effectPointsByObj[obj] ?? []}
+                      colorIndex={idx}
+                    />
+                  ))}
+                </div>
+              )}
 
               {/* Caption */}
               <p className="text-xs text-muted-foreground font-mono">

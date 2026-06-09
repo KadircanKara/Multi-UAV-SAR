@@ -158,9 +158,9 @@ export interface ObjectiveStat {
 
 export interface ModelGridScenario {
   scenario: string;
-  number_of_drones: number;
-  comm_range: string;
-  comm_range_value: number;
+  number_of_drones: number | null;
+  comm_range: string | null;
+  comm_range_value: number | null;
   n_visits: number | null;
   n_solutions: number;
   result_kind: string;
@@ -170,7 +170,7 @@ export interface ModelGridScenario {
 export interface ModelGrid {
   model_key: string;
   type: string;
-  algorithm: string | null;
+  algorithm: string;
   objectives: string[];
   polarities: Record<string, number>;
   scenarios: ModelGridScenario[];
