@@ -160,7 +160,12 @@ function lerpHSL(
   to: [number, number, number],
   t: number
 ): string {
-  const h = from[0] + (to[0] - from[0]) * t;
+  // Belief heat: keep the "hot" (high-belief) hue throughout and ramp only
+  // saturation + lightness from the cool/low end to the hot/high end. A linear
+  // HUE interpolation from a cool colour (~blue 207°) to amber (42°) passes
+  // through green (~120°) at the midpoint, which misreads as "every cell is
+  // active". Fixing the hue makes belief 0→1 read as dark→bright/hot.
+  const h = to[0];
   const s = from[1] + (to[1] - from[1]) * t;
   const l = from[2] + (to[2] - from[2]) * t;
   return `hsl(${h.toFixed(1)} ${s.toFixed(1)}% ${l.toFixed(1)}%)`;

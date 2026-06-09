@@ -12,7 +12,6 @@
  */
 
 import { useState, useRef, useCallback } from "react";
-import dynamic from "next/dynamic";
 import { toast } from "sonner";
 import { playback } from "@/lib/api";
 import type { PlaybackPayload, SensingConfig, ParetoFront } from "@/lib/types";
@@ -25,18 +24,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { usePlaybackColors } from "./usePlaybackColors";
-import type { GridCanvasHandle } from "./GridCanvas";
-
-// ─── Dynamic (SSR-off) canvas import ──────────────────────────────────────────
-
-const GridCanvas = dynamic(() => import("./GridCanvas"), {
-  ssr: false,
-  loading: () => (
-    <div className="flex items-center justify-center w-full h-full">
-      <Skeleton className="w-full h-full" />
-    </div>
-  ),
-});
+// Import the canvas directly (NOT via next/dynamic): next/dynamic returns a
+// function-component wrapper that does NOT forward refs, which left the
+// imperative GridCanvasHandle ref null (so play/pause/scrub did nothing).
+// GridCanvas is SSR-safe — it only touches window/canvas inside effects.
+import GridCanvas, { type GridCanvasHandle } from "./GridCanvas";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
