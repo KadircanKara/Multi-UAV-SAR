@@ -176,6 +176,86 @@ class TestPlaybackDiscrete:
             assert key in rl, f"raw_lengths missing key {key!r}"
             assert rl[key] > 0, f"raw_lengths[{key!r}] must be positive"
 
+    def test_discrete_granularity_invariant(self, client):
+        """
+        Regression: for discrete time_model, trajectory and connectivity
+        raw_lengths must be at waypoint granularity (within 2 of belief length),
+        NOT at interpolated sub-step granularity (~1225 vs ~78).
+
+        This test FAILS with the old buggy code where get_real_paths() is used
+        for discrete mode (trajectory=1225, belief=78, truncating to first 6%).
+        """
+        if not _seed_present(client):
+            pytest.skip("TC front seed not present")
+        data = client.post(
+            f"/api/playback/{TC_FRONT}",
+            json={"index": 0, "config": VALID_CFG},
+        ).json()
+        rl = data["raw_lengths"]
+        belief_len = rl["belief"]
+        traj_len = rl["trajectory"]
+        conn_len = rl["connectivity"]
+
+        # All four lengths must be close together at waypoint granularity.
+        # With the bug: traj_len ~1225, belief_len ~78 — so traj_len >> belief_len + 2.
+        assert traj_len <= belief_len + 2, (
+            f"discrete trajectory raw_length {traj_len} is much larger than "
+            f"belief raw_length {belief_len} (expected within 2) — "
+            f"likely using interpolated paths instead of waypoint positions"
+        )
+        assert conn_len <= belief_len + 2, (
+            f"discrete connectivity raw_length {conn_len} is much larger than "
+            f"belief raw_length {belief_len} (expected within 2)"
+        )
+
+    def test_discrete_drones_traverse_full_mission(self, client):
+        """
+        Regression: drones must traverse the full mission in discrete mode,
+        not just the first ~6% of an interpolated path.
+
+        Checks that at least one drone visits more than 3 distinct (x, y)
+        positions across all steps, or that the last position differs from
+        the first position by more than one cell_side_length.
+
+        With the bug (only first 78 of 1225 interpolated points kept), drones
+        appear nearly stationary and this assertion fails.
+        """
+        if not _seed_present(client):
+            pytest.skip("TC front seed not present")
+        data = client.post(
+            f"/api/playback/{TC_FRONT}",
+            json={"index": 0, "config": VALID_CFG},
+        ).json()
+        cell_side = data["cell_side_length"]
+        n_nodes = data["number_of_nodes"]
+        xs = data["trajectories"]["x"]
+        ys = data["trajectories"]["y"]
+
+        # Check drone rows (skip node 0 = base station which stays fixed).
+        traversal_ok = False
+        for node in range(1, n_nodes):
+            x_row = [v for v in xs[node] if v is not None]
+            y_row = [v for v in ys[node] if v is not None]
+            if len(x_row) < 2:
+                continue
+            # Distinct (x, y) positions across all steps.
+            distinct = len(set(zip(x_row, y_row)))
+            if distinct > 3:
+                traversal_ok = True
+                break
+            # Or last position differs significantly from first.
+            dx = x_row[-1] - x_row[0]
+            dy = y_row[-1] - y_row[0]
+            dist = math.sqrt(dx * dx + dy * dy)
+            if dist > cell_side:
+                traversal_ok = True
+                break
+
+        assert traversal_ok, (
+            "No drone traverses the full mission in discrete mode — "
+            "drones appear nearly stationary (bug: only first few interpolated steps kept)"
+        )
+
 
 # ---------------------------------------------------------------------------
 # POST /api/playback/{scenario} — 200 realtime

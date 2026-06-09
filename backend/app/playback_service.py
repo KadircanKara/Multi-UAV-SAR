@@ -8,6 +8,15 @@ heat, and targets-known curve — all aligned to a single step axis.
 Import-safety: Time.get_real_paths, Time.get_real_connectivity_matrix,
 SensingReplay._targets_known_curve, numpy are safe.
 PathAlgorithm / PathUnitTest / main are NEVER imported here.
+
+Mode branching (discrete vs realtime):
+- realtime: get_real_paths() interpolates each leg into sub-steps (~1107 total);
+  get_real_connectivity_matrix() computes per-sub-step connectivity from x/y.
+- discrete: positions come directly from real_time_path_matrix via get_coords()
+  (one step per waypoint, ~78 total); connectivity is sol.connectivity_matrix
+  (same waypoint granularity). This ensures trajectory, connectivity, belief,
+  and targets_known are all at the same waypoint granularity so the min()
+  alignment truncation does not silently discard 94% of the flight.
 """
 from __future__ import annotations
 
@@ -100,13 +109,44 @@ def build_playback(
     sol = r.solution
     info = sol.info
 
-    # 2. Continuous trajectories (canonical coordinate space, meters).
-    #    get_real_paths works for BOTH time models — shape (nodes, T_traj).
-    x_matrix, y_matrix = get_real_paths(sol)          # (nodes, T_traj)
+    # 2. Mode-specific position + connectivity sources.
+    #
+    # realtime: get_real_paths() interpolates each leg into ~dt sub-steps
+    #   (continuous motion, ~1107 steps).  get_real_connectivity_matrix()
+    #   computes per-sub-step connectivity from the same x/y arrays.
+    #
+    # discrete: positions map each waypoint cell id through get_coords() —
+    #   one (x, y) per waypoint (~78 steps).  sol.connectivity_matrix is
+    #   already computed at waypoint granularity (same ~78 steps).  Using
+    #   get_real_paths() here would produce ~1225 interpolated points and
+    #   the min() alignment would keep only the first 78 of them (first 6%
+    #   of the flight), making drones appear nearly stationary.
+    time_model = r.config.time_model
 
-    # 3. Real connectivity from the same x/y so it is step-aligned with traj.
-    #    Shape: (T_traj, nodes, nodes)
-    conn_matrix = get_real_connectivity_matrix(x_matrix, y_matrix, sol)
+    if time_model == "discrete":
+        # Build (nodes, time_slots) coordinate matrices directly from cell ids.
+        path_mat = sol.real_time_path_matrix        # (nodes, time_slots)
+        nodes_count, time_slots = path_mat.shape
+        x_list = np.zeros((nodes_count, time_slots))
+        y_list = np.zeros((nodes_count, time_slots))
+        for node in range(nodes_count):
+            for t in range(time_slots):
+                cell = int(path_mat[node, t])
+                coords = sol.get_coords(cell)       # returns np.array([x, y])
+                x_list[node, t] = coords[0]
+                y_list[node, t] = coords[1]
+        x_matrix = x_list   # (nodes, time_slots)
+        y_matrix = y_list   # (nodes, time_slots)
+
+        # sol.connectivity_matrix is (time_slots, nodes, nodes) — same granularity.
+        if sol.connectivity_matrix is None:
+            # Fallback: recompute from real_time_path_matrix (should not normally happen).
+            sol.do_connectivity_calculations()
+        conn_matrix = sol.connectivity_matrix       # (time_slots, nodes, nodes)
+    else:
+        # realtime: interpolated sub-step positions and matching connectivity.
+        x_matrix, y_matrix = get_real_paths(sol)          # (nodes, T_traj)
+        conn_matrix = get_real_connectivity_matrix(x_matrix, y_matrix, sol)  # (T_traj, nodes, nodes)
 
     # 4. Belief and targets-known from the replay result.
     #    belief: list[cell][step]  — list of lists (Python, may vary in length)
