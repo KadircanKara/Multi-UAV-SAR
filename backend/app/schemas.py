@@ -145,3 +145,77 @@ class SelectResponse(BaseModel):
     index: int
     label: str
     detail: SolutionDetail
+
+
+# ---------------------------------------------------------------------------
+# Sensing replay / compare schemas
+# ---------------------------------------------------------------------------
+
+class SensingConfigModel(BaseModel):
+    """Per-field-validated sensing config. Cross-field checks (p>q, grid bounds)
+    are delegated to SensingConfig.from_info() — no duplication here."""
+
+    merge_topology: str = Field(
+        default="onboard",
+        description="Who shares beliefs: none, onboard, or gcs",
+    )
+    time_model: str = Field(
+        default="discrete",
+        description="Replay pipeline: discrete or realtime",
+    )
+    detection_prob: float = Field(
+        default=0.7,
+        gt=0.0,
+        lt=1.0,
+        description="Detection probability p ∈ (0, 1)",
+    )
+    false_alarm_prob: float = Field(
+        default=0.2,
+        gt=0.0,
+        lt=1.0,
+        description="False alarm probability q ∈ (0, 1)",
+    )
+    belief_threshold: float = Field(
+        default=0.9,
+        gt=0.0,
+        lt=1.0,
+        description="Belief threshold B ∈ (0, 1)",
+    )
+    target_locations: list[int] = Field(
+        default_factory=lambda: [12],
+        min_length=1,
+        description="Non-empty list of 0-indexed grid cell ids",
+    )
+
+    @field_validator("merge_topology")
+    @classmethod
+    def validate_merge_topology(cls, v: str) -> str:
+        allowed = {"none", "onboard", "gcs"}
+        if v not in allowed:
+            raise ValueError(f"merge_topology must be one of {sorted(allowed)}, got {v!r}")
+        return v
+
+    @field_validator("time_model")
+    @classmethod
+    def validate_time_model(cls, v: str) -> str:
+        allowed = {"discrete", "realtime"}
+        if v not in allowed:
+            raise ValueError(f"time_model must be one of {sorted(allowed)}, got {v!r}")
+        return v
+
+    def to_cfg_dict(self) -> dict:
+        return self.model_dump()
+
+
+class ReplayRequest(BaseModel):
+    model_key: Optional[str] = None
+    index: int
+    config: SensingConfigModel
+    label: Optional[str] = None
+
+
+class CompareRequest(BaseModel):
+    model_key: Optional[str] = None
+    index: int
+    configs: list[SensingConfigModel]
+    labels: Optional[list[str]] = None
