@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { getLibrary } from "@/lib/api";
 import type { ScenarioSummary } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,6 +30,11 @@ function MissionCardSkeleton() {
 
 function MissionCard({ s }: { s: ScenarioSummary }) {
   return (
+    <Link
+      href={`/explore/${encodeURIComponent(s.scenario)}`}
+      className="block"
+      aria-label={`Explore ${s.scenario}`}
+    >
     <Card
       className={cn(
         "cursor-pointer transition-all duration-150",
@@ -100,6 +106,7 @@ function MissionCard({ s }: { s: ScenarioSummary }) {
         </p>
       </CardContent>
     </Card>
+    </Link>
   );
 }
 
