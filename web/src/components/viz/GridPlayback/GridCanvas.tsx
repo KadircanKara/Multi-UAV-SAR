@@ -203,7 +203,7 @@ function drawFrame(
   const numCells = grid_size * grid_size;
   for (let c = 0; c < numCells; c++) {
     const cx = (c % grid_size + 0.5) * cell_side_length;
-    const cy = Math.floor(c / grid_size + 0.5) * cell_side_length;
+    const cy = (Math.floor(c / grid_size) + 0.5) * cell_side_length;
     const px = t.wx(cx - cell_side_length / 2);
     const py = t.wy(cy + cell_side_length / 2); // top in canvas coords (y is flipped)
 
@@ -224,7 +224,7 @@ function drawFrame(
   // ── Layer 2: Target cells + "found" state ─────────────────────────────────
   for (const cell of targets) {
     const cx = (cell % grid_size + 0.5) * cell_side_length;
-    const cy = Math.floor(cell / grid_size + 0.5) * cell_side_length;
+    const cy = (Math.floor(cell / grid_size) + 0.5) * cell_side_length;
     const px = t.wx(cx - cell_side_length / 2);
     const py = t.wy(cy + cell_side_length / 2);
 
@@ -258,7 +258,7 @@ function drawFrame(
     for (let c = 0; c < numCells; c++) {
       if (targetSet.has(c)) continue; // already labeled above
       const cx = (c % grid_size + 0.5) * cell_side_length;
-      const cy = Math.floor(c / grid_size + 0.5) * cell_side_length;
+      const cy = (Math.floor(c / grid_size) + 0.5) * cell_side_length;
       const px = t.wx(cx - cell_side_length / 2);
       const py = t.wy(cy + cell_side_length / 2);
 
@@ -385,6 +385,7 @@ const GridCanvas = forwardRef<GridCanvasHandle, Props>(function GridCanvas(
   const rafRef = useRef<number | null>(null);
   const lastRafTimeRef = useRef<number>(0);
   const lastNotifyRef = useRef<number>(0);
+  const speedRef = useRef<number>(speedMultiplier);
   // ms per step at 1× speed — target ~30fps for discrete; ~10fps for large realtime
   const BASE_MS_PER_STEP = payload.steps > 200 ? 50 : 100;
 
@@ -397,7 +398,10 @@ const GridCanvas = forwardRef<GridCanvasHandle, Props>(function GridCanvas(
   const buildT = useCallback((): Transform | null => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
-    return buildTransform(canvas.width, canvas.height, payload);
+    // Pass CSS logical size (not physical pixel size) so transform coordinates
+    // stay in the space that ctx.scale(dpr, dpr) maps to.
+    const dpr = window.devicePixelRatio || 1;
+    return buildTransform(canvas.width / dpr, canvas.height / dpr, payload);
   }, [payload]);
 
   const redraw = useCallback(
@@ -410,11 +414,17 @@ const GridCanvas = forwardRef<GridCanvasHandle, Props>(function GridCanvas(
     [getCtx, buildT, payload, colors, showAllBeliefLabels]
   );
 
+  // Keep speedRef in sync so rafLoop always reads the latest speed
+  useEffect(() => {
+    speedRef.current = speedMultiplier;
+  }, [speedMultiplier]);
+
   // rAF loop — advances frameRef, does NOT call setState
+  // speedMultiplier is intentionally NOT in deps; read via speedRef for stability
   const rafLoop = useCallback(
     (ts: number) => {
       if (!playingRef.current) return;
-      const msPerStep = BASE_MS_PER_STEP / speedMultiplier;
+      const msPerStep = BASE_MS_PER_STEP / speedRef.current;
       const elapsed = ts - lastRafTimeRef.current;
       if (elapsed >= msPerStep) {
         const steps = Math.max(1, Math.floor(elapsed / msPerStep));
@@ -437,7 +447,8 @@ const GridCanvas = forwardRef<GridCanvasHandle, Props>(function GridCanvas(
       }
       rafRef.current = requestAnimationFrame(rafLoop);
     },
-    [redraw, onFrameChange, payload.steps, speedMultiplier, BASE_MS_PER_STEP]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [redraw, onFrameChange, payload.steps, BASE_MS_PER_STEP]
   );
 
   // Expose handle to parent
@@ -504,10 +515,8 @@ const GridCanvas = forwardRef<GridCanvasHandle, Props>(function GridCanvas(
     };
   }, [redraw]);
 
-  // Redraw when colors or labels toggle change (payload change resets via key)
-  useEffect(() => {
-    redraw(frameRef.current);
-  }, [redraw]);
+  // Note: colors/labels/payload changes are handled by the effect above via [redraw],
+  // since `redraw` itself depends on colors, showAllBeliefLabels, and payload.
 
   return (
     <canvas
