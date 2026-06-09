@@ -147,6 +147,35 @@ export type ReplayResponse   = Record<string, unknown>;
 export type CompareResponse  = Record<string, unknown>;
 export type PlaybackResponse = Record<string, unknown>;
 
+// ─── Model Grid (parameter-effect analysis) ──────────────────────────────────
+
+export interface ObjectiveStat {
+  min: number | null;
+  max: number | null;
+  mean: number | null;
+  best: number | null;
+}
+
+export interface ModelGridScenario {
+  scenario: string;
+  number_of_drones: number;
+  comm_range: string;
+  comm_range_value: number;
+  n_visits: number | null;
+  n_solutions: number;
+  result_kind: string;
+  objective_stats: Record<string, ObjectiveStat>;
+}
+
+export interface ModelGrid {
+  model_key: string;
+  type: string;
+  algorithm: string | null;
+  objectives: string[];
+  polarities: Record<string, number>;
+  scenarios: ModelGridScenario[];
+}
+
 // ─── Playback payload (typed from /api/playback response) ────────────────────
 
 export interface PlaybackPayload {

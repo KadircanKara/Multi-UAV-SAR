@@ -19,6 +19,7 @@ import type {
   CompareResponse,
   PlaybackRequest,
   PlaybackResponse,
+  ModelGrid,
 } from "@/lib/types";
 
 const BASE =
@@ -72,6 +73,13 @@ export function validateScenario(
 /** GET /api/library — list all precomputed scenario summaries. */
 export function getLibrary(): Promise<ScenarioSummary[]> {
   return request<ScenarioSummary[]>("/api/library");
+}
+
+/** GET /api/models/{model_key}/grid — parameter-effect grid for one model. */
+export function getModelGrid(modelKey: string): Promise<ModelGrid> {
+  return request<ModelGrid>(
+    `/api/models/${encodeURIComponent(modelKey)}/grid`
+  );
 }
 
 /** GET /api/library/{scenario} — full detail for one scenario. */

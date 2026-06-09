@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useEffect, useState, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { getLibrary } from "@/lib/api";
 import type { ScenarioSummary } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,36 +10,106 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
+// ─── Model group (derived from ScenarioSummary[]) ────────────────────────────
+
+interface ModelGroup {
+  model_key: string;
+  type: string;
+  algorithm: string;
+  objectives: string[];
+  scenarios: ScenarioSummary[];
+  droneRange: [number, number] | null;
+  nVisitsRange: [number, number] | null;
+  combinationCount: number;
+}
+
+function buildModelGroups(scenarios: ScenarioSummary[]): ModelGroup[] {
+  const map = new Map<string, ScenarioSummary[]>();
+  for (const s of scenarios) {
+    const arr = map.get(s.model_key) ?? [];
+    arr.push(s);
+    map.set(s.model_key, arr);
+  }
+
+  return Array.from(map.entries()).map(([model_key, items]) => {
+    const first = items[0]!;
+
+    const drones = items
+      .map((s) => s.number_of_drones)
+      .filter((d): d is number => d != null);
+    const nVisits = items
+      .map((s) => s.variant_value)
+      .filter((v): v is number => v != null);
+
+    return {
+      model_key,
+      type: first.type,
+      algorithm: first.algorithm,
+      objectives: first.objectives,
+      scenarios: items,
+      droneRange:
+        drones.length > 0
+          ? [Math.min(...drones), Math.max(...drones)]
+          : null,
+      nVisitsRange:
+        nVisits.length > 0
+          ? [Math.min(...nVisits), Math.max(...nVisits)]
+          : null,
+      combinationCount: items.length,
+    };
+  });
+}
+
 // ─── Loading skeleton ─────────────────────────────────────────────────────────
 
-function MissionCardSkeleton() {
+function ModelCardSkeleton() {
   return (
     <div className="flex flex-col gap-3 rounded border border-border bg-card p-4">
       <Skeleton className="h-5 w-40" />
+      <div className="flex gap-2">
+        <Skeleton className="h-5 w-12" />
+        <Skeleton className="h-5 w-20" />
+        <Skeleton className="h-5 w-20" />
+      </div>
       <Skeleton className="h-4 w-full" />
       <Skeleton className="h-4 w-3/4" />
-      <div className="flex gap-2">
-        <Skeleton className="h-5 w-16" />
-        <Skeleton className="h-5 w-16" />
-      </div>
     </div>
   );
 }
 
-// ─── Single mission card ──────────────────────────────────────────────────────
+// ─── Single model card ────────────────────────────────────────────────────────
 
-function MissionCard({ s }: { s: ScenarioSummary }) {
+function ModelCard({ group }: { group: ModelGroup }) {
+  const router = useRouter();
+
+  function handleClick() {
+    router.push("/model/" + encodeURIComponent(group.model_key));
+  }
+
+  const summaryParts: string[] = [
+    `${group.combinationCount} parameter combination${group.combinationCount !== 1 ? "s" : ""}`,
+  ];
+  if (group.droneRange) {
+    const [lo, hi] = group.droneRange;
+    summaryParts.push(lo === hi ? `${lo} drone${lo !== 1 ? "s" : ""}` : `drones ${lo}–${hi}`);
+  }
+  if (group.nVisitsRange) {
+    const [lo, hi] = group.nVisitsRange;
+    summaryParts.push(lo === hi ? `n_visits ${lo}` : `n_visits ${lo}–${hi}`);
+  }
+
   return (
-    <Link
-      href={`/explore/${encodeURIComponent(s.scenario)}`}
-      className="block"
-      aria-label={`Explore ${s.scenario}`}
-    >
     <Card
+      onClick={handleClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") handleClick();
+      }}
+      aria-label={`Open model ${group.model_key}`}
       className={cn(
         "cursor-pointer transition-all duration-150",
-        "hover:ring-1 hover:ring-primary hover:shadow-[0_0_14px_hsl(var(--primary)/0.3)]",
-        !s.has_solutions && "opacity-60"
+        "hover:ring-1 hover:ring-primary hover:shadow-[0_0_14px_hsl(var(--primary)/0.3)]"
       )}
     >
       <CardHeader>
@@ -47,66 +117,29 @@ function MissionCard({ s }: { s: ScenarioSummary }) {
           className="text-sm font-semibold tracking-widest uppercase text-primary truncate font-display"
           style={{ fontFamily: "var(--font-display)" }}
         >
-          {s.model_key}
+          {group.model_key}
         </CardTitle>
       </CardHeader>
 
-      <CardContent className="flex flex-col gap-2">
-        {/* Objectives as badges */}
+      <CardContent className="flex flex-col gap-3">
+        {/* Type + objectives badges */}
         <div className="flex flex-wrap gap-1">
-          {s.objectives.map((obj) => (
+          <Badge className="text-xs font-mono tracking-widest bg-secondary text-secondary-foreground">
+            {group.type}
+          </Badge>
+          {group.objectives.map((obj) => (
             <Badge key={obj} variant="outline" className="text-xs tracking-wide">
               {obj}
             </Badge>
           ))}
         </div>
 
-        {/* Tactical mono readouts */}
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs font-mono tabular-nums">
-          {s.grid_size != null && (
-            <>
-              <dt className="text-muted-foreground/70">GRID</dt>
-              <dd className="text-foreground">
-                {s.grid_size}×{s.grid_size}
-              </dd>
-            </>
-          )}
-          {s.number_of_drones != null && (
-            <>
-              <dt className="text-muted-foreground/70">DRONES</dt>
-              <dd className="text-foreground">{s.number_of_drones}</dd>
-            </>
-          )}
-          {s.comm_range != null && (
-            <>
-              <dt className="text-muted-foreground/70">COMM</dt>
-              <dd className="text-foreground">{s.comm_range}</dd>
-            </>
-          )}
-          <dt className="text-muted-foreground/70">SOLUTIONS</dt>
-          <dd
-            className={cn(
-              "font-semibold",
-              s.has_solutions ? "text-accent" : "text-muted-foreground"
-            )}
-          >
-            {s.n_solutions}
-          </dd>
-          <dt className="text-muted-foreground/70">KIND</dt>
-          <dd className="text-foreground uppercase tracking-wide">
-            {s.result_kind}
-          </dd>
-          <dt className="text-muted-foreground/70">TYPE</dt>
-          <dd className="text-foreground uppercase tracking-wide">{s.type}</dd>
-        </dl>
-
-        {/* Scenario ID */}
-        <p className="mt-1 text-xs text-muted-foreground/60 font-mono truncate">
-          {s.scenario}
+        {/* Summary line */}
+        <p className="text-xs font-mono text-muted-foreground">
+          {summaryParts.join(" · ")}
         </p>
       </CardContent>
     </Card>
-    </Link>
   );
 }
 
@@ -162,16 +195,18 @@ export default function MissionSelectPage() {
     };
   }, []);
 
-  const filtered = scenarios.filter((s) => {
-    if (!query.trim()) return true;
+  const allGroups = useMemo(() => buildModelGroups(scenarios), [scenarios]);
+
+  const filteredGroups = useMemo(() => {
+    if (!query.trim()) return allGroups;
     const q = query.toLowerCase();
-    return (
-      s.scenario.toLowerCase().includes(q) ||
-      s.model_key.toLowerCase().includes(q) ||
-      s.type.toLowerCase().includes(q) ||
-      s.objectives.some((o) => o.toLowerCase().includes(q))
+    return allGroups.filter(
+      (g) =>
+        g.model_key.toLowerCase().includes(q) ||
+        g.type.toLowerCase().includes(q) ||
+        g.objectives.some((o) => o.toLowerCase().includes(q))
     );
-  });
+  }, [allGroups, query]);
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6">
@@ -184,8 +219,7 @@ export default function MissionSelectPage() {
           MISSION SELECT
         </h1>
         <p className="text-xs tracking-wide text-muted-foreground">
-          SELECT A PRECOMPUTED SCENARIO TO INSPECT ITS PARETO FRONT AND REPLAY
-          SENSING
+          SELECT A MODEL TO BROWSE ITS PARAMETER COMBINATIONS AND OBJECTIVE-EFFECT ANALYSIS
         </p>
       </div>
 
@@ -193,7 +227,7 @@ export default function MissionSelectPage() {
       <div className="max-w-sm">
         <Input
           type="search"
-          placeholder="FILTER MISSIONS…"
+          placeholder="FILTER MODELS…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           className="text-xs tracking-widest uppercase placeholder:tracking-widest"
@@ -207,27 +241,27 @@ export default function MissionSelectPage() {
       {loading && !error && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {Array.from({ length: 8 }).map((_, i) => (
-            <MissionCardSkeleton key={i} />
+            <ModelCardSkeleton key={i} />
           ))}
         </div>
       )}
 
       {/* Empty filter result */}
-      {!loading && !error && filtered.length === 0 && (
+      {!loading && !error && filteredGroups.length === 0 && (
         <p className="font-mono text-sm tracking-wide text-muted-foreground">
-          NO MISSIONS MATCH FILTER.
+          NO MODELS MATCH FILTER.
         </p>
       )}
 
-      {/* Mission cards */}
-      {!loading && !error && filtered.length > 0 && (
+      {/* Model cards */}
+      {!loading && !error && filteredGroups.length > 0 && (
         <>
           <p className="font-mono text-xs tabular-nums text-muted-foreground">
-            {filtered.length}/{scenarios.length} MISSIONS
+            {filteredGroups.length}/{allGroups.length} MODELS · {scenarios.length} TOTAL COMBINATIONS
           </p>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {filtered.map((s) => (
-              <MissionCard key={`${s.scenario}::${s.model_key}`} s={s} />
+            {filteredGroups.map((g) => (
+              <ModelCard key={g.model_key} group={g} />
             ))}
           </div>
         </>
