@@ -1,15 +1,16 @@
 "use client";
 
 /**
- * ParameterEffectChart — one line chart showing how a single objective changes
- * as a sweep parameter varies (with optional min/max band).
+ * ParameterEffectChart — one line chart showing how a single objective's best
+ * value changes as a sweep parameter varies. The y-axis is fit to the trend
+ * range (not anchored at 0) so the trend is clearly visible; the per-point
+ * Pareto-front spread is available in the tooltip.
  * Loaded via next/dynamic({ ssr: false }) from the model page.
  */
 
 import {
   ComposedChart,
   Line,
-  Area,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -90,13 +91,29 @@ export default function ParameterEffectChart({
   const colors = useChartColors();
 
   const mainColor = colors.series[colorIndex % colors.series.length] ?? colors.series[0]!;
-  // Build band data: Recharts Area with dataKey of [min, max]
   const data = points.map((p) => ({
     xLabel: p.xLabel,
     xNum: p.xNum,
     best: p.best,
-    band: p.min != null && p.max != null ? [p.min, p.max] : [null, null],
+    min: p.min,
+    max: p.max,
   }));
+
+  // Fit the y-axis to the best-value trend (with padding) so the trend is
+  // clearly visible. The per-point Pareto-front spread can be far wider than
+  // the trend itself (e.g. a ~4-unit trend inside a ~500-unit front), so
+  // including it would flatten the line — the spread stays in the tooltip.
+  const bests = points
+    .map((p) => p.best)
+    .filter((v): v is number => v != null && Number.isFinite(v));
+  let yDomain: [number, number] | undefined;
+  if (bests.length > 0) {
+    const lo = Math.min(...bests);
+    const hi = Math.max(...bests);
+    const span = hi - lo;
+    const pad = span > 0 ? span * 0.12 : Math.max(Math.abs(hi) * 0.1, 1);
+    yDomain = [lo - pad, hi + pad];
+  }
 
   const betterHint = polarity === -1 ? "higher is better" : "lower is better";
 
@@ -137,6 +154,10 @@ export default function ParameterEffectChart({
               axisLine={{ stroke: colors.grid }}
             />
             <YAxis
+              domain={yDomain ?? ["auto", "auto"]}
+              tickFormatter={(v: number) =>
+                Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1)
+              }
               tick={{
                 fontFamily: "var(--font-mono)",
                 fontSize: 10,
@@ -151,17 +172,6 @@ export default function ParameterEffectChart({
                 <EffectTooltip objective={objective} />
               }
               cursor={{ stroke: `${colors.reference}66` }}
-            />
-            {/* Min-max band */}
-            <Area
-              type="monotone"
-              dataKey="band"
-              fill={`${mainColor}22`}
-              stroke="none"
-              dot={false}
-              activeDot={false}
-              connectNulls={false}
-              isAnimationActive={false}
             />
             {/* Best-value line */}
             <Line
