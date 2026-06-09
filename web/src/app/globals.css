@@ -1,0 +1,157 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TACTICAL MISSION CONTROL THEME
+   Dark palette is the default. Set on both :root and .dark so it is always dark.
+   html.dark is also set in layout.tsx.
+
+   Hex source of truth:
+     background     #05080a   card    #0a0f12   primary (amber)      #f2a900
+     foreground     #c7d0c9   secondary #16202a  accent (signal-grn)  #39ff8b
+     muted          #11181d   muted-fg  #6b7d77  destructive          #ff5f56
+     border/input   #16242b   ring    #f2a900
+     chart-3 (cyan) #22d3ee   chart-4 (magenta) #e879f9  chart-5 (grey) #8aa0a8
+   Converted to HSL triplets (H S% L% — space-separated, no hsl(), no commas):
+   ───────────────────────────────────────────────────────────────────────── */
+
+@layer base {
+  :root {
+    --background: 204 36% 3%;
+    --foreground: 150 8% 80%;
+    --card: 207 32% 6%;
+    --card-foreground: 150 8% 80%;
+    --popover: 207 32% 6%;
+    --popover-foreground: 150 8% 80%;
+    --primary: 42 100% 47%;
+    --primary-foreground: 204 36% 3%;
+    --secondary: 213 30% 13%;
+    --secondary-foreground: 150 8% 80%;
+    --muted: 208 28% 9%;
+    --muted-foreground: 169 8% 45%;
+    --accent: 151 100% 61%;
+    --accent-foreground: 204 36% 3%;
+    --destructive: 3 100% 67%;
+    --destructive-foreground: 204 36% 3%;
+    --border: 205 30% 13%;
+    --input: 205 30% 13%;
+    --ring: 42 100% 47%;
+    --chart-1: 42 100% 47%;
+    --chart-2: 151 100% 61%;
+    --chart-3: 190 82% 53%;
+    --chart-4: 294 94% 70%;
+    --chart-5: 200 17% 59%;
+    --radius: 0.25rem;
+  }
+
+  .dark {
+    --background: 204 36% 3%;
+    --foreground: 150 8% 80%;
+    --card: 207 32% 6%;
+    --card-foreground: 150 8% 80%;
+    --popover: 207 32% 6%;
+    --popover-foreground: 150 8% 80%;
+    --primary: 42 100% 47%;
+    --primary-foreground: 204 36% 3%;
+    --secondary: 213 30% 13%;
+    --secondary-foreground: 150 8% 80%;
+    --muted: 208 28% 9%;
+    --muted-foreground: 169 8% 45%;
+    --accent: 151 100% 61%;
+    --accent-foreground: 204 36% 3%;
+    --destructive: 3 100% 67%;
+    --destructive-foreground: 204 36% 3%;
+    --border: 205 30% 13%;
+    --input: 205 30% 13%;
+    --ring: 42 100% 47%;
+    --chart-1: 42 100% 47%;
+    --chart-2: 151 100% 61%;
+    --chart-3: 190 82% 53%;
+    --chart-4: 294 94% 70%;
+    --chart-5: 200 17% 59%;
+    --radius: 0.25rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TACTICAL MOTIF UTILITIES
+   Used at layout level only — never inline on components.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Faint 32 px grid overlay */
+.bg-grid {
+  background-image:
+    linear-gradient(to right, hsl(var(--border) / 0.3) 1px, transparent 1px),
+    linear-gradient(to bottom, hsl(var(--border) / 0.3) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* Scanline CRT overlay — fixed full-screen, pointer-events:none */
+.scanline {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 3px,
+    rgba(0, 0, 0, 0.04) 3px,
+    rgba(0, 0, 0, 0.04) 4px
+  );
+  animation: scanline-drift 12s linear infinite;
+}
+
+@keyframes scanline-drift {
+  from { background-position: 0 0; }
+  to   { background-position: 0 100vh; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scanline {
+    animation: none;
+  }
+}
+
+/* Radar sweep keyframes — rotating conic-gradient for playback/loading states */
+@keyframes radar-sweep {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Pulsing status dot */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.2; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   GENERAL UTILITIES
+   ───────────────────────────────────────────────────────────────────────── */
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .font-display {
+    font-family: var(--font-display, var(--font-mono, ui-monospace, monospace));
+  }
+
+  .animate-pulse-dot {
+    animation: pulse-dot 1.5s ease-in-out infinite;
+  }
+
+  .animate-radar-sweep {
+    animation: radar-sweep 3s linear infinite;
+  }
+}
