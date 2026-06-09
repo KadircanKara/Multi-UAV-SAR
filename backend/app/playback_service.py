@@ -125,27 +125,43 @@ def build_playback(
 
     if time_model == "discrete":
         # Build (nodes, time_slots) coordinate matrices directly from cell ids.
-        path_mat = sol.real_time_path_matrix        # (nodes, time_slots)
-        nodes_count, time_slots = path_mat.shape
-        x_list = np.zeros((nodes_count, time_slots))
-        y_list = np.zeros((nodes_count, time_slots))
+        # n_position_steps is the authoritative step count: real_time_path_matrix
+        # is truncated on early exit while connectivity_matrix is not, so we must
+        # derive the step count from the path matrix and slice connectivity to match.
+        path_mat = sol.real_time_path_matrix        # (nodes, n_position_steps) — may be truncated
+        nodes_count, n_position_steps = path_mat.shape
+        x_list = np.zeros((nodes_count, n_position_steps))
+        y_list = np.zeros((nodes_count, n_position_steps))
         for node in range(nodes_count):
-            for t in range(time_slots):
+            for t in range(n_position_steps):
                 cell = int(path_mat[node, t])
                 coords = sol.get_coords(cell)       # returns np.array([x, y])
                 x_list[node, t] = coords[0]
                 y_list[node, t] = coords[1]
-        x_matrix = x_list   # (nodes, time_slots)
-        y_matrix = y_list   # (nodes, time_slots)
+        x_matrix = x_list   # (nodes, n_position_steps)
+        y_matrix = y_list   # (nodes, n_position_steps)
 
-        # sol.connectivity_matrix is (time_slots, nodes, nodes) — same granularity.
+        # Fix 1: slice connectivity to the position-step count BEFORE recording
+        # raw_lengths.  On early-mission-exit, real_time_path_matrix is truncated
+        # but connectivity_matrix is not — slicing here makes raw_lengths
+        # internally consistent (connectivity beyond the early-return is
+        # meaningless; drones are already home).
         if sol.connectivity_matrix is None:
             # Fallback: recompute from real_time_path_matrix (should not normally happen).
             sol.do_connectivity_calculations()
-        conn_matrix = sol.connectivity_matrix       # (time_slots, nodes, nodes)
+        conn_matrix = sol.connectivity_matrix[:n_position_steps]  # (n_position_steps, nodes, nodes)
     else:
-        # realtime: interpolated sub-step positions and matching connectivity.
-        x_matrix, y_matrix = get_real_paths(sol)          # (nodes, T_traj)
+        # Fix 2: reuse the trajectory already computed (and potentially truncated
+        # on early exit) by sensing_and_realtime_info_sharing.  Fall back to
+        # get_real_paths() only when the stored matrices are absent or empty.
+        stored_x = getattr(sol, "real_time_x_matrix", None)
+        stored_y = getattr(sol, "real_time_y_matrix", None)
+        if (stored_x is not None and stored_x.size > 0
+                and stored_y is not None and stored_y.size > 0):
+            x_matrix = stored_x                                        # (nodes, T_traj)
+            y_matrix = stored_y                                        # (nodes, T_traj)
+        else:
+            x_matrix, y_matrix = get_real_paths(sol)                  # (nodes, T_traj)
         conn_matrix = get_real_connectivity_matrix(x_matrix, y_matrix, sol)  # (T_traj, nodes, nodes)
 
     # 4. Belief and targets-known from the replay result.
@@ -155,8 +171,8 @@ def build_playback(
     targets_known = _targets_known_curve(r)      # list[int]
 
     # 5. Determine raw lengths for each array (debug / transparency).
-    traj_len = x_matrix.shape[1]           # T_traj
-    conn_len = conn_matrix.shape[0]        # T_traj (same pipeline → always equal)
+    traj_len = x_matrix.shape[1]           # T_traj (authoritative step count)
+    conn_len = conn_matrix.shape[0]        # T_traj (sliced to match traj in discrete; built from x/y in realtime)
     belief_len = len(belief[0]) if belief else 0
     tk_len = len(targets_known)
 

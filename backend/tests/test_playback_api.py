@@ -258,6 +258,106 @@ class TestPlaybackDiscrete:
 
 
 # ---------------------------------------------------------------------------
+# Regression: Fix 1 — consistent raw_lengths on early discrete exit
+# ---------------------------------------------------------------------------
+
+# Config that triggers an early mission exit in discrete mode:
+# very high detection_prob means targets are confirmed early, drones return home
+# before the full mission ends.  Index 2 on the TC seed yields ~40 steps < 78.
+EARLY_EXIT_CFG = {
+    "merge_topology": "onboard",
+    "time_model": "discrete",
+    "detection_prob": 0.99,
+    "false_alarm_prob": 0.01,
+    "belief_threshold": 0.9,
+    "target_locations": [12],
+}
+
+
+class TestDiscreteEarlyExitRawLengths:
+    """
+    Regression for Fix 1: on early discrete mission exit,
+    sol.connectivity_matrix is NOT truncated by the sensing pipeline but
+    sol.real_time_path_matrix IS.  Before the fix, raw_lengths["connectivity"]
+    over-reported (78) while trajectory/belief reported the true shorter
+    mission (40).  After the fix, all three must be equal.
+    """
+
+    def test_early_exit_raw_lengths_consistent(self, client):
+        """
+        raw_lengths["connectivity"] == raw_lengths["trajectory"] == raw_lengths["belief"]
+        after an early discrete mission exit (triggered by high detection_prob).
+        """
+        if not _seed_present(client):
+            pytest.skip("TC front seed not present")
+        data = client.post(
+            f"/api/playback/{TC_FRONT}",
+            json={"index": 2, "config": EARLY_EXIT_CFG},
+        ).json()
+        assert data["status_code"] if "status_code" in data else True
+        rl = data["raw_lengths"]
+        traj_len = rl["trajectory"]
+        conn_len = rl["connectivity"]
+        belief_len = rl["belief"]
+        tk_len = rl["targets_known"]
+
+        # All four raw_lengths must agree after the fix.
+        assert conn_len == traj_len, (
+            f"Fix 1 regression: raw_lengths connectivity ({conn_len}) != "
+            f"trajectory ({traj_len}) — connectivity not sliced to path step count"
+        )
+        assert belief_len == traj_len, (
+            f"raw_lengths belief ({belief_len}) != trajectory ({traj_len})"
+        )
+        assert tk_len == traj_len, (
+            f"raw_lengths targets_known ({tk_len}) != trajectory ({traj_len})"
+        )
+
+    def test_early_exit_is_actually_early(self, client):
+        """
+        Confirm the high-detection_prob config does trigger an early exit
+        (steps < full mission length of 78).  If this test fails, the config
+        no longer triggers an early exit and the regression above is vacuous.
+        """
+        if not _seed_present(client):
+            pytest.skip("TC front seed not present")
+        data = client.post(
+            f"/api/playback/{TC_FRONT}",
+            json={"index": 2, "config": EARLY_EXIT_CFG},
+        ).json()
+        steps = data["steps"]
+        assert steps < 78, (
+            f"Expected early exit (steps < 78) with high detection_prob, "
+            f"got steps={steps} — config may no longer trigger early exit"
+        )
+
+    def test_early_exit_alignment_invariant(self, client):
+        """
+        Core alignment invariant still holds after early exit:
+        steps == len(connectivity) == len(trajectories.x[0]) == len(belief[0])
+        == len(targets_known).
+        """
+        if not _seed_present(client):
+            pytest.skip("TC front seed not present")
+        data = client.post(
+            f"/api/playback/{TC_FRONT}",
+            json={"index": 2, "config": EARLY_EXIT_CFG},
+        ).json()
+        steps = data["steps"]
+        assert steps > 0
+
+        traj_len = len(data["trajectories"]["x"][0])
+        conn_len = len(data["connectivity"])
+        belief_len = len(data["belief"][0])
+        tk_len = len(data["targets_known"])
+
+        assert traj_len == steps, f"traj {traj_len} != steps {steps}"
+        assert conn_len == steps, f"conn {conn_len} != steps {steps}"
+        assert belief_len == steps, f"belief {belief_len} != steps {steps}"
+        assert tk_len == steps, f"targets_known {tk_len} != steps {steps}"
+
+
+# ---------------------------------------------------------------------------
 # POST /api/playback/{scenario} — 200 realtime
 # ---------------------------------------------------------------------------
 
