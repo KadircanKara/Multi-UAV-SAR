@@ -207,6 +207,44 @@ class SensingConfigModel(BaseModel):
         return self.model_dump()
 
 
+# ---------------------------------------------------------------------------
+# Model-grid schemas (parameter-effect analysis)
+# ---------------------------------------------------------------------------
+
+class ObjectiveStat(BaseModel):
+    """Summary statistics for one objective across a scenario's solutions."""
+
+    min: Optional[float] = None
+    max: Optional[float] = None
+    mean: Optional[float] = None
+    best: Optional[float] = None
+
+
+class ModelGridScenario(BaseModel):
+    """One row in the model parameter grid."""
+
+    scenario: str
+    number_of_drones: Optional[int] = None
+    comm_range: Optional[str] = None
+    comm_range_value: Optional[float] = None
+    n_visits: Optional[int] = None
+    n_tours: Optional[int] = None
+    n_solutions: int
+    result_kind: str
+    objective_stats: dict[str, ObjectiveStat]
+
+
+class ModelGrid(BaseModel):
+    """Full parameter grid for one optimisation model."""
+
+    model_key: str
+    type: str
+    algorithm: str
+    objectives: list[str]
+    polarities: dict[str, int]
+    scenarios: list[ModelGridScenario]
+
+
 class ReplayRequest(BaseModel):
     model_key: Optional[str] = None
     index: int
