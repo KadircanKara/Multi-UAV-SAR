@@ -313,7 +313,25 @@ export default function ModelPage() {
           if (first) {
             setFixedDrones(first.number_of_drones != null ? String(first.number_of_drones) : "");
             setFixedComm(first.comm_range ?? "");
-            setFixedNVisits(first.n_visits != null ? String(first.n_visits) : "");
+            // Max Mean TBV is undefined at n_visits=1. For models that have a
+            // TBV objective, default to SWEEPING n_visits so the TBV plot shows
+            // the n_visits 2→3 trend directly, and default the fixed n_visits to
+            // the smallest value > 1 so a drones/range sweep also yields a
+            // non-empty TBV plot. Non-TBV models keep the drones-sweep default.
+            const hasTbv = data.objectives.some((o) => o.includes("TBV"));
+            const nVisitsAboveOne = Array.from(
+              new Set(
+                data.scenarios
+                  .map((s) => s.n_visits)
+                  .filter((v): v is number => v != null && v > 1)
+              )
+            ).sort((a, b) => a - b);
+            if (hasTbv && nVisitsAboveOne.length > 0) {
+              setFixedNVisits(String(nVisitsAboveOne[0]));
+              setSweep("n_visits");
+            } else {
+              setFixedNVisits(first.n_visits != null ? String(first.n_visits) : "");
+            }
           }
           setLoading(false);
         }
