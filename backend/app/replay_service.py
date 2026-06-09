@@ -54,6 +54,29 @@ def _build_config(solution, cfg_dict: dict) -> SensingConfig:
 # Public service functions
 # ---------------------------------------------------------------------------
 
+def prepare_replay(
+    scenario: str,
+    model_key: Optional[str],
+    index: int,
+    cfg_dict: dict,
+    label: Optional[str] = None,
+):
+    """
+    Run a single sensing replay and return the live ReplayResult object.
+
+    This is the internal workhorse reused by run_replay and playback_service.
+    The caller gets r.solution, r.cell_occupancy_probabilities, r.config, etc.
+
+    Raises:
+        _SelectorNotFound      — bad scenario / missing pickles (→ 404).
+        StrategyUnavailableError — index out of range (→ 422).
+        ValueError             — bad sensing config (p<=q, grid bounds, …) (→ 422).
+    """
+    solution, _sel = _solution_at(scenario, model_key, index)
+    config = _build_config(solution, cfg_dict)
+    return replay(solution, config, label=label)
+
+
 def run_replay(
     scenario: str,
     model_key: Optional[str],
@@ -69,10 +92,7 @@ def run_replay(
         StrategyUnavailableError — index out of range (→ 422).
         ValueError             — bad sensing config (p<=q, grid bounds, …) (→ 422).
     """
-    solution, _sel = _solution_at(scenario, model_key, index)
-    config = _build_config(solution, cfg_dict)
-    r = replay(solution, config, label=label)
-    return r.to_dict()
+    return prepare_replay(scenario, model_key, index, cfg_dict, label=label).to_dict()
 
 
 def run_compare(

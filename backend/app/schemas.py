@@ -219,3 +219,10 @@ class CompareRequest(BaseModel):
     index: int
     configs: list[SensingConfigModel]
     labels: Optional[list[str]] = None
+
+
+class PlaybackRequest(BaseModel):
+    model_key: Optional[str] = None
+    index: int
+    config: SensingConfigModel
+    stride: int = Field(default=1, ge=1, description="Step-axis downsampling factor (≥1)")
