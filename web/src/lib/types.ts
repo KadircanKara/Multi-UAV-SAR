@@ -146,3 +146,29 @@ export interface PlaybackRequest {
 export type ReplayResponse   = Record<string, unknown>;
 export type CompareResponse  = Record<string, unknown>;
 export type PlaybackResponse = Record<string, unknown>;
+
+// ─── Playback payload (typed from /api/playback response) ────────────────────
+
+export interface PlaybackPayload {
+  scenario: string;
+  model_key: string;
+  index: number;
+  time_model: "discrete" | "realtime";
+  merge_topology: "none" | "onboard" | "gcs";
+  grid_size: number;
+  cell_side_length: number;
+  number_of_nodes: number;
+  targets: number[];
+  belief_threshold: number;
+  steps: number;
+  stride: number;
+  raw_lengths: Record<string, unknown>;
+  /** shape [number_of_nodes][steps], positions in METERS */
+  trajectories: { x: number[][]; y: number[][] };
+  /** [step] -> list of [i,j] connected node-pairs (i<j) */
+  connectivity: number[][][];
+  /** [cell][step], 0..1 (or null); length = grid_size^2 */
+  belief: (number | null)[][];
+  /** [step] count of known targets */
+  targets_known: number[];
+}

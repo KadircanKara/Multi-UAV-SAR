@@ -12,6 +12,7 @@ import { useParams } from "next/navigation";
 import { toast } from "sonner";
 import { getFront, compare } from "@/lib/api";
 import type { ParetoFront, SensingConfig } from "@/lib/types";
+import GridPlayback from "@/components/viz/GridPlayback/GridPlayback";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -494,6 +495,12 @@ export default function ExplorePage() {
               >
                 MERGING
               </TabsTrigger>
+              <TabsTrigger
+                value="animation"
+                className="text-xs font-mono tracking-widest uppercase"
+              >
+                ANIMATION
+              </TabsTrigger>
             </TabsList>
 
             {/* ── PARETO TAB ─────────────────────────────────────────────── */}
@@ -544,6 +551,15 @@ export default function ExplorePage() {
             <TabsContent value="merging">
               <MergingTab
                 scenario={scenario}
+                selectedIndex={selectedIndex}
+              />
+            </TabsContent>
+
+            {/* ── ANIMATION TAB ──────────────────────────────────────────── */}
+            <TabsContent value="animation">
+              <GridPlayback
+                scenario={scenario}
+                front={front}
                 selectedIndex={selectedIndex}
               />
             </TabsContent>
