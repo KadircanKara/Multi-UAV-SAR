@@ -5,6 +5,7 @@
  * a solution from the Pareto front (or single result).
  */
 
+import React from "react";
 import { useState } from "react";
 import { toast } from "sonner";
 import type { ParetoFront, SolutionDetail } from "@/lib/types";
@@ -50,9 +51,6 @@ function DetailCard({ detail }: { detail: SolutionDetail }) {
     </div>
   );
 }
-
-// Need React import for JSX Fragment in DetailCard
-import React from "react";
 
 // ─── Main component ───────────────────────────────────────────────────────────
 

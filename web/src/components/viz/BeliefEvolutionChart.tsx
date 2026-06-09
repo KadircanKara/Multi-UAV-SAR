@@ -73,34 +73,34 @@ export default function BeliefEvolutionChart({ rows }: Props) {
       <div className="h-64 w-full">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(205 30% 13%)" />
+            <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} />
             <XAxis
               dataKey="step"
-              tick={{ fontFamily: "var(--font-mono)", fontSize: 10, fill: "hsl(169 8% 45%)" }}
+              tick={{ fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis }}
               tickLine={false}
-              axisLine={{ stroke: "hsl(205 30% 13%)" }}
+              axisLine={{ stroke: colors.grid }}
               label={{
                 value: "STEP",
                 position: "insideBottom",
                 offset: -4,
-                style: { fontFamily: "var(--font-mono)", fontSize: 10, fill: "hsl(169 8% 45%)" },
+                style: { fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis },
               }}
             />
             <YAxis
               domain={[0, 1]}
-              tick={{ fontFamily: "var(--font-mono)", fontSize: 10, fill: "hsl(169 8% 45%)" }}
+              tick={{ fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis }}
               tickLine={false}
-              axisLine={{ stroke: "hsl(205 30% 13%)" }}
+              axisLine={{ stroke: colors.grid }}
               tickFormatter={(v: number) => v.toFixed(1)}
             />
             <RechartsTooltip
               contentStyle={{
-                background: "hsl(207 32% 6%)",
-                border: "1px solid hsl(205 30% 13%)",
+                background: colors.tooltipBg,
+                border: `1px solid ${colors.tooltipBorder}`,
                 fontFamily: "var(--font-mono)",
                 fontSize: 11,
               }}
-              labelStyle={{ color: "hsl(169 8% 45%)" }}
+              labelStyle={{ color: colors.axis }}
             />
             <Legend
               wrapperStyle={{
@@ -112,7 +112,7 @@ export default function BeliefEvolutionChart({ rows }: Props) {
             {/* Belief threshold reference line */}
             <ReferenceLine
               y={beliefThreshold}
-              stroke="hsl(42 100% 47%)"
+              stroke={colors.reference}
               strokeDasharray="6 3"
               strokeWidth={1.5}
               label={{
@@ -121,7 +121,7 @@ export default function BeliefEvolutionChart({ rows }: Props) {
                 style: {
                   fontFamily: "var(--font-mono)",
                   fontSize: 10,
-                  fill: "hsl(42 100% 47%)",
+                  fill: colors.reference,
                 },
               }}
             />
@@ -130,10 +130,10 @@ export default function BeliefEvolutionChart({ rows }: Props) {
                 key={row.label}
                 type="monotone"
                 dataKey={row.label}
-                stroke={colors[i] ?? colors[0]}
+                stroke={colors.series[i] ?? colors.series[0]}
                 strokeWidth={2}
                 dot={false}
-                activeDot={{ r: 4, stroke: colors[i] ?? colors[0] }}
+                activeDot={{ r: 4, stroke: colors.series[i] ?? colors.series[0] }}
               />
             ))}
           </LineChart>

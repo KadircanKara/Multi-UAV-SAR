@@ -11,6 +11,7 @@ import {
   Scatter,
   XAxis,
   YAxis,
+  ZAxis,
   CartesianGrid,
   Tooltip as RechartsTooltip,
   ResponsiveContainer,
@@ -33,6 +34,10 @@ interface Props {
   selectedIndex: number;
   onSelectIndex: (idx: number) => void;
 }
+
+// Dot-size constants for ZAxis (Recharts v3 uses area, not radius)
+const SIZE_SELECTED = 196; // ~r=7 equivalent
+const SIZE_DEFAULT  = 64;  // ~r=5 equivalent
 
 // ─── Single-objective readout ─────────────────────────────────────────────────
 
@@ -111,6 +116,7 @@ export default function ParetoScatter({ front, selectedIndex, onSelectIndex }: P
     objectives_abs: sol.objectives_abs,
     xVal: sol.objectives_abs[xObj] ?? 0,
     yVal: sol.objectives_abs[yObj] ?? 0,
+    size: sol.index === selectedIndex ? SIZE_SELECTED : SIZE_DEFAULT,
   }));
 
   const xIsMax = front.polarities[xObj] === -1;
@@ -171,7 +177,7 @@ export default function ParetoScatter({ front, selectedIndex, onSelectIndex }: P
       <div className="h-72 w-full">
         <ResponsiveContainer width="100%" height="100%">
           <ScatterChart margin={{ top: 8, right: 16, bottom: 24, left: 16 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(205 30% 13%)" />
+            <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} />
             <XAxis
               dataKey="xVal"
               type="number"
@@ -180,11 +186,11 @@ export default function ParetoScatter({ front, selectedIndex, onSelectIndex }: P
                 value: xObj + (xIsMax ? " (max)" : ""),
                 position: "insideBottom",
                 offset: -10,
-                style: { fontFamily: "var(--font-mono)", fontSize: 10, fill: "hsl(169 8% 45%)" },
+                style: { fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis },
               }}
-              tick={{ fontFamily: "var(--font-mono)", fontSize: 10, fill: "hsl(169 8% 45%)" }}
+              tick={{ fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis }}
               tickLine={false}
-              axisLine={{ stroke: "hsl(205 30% 13%)" }}
+              axisLine={{ stroke: colors.grid }}
             />
             <YAxis
               dataKey="yVal"
@@ -195,15 +201,16 @@ export default function ParetoScatter({ front, selectedIndex, onSelectIndex }: P
                 angle: -90,
                 position: "insideLeft",
                 offset: 10,
-                style: { fontFamily: "var(--font-mono)", fontSize: 10, fill: "hsl(169 8% 45%)" },
+                style: { fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis },
               }}
-              tick={{ fontFamily: "var(--font-mono)", fontSize: 10, fill: "hsl(169 8% 45%)" }}
+              tick={{ fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis }}
               tickLine={false}
-              axisLine={{ stroke: "hsl(205 30% 13%)" }}
+              axisLine={{ stroke: colors.grid }}
             />
+            <ZAxis type="number" dataKey="size" range={[SIZE_DEFAULT, SIZE_SELECTED]} />
             <RechartsTooltip
               content={<ScatterTooltip />}
-              cursor={{ stroke: "hsl(42 100% 47% / 0.4)" }}
+              cursor={{ stroke: `${colors.reference}66` }}
             />
             <Scatter
               data={pointData}
@@ -215,17 +222,16 @@ export default function ParetoScatter({ front, selectedIndex, onSelectIndex }: P
                   key={point.index}
                   fill={
                     point.index === selectedIndex
-                      ? colors[0]   // --chart-1 amber (selected)
-                      : colors[4]   // --chart-5 muted grey
+                      ? colors.series[0]   // --chart-1 amber (selected)
+                      : colors.series[4]   // --chart-5 muted grey
                   }
                   stroke={
                     point.index === selectedIndex
-                      ? colors[0]
+                      ? colors.series[0]
                       : "transparent"
                   }
                   strokeWidth={point.index === selectedIndex ? 2 : 0}
                   opacity={point.index === selectedIndex ? 1 : 0.55}
-                  r={point.index === selectedIndex ? 7 : 5}
                 />
               ))}
             </Scatter>
