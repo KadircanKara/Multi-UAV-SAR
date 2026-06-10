@@ -58,12 +58,11 @@ const config: Config = {
         sm: "calc(var(--radius) - 4px)",
       },
       fontFamily: {
-        // Mono is the default body font — tactical console feel
-        mono: ["var(--font-mono)", "ui-monospace", "SFMono-Regular", "monospace"],
-        // Display font for headers / mission labels
-        display: ["var(--font-display)", "var(--font-mono)", "monospace"],
-        // Override sans → mono so all un-annotated text is monospace
-        sans: ["var(--font-mono)", "ui-monospace", "SFMono-Regular", "monospace"],
+        // Geist Sans is the default UI + display font
+        sans: ["var(--font-geist-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
+        display: ["var(--font-geist-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
+        // Geist Mono for code / numerics
+        mono: ["var(--font-geist-mono)", "ui-monospace", "SFMono-Regular", "monospace"],
       },
       animation: {
         "pulse-dot": "pulse-dot 1.5s ease-in-out infinite",

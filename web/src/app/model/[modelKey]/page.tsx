@@ -1,15 +1,22 @@
 "use client";
 
 /**
- * /model/[modelKey] — Parameter-effect analysis + combination table for one model.
+ * /model/[modelKey] — Parameter-effect analysis + an in-page scenario explorer
+ * for one model.
+ *
+ * Layout: model overview → parameter-effect sweep plots (with optional multi-line
+ * overlays) → EXPLORE COMBINATION (dependent Drones/Comm/n_visits dropdowns
+ * driving an embedded ScenarioExplorer) → the full combination table. Clicking a
+ * table row selects that combination in the explorer and scrolls to it.
  */
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { getModelGrid } from "@/lib/api";
 import type { ModelGrid, ModelGridScenario } from "@/lib/types";
+import ScenarioExplorer from "@/components/explore/ScenarioExplorer";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -20,6 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   Table,
   TableBody,
@@ -29,7 +37,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import type { ParameterEffectChartProps, EffectPoint } from "@/components/viz/ParameterEffectChart";
+import type {
+  ParameterEffectChartProps,
+  EffectPoint,
+  EffectSeries,
+} from "@/components/viz/ParameterEffectChart";
 
 // ─── Dynamic (SSR-off) chart import ──────────────────────────────────────────
 
@@ -76,13 +88,19 @@ function OfflinePanel({ message }: { message: string }) {
   );
 }
 
-// ─── Sweep parameter type ─────────────────────────────────────────────────────
+// ─── Parameter dimensions ─────────────────────────────────────────────────────
 
 type SweepParam = "drones" | "comm_range" | "n_visits";
 
 const SWEEP_LABELS: Record<SweepParam, string> = {
   drones: "Number of Drones",
   comm_range: "Comm Range",
+  n_visits: "n_visits",
+};
+
+const DIM_SHORT: Record<SweepParam, string> = {
+  drones: "Drones",
+  comm_range: "Comm",
   n_visits: "n_visits",
 };
 
@@ -116,6 +134,27 @@ function uniqueNVisits(scenarios: ModelGridScenario[]): (number | null)[] {
   });
 }
 
+// String key for an n_visits value (null → ""), used to match a scenario across
+// the three combination dropdowns.
+function nvKey(v: number | null | undefined): string {
+  return v == null ? "" : String(v);
+}
+
+// Find the scenario in this model with the exact (drones, comm, n_visits) combo.
+function findScenario(
+  scenarios: ModelGridScenario[],
+  drones: number | string | null,
+  comm: string | null,
+  nvisitsKey: string
+): ModelGridScenario | undefined {
+  return scenarios.find(
+    (s) =>
+      String(s.number_of_drones) === String(drones) &&
+      s.comm_range === comm &&
+      nvKey(s.n_visits) === nvisitsKey
+  );
+}
+
 // ─── Format objective value ───────────────────────────────────────────────────
 
 function fmtObj(v: number | null | undefined): string {
@@ -129,6 +168,133 @@ function fmtObj(v: number | null | undefined): string {
 // distort the combination table or the parameter-effect plots.
 function tbvMeaningless(objective: string, nVisits: number | null): boolean {
   return objective.includes("TBV") && nVisits === 1;
+}
+
+// ─── Parameter-effect series construction ─────────────────────────────────────
+
+function availableDimValues(
+  grid: ModelGrid,
+  dim: SweepParam
+): { value: string; label: string }[] {
+  if (dim === "drones") {
+    return uniqueDrones(grid.scenarios).map((d) => ({ value: String(d), label: String(d) }));
+  }
+  if (dim === "comm_range") {
+    return uniqueCommRanges(grid.scenarios).map((c) => ({ value: c, label: c }));
+  }
+  return uniqueNVisits(grid.scenarios)
+    .filter((v): v is number => v != null)
+    .map((v) => ({ value: String(v), label: String(v) }));
+}
+
+function dimValueLabel(dim: SweepParam, value: string): string {
+  if (dim === "drones") return `${value} drones`;
+  if (dim === "comm_range") return `comm ${value}`;
+  return `${value} visits`;
+}
+
+function matchDim(s: ModelGridScenario, dim: SweepParam, value: string): boolean {
+  if (dim === "drones") return String(s.number_of_drones) === value;
+  if (dim === "comm_range") return s.comm_range === value;
+  return nvKey(s.n_visits) === value;
+}
+
+function sweepHasValue(s: ModelGridScenario, sweep: SweepParam): boolean {
+  if (sweep === "drones") return s.number_of_drones != null;
+  if (sweep === "comm_range") return s.comm_range_value != null;
+  return s.n_visits != null;
+}
+
+function sweepNum(s: ModelGridScenario, sweep: SweepParam): number {
+  if (sweep === "drones") return s.number_of_drones ?? 0;
+  if (sweep === "comm_range") return s.comm_range_value ?? 0;
+  return s.n_visits ?? 0;
+}
+
+// The selectable-value key of a scenario along the sweep dimension (matches the
+// value strings produced by availableDimValues).
+function sweepValueKey(s: ModelGridScenario, sweep: SweepParam): string {
+  if (sweep === "drones") return String(s.number_of_drones);
+  if (sweep === "comm_range") return s.comm_range ?? "";
+  return nvKey(s.n_visits);
+}
+
+function pointForScenario(
+  s: ModelGridScenario,
+  sweep: SweepParam,
+  obj: string
+): EffectPoint {
+  const stats = s.objective_stats[obj];
+  return {
+    xLabel:
+      sweep === "drones"
+        ? s.number_of_drones != null
+          ? String(s.number_of_drones)
+          : "—"
+        : sweep === "comm_range"
+        ? s.comm_range ?? "—"
+        : String(s.n_visits ?? "—"),
+    xNum: sweepNum(s, sweep),
+    best: stats?.best ?? null,
+    min: stats?.min ?? null,
+    max: stats?.max ?? null,
+  };
+}
+
+function cartesian<T>(arrays: T[][]): T[][] {
+  return arrays.reduce<T[][]>(
+    (acc, arr) => acc.flatMap((combo) => arr.map((x) => [...combo, x])),
+    [[]]
+  );
+}
+
+// Build one EffectSeries[] per objective. Each series is a line for one
+// combination of the non-swept ("series") dimensions; the label names only the
+// dimensions that actually vary (>1 selected value), so a single line has no
+// label and the chart omits its legend.
+function buildSeriesByObjective(
+  grid: ModelGrid,
+  sweep: SweepParam,
+  selByDim: Record<SweepParam, string[]>,
+  sweepValues: string[],
+  objectives: string[]
+): Record<string, EffectSeries[]> {
+  const seriesDims = (["drones", "comm_range", "n_visits"] as SweepParam[])
+    .filter((d) => d !== sweep && (selByDim[d]?.length ?? 0) > 0)
+    .map((d) => ({ dim: d, values: selByDim[d]! }));
+
+  const varying = new Set(
+    seriesDims.filter((sd) => sd.values.length > 1).map((sd) => sd.dim)
+  );
+
+  const combos = cartesian(
+    seriesDims.map((sd) => sd.values.map((v) => ({ dim: sd.dim, value: v })))
+  );
+
+  // Restrict the x-axis to the selected sweep values (empty ⇒ show all).
+  const sweepSet = sweepValues.length > 0 ? new Set(sweepValues) : null;
+
+  const result: Record<string, EffectSeries[]> = {};
+  for (const obj of objectives) {
+    const list: EffectSeries[] = [];
+    for (const combo of combos) {
+      const scs = grid.scenarios
+        .filter((s) => combo.every((c) => matchDim(s, c.dim, c.value)))
+        .filter((s) => sweepHasValue(s, sweep))
+        .filter((s) => !sweepSet || sweepSet.has(sweepValueKey(s, sweep)))
+        .filter((s) => !tbvMeaningless(obj, s.n_visits))
+        .sort((a, b) => sweepNum(a, sweep) - sweepNum(b, sweep));
+      const points = scs.map((s) => pointForScenario(s, sweep, obj));
+      const label = combo
+        .filter((c) => varying.has(c.dim))
+        .map((c) => dimValueLabel(c.dim, c.value))
+        .join(" · ");
+      const key = combo.map((c) => `${c.dim}=${c.value}`).join("|") || "all";
+      list.push({ key, label, points });
+    }
+    result[obj] = list;
+  }
+  return result;
 }
 
 // ─── Plain-language model description ────────────────────────────────────────
@@ -148,126 +314,110 @@ function modelDescription(grid: ModelGrid): string {
   return `Optimises ${objList}${algo}.`;
 }
 
-// ─── Sweep controls ───────────────────────────────────────────────────────────
+// ─── Combination selector (dependent dropdowns) ───────────────────────────────
 
-interface SweepControlsProps {
+interface CombinationSelectProps {
   grid: ModelGrid;
-  sweep: SweepParam;
-  onSweep: (s: SweepParam) => void;
-  fixedDrones: string;
-  onFixedDrones: (v: string) => void;
-  fixedComm: string;
-  onFixedComm: (v: string) => void;
-  fixedNVisits: string;
-  onFixedNVisits: (v: string) => void;
+  selected: ModelGridScenario | null;
+  onSelectName: (name: string) => void;
 }
 
-function SweepControls({
-  grid,
-  sweep,
-  onSweep,
-  fixedDrones,
-  onFixedDrones,
-  fixedComm,
-  onFixedComm,
-  fixedNVisits,
-  onFixedNVisits,
-}: SweepControlsProps) {
-  const allDrones = uniqueDrones(grid.scenarios);
-  const allComms = uniqueCommRanges(grid.scenarios);
-  const allNVisits = uniqueNVisits(grid.scenarios);
-  const hasNVisits = allNVisits.some((v) => v != null);
+function CombinationSelect({ grid, selected, onSelectName }: CombinationSelectProps) {
+  if (!selected) return null;
+  const scenarios = grid.scenarios;
+  const hasNVisits = scenarios.some((s) => s.n_visits != null);
+
+  // Each dropdown's options depend on the OTHER two current selections, so every
+  // option always resolves to a real scenario (no dead-end combinations).
+  const droneOptions = uniqueDrones(
+    scenarios.filter(
+      (s) =>
+        s.comm_range === selected.comm_range &&
+        nvKey(s.n_visits) === nvKey(selected.n_visits)
+    )
+  );
+  const commOptions = uniqueCommRanges(
+    scenarios.filter(
+      (s) =>
+        s.number_of_drones === selected.number_of_drones &&
+        nvKey(s.n_visits) === nvKey(selected.n_visits)
+    )
+  );
+  const nVisitsOptions = uniqueNVisits(
+    scenarios.filter(
+      (s) =>
+        s.number_of_drones === selected.number_of_drones &&
+        s.comm_range === selected.comm_range
+    )
+  ).filter((v): v is number => v != null);
+
+  function selectDrones(d: string) {
+    const sc = findScenario(scenarios, d, selected!.comm_range, nvKey(selected!.n_visits));
+    if (sc) onSelectName(sc.scenario);
+  }
+  function selectComm(c: string) {
+    const sc = findScenario(scenarios, selected!.number_of_drones, c, nvKey(selected!.n_visits));
+    if (sc) onSelectName(sc.scenario);
+  }
+  function selectNVisits(k: string) {
+    const sc = findScenario(scenarios, selected!.number_of_drones, selected!.comm_range, k);
+    if (sc) onSelectName(sc.scenario);
+  }
 
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      {/* Sweep selector */}
-      <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-end gap-4">
+      {/* Drones */}
+      <div className="flex flex-col gap-1.5">
         <span className="text-xs font-mono tracking-widest text-muted-foreground uppercase">
-          Sweep
+          Drones
         </span>
-        <Select
-          value={sweep}
-          onValueChange={(v) => onSweep(v as SweepParam)}
-        >
-          <SelectTrigger className="h-7 w-36 text-xs font-mono">
+        <Select value={String(selected.number_of_drones)} onValueChange={selectDrones}>
+          <SelectTrigger className="h-8 w-24 text-xs font-mono">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="drones" className="text-xs font-mono">
-              Drones
-            </SelectItem>
-            <SelectItem value="comm_range" className="text-xs font-mono">
-              Comm Range
-            </SelectItem>
-            {hasNVisits && (
-              <SelectItem value="n_visits" className="text-xs font-mono">
-                n_visits
+            {droneOptions.map((d) => (
+              <SelectItem key={d} value={String(d)} className="text-xs font-mono">
+                {d}
               </SelectItem>
-            )}
+            ))}
           </SelectContent>
         </Select>
       </div>
 
-      {/* Fixed: Drones (when not sweeping) */}
-      {sweep !== "drones" && allDrones.length > 1 && (
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-mono tracking-widest text-muted-foreground uppercase">
-            Drones
-          </span>
-          <Select value={fixedDrones} onValueChange={onFixedDrones}>
-            <SelectTrigger className="h-7 w-24 text-xs font-mono">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {allDrones.map((d) => (
-                <SelectItem key={d} value={String(d)} className="text-xs font-mono">
-                  {d}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      )}
+      {/* Comm range */}
+      <div className="flex flex-col gap-1.5">
+        <span className="text-xs font-mono tracking-widest text-muted-foreground uppercase">
+          Comm Range
+        </span>
+        <Select value={selected.comm_range ?? ""} onValueChange={selectComm}>
+          <SelectTrigger className="h-8 w-28 text-xs font-mono">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {commOptions.map((c) => (
+              <SelectItem key={c} value={c} className="text-xs font-mono">
+                {c}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
 
-      {/* Fixed: Comm range (when not sweeping) */}
-      {sweep !== "comm_range" && allComms.length > 1 && (
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-mono tracking-widest text-muted-foreground uppercase">
-            Comm
-          </span>
-          <Select value={fixedComm} onValueChange={onFixedComm}>
-            <SelectTrigger className="h-7 w-28 text-xs font-mono">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {allComms.map((c) => (
-                <SelectItem key={c} value={c} className="text-xs font-mono">
-                  {c}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      )}
-
-      {/* Fixed: n_visits (when not sweeping) */}
-      {sweep !== "n_visits" && hasNVisits && allNVisits.length > 1 && (
-        <div className="flex items-center gap-2">
+      {/* n_visits */}
+      {hasNVisits && (
+        <div className="flex flex-col gap-1.5">
           <span className="text-xs font-mono tracking-widest text-muted-foreground uppercase">
             n_visits
           </span>
-          <Select value={fixedNVisits} onValueChange={onFixedNVisits}>
-            <SelectTrigger className="h-7 w-24 text-xs font-mono">
+          <Select value={nvKey(selected.n_visits)} onValueChange={selectNVisits}>
+            <SelectTrigger className="h-8 w-24 text-xs font-mono">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {allNVisits.map((v) => (
-                <SelectItem
-                  key={String(v)}
-                  value={String(v)}
-                  className="text-xs font-mono"
-                >
-                  {v ?? "—"}
+              {nVisitsOptions.map((v) => (
+                <SelectItem key={v} value={String(v)} className="text-xs font-mono">
+                  {v}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -278,11 +428,130 @@ function SweepControls({
   );
 }
 
+// ─── Sweep controls (x-axis selector + multi-value overlays) ──────────────────
+
+interface SweepControlsProps {
+  grid: ModelGrid;
+  sweep: SweepParam;
+  onSweep: (s: SweepParam) => void;
+  selByDim: Record<SweepParam, string[]>;
+  onToggleDim: (dim: SweepParam, values: string[]) => void;
+  sweepValues: string[];
+  onToggleSweepValues: (values: string[]) => void;
+}
+
+function SweepControls({
+  grid,
+  sweep,
+  onSweep,
+  selByDim,
+  onToggleDim,
+  sweepValues,
+  onToggleSweepValues,
+}: SweepControlsProps) {
+  const hasNVisits = grid.scenarios.some((s) => s.n_visits != null);
+  const nonSwept = (["drones", "comm_range", "n_visits"] as SweepParam[]).filter(
+    (d) => d !== sweep && (d !== "n_visits" || hasNVisits)
+  );
+  const sweepOptions = availableDimValues(grid, sweep);
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Sweep (x-axis) selector + which values appear on the axis */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-mono tracking-widest text-muted-foreground uppercase">
+            Sweep (x-axis)
+          </span>
+          <Select value={sweep} onValueChange={(v) => onSweep(v as SweepParam)}>
+            <SelectTrigger className="h-7 w-40 text-xs font-mono">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="drones" className="text-xs font-mono">
+                Drones
+              </SelectItem>
+              <SelectItem value="comm_range" className="text-xs font-mono">
+                Comm Range
+              </SelectItem>
+              {hasNVisits && (
+                <SelectItem value="n_visits" className="text-xs font-mono">
+                  n_visits
+                </SelectItem>
+              )}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* X-axis value filter for the swept dimension */}
+        {sweepOptions.length > 1 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-mono tracking-widest text-muted-foreground uppercase">
+              X values
+            </span>
+            <ToggleGroup
+              type="multiple"
+              value={sweepValues}
+              onValueChange={(v: string[]) => onToggleSweepValues(v)}
+              className="flex-wrap justify-start gap-1"
+            >
+              {sweepOptions.map((o) => (
+                <ToggleGroupItem
+                  key={o.value}
+                  value={o.value}
+                  className="h-7 px-2.5 text-xs font-mono"
+                >
+                  {o.label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </div>
+        )}
+      </div>
+
+      {/* Multi-value overlays for each non-swept dimension */}
+      {nonSwept.map((dim) => {
+        const opts = availableDimValues(grid, dim);
+        if (opts.length <= 1) return null;
+        const sel = selByDim[dim] ?? [];
+        return (
+          <div key={dim} className="flex flex-wrap items-center gap-2">
+            <span className="w-16 text-xs font-mono tracking-widest text-muted-foreground uppercase">
+              {DIM_SHORT[dim]}
+            </span>
+            <ToggleGroup
+              type="multiple"
+              value={sel}
+              onValueChange={(v: string[]) => onToggleDim(dim, v)}
+              className="flex-wrap justify-start gap-1"
+            >
+              {opts.map((o) => (
+                <ToggleGroupItem
+                  key={o.value}
+                  value={o.value}
+                  className="h-7 px-2.5 text-xs font-mono"
+                >
+                  {o.label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </div>
+        );
+      })}
+
+      <p className="text-xs text-muted-foreground font-mono">
+        Pick which <span className="text-foreground">X values</span> appear on
+        the axis, and toggle overlay values to draw multiple trend lines — the
+        legend appears once more than one line is shown.
+      </p>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ModelPage() {
   const params = useParams();
-  const router = useRouter();
   const rawKey = params?.modelKey;
   const modelKey = decodeURIComponent(
     Array.isArray(rawKey) ? (rawKey[0] ?? "") : (rawKey ?? "")
@@ -292,11 +561,17 @@ export default function ModelPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Sweep state
+  // Sweep state: x-axis dimension, which of its values appear on the axis, and
+  // the selected overlay values per non-swept dimension.
   const [sweep, setSweep] = useState<SweepParam>("drones");
-  const [fixedDrones, setFixedDrones] = useState<string>("");
-  const [fixedComm, setFixedComm] = useState<string>("");
-  const [fixedNVisits, setFixedNVisits] = useState<string>("");
+  const [sweepValueSel, setSweepValueSel] = useState<string[]>([]);
+  const [seriesDrones, setSeriesDrones] = useState<string[]>([]);
+  const [seriesComm, setSeriesComm] = useState<string[]>([]);
+  const [seriesNVisits, setSeriesNVisits] = useState<string[]>([]);
+
+  // Selected combination for the embedded explorer
+  const [selName, setSelName] = useState<string>("");
+  const explorerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!modelKey) return;
@@ -308,16 +583,19 @@ export default function ModelPage() {
       .then((data) => {
         if (!cancelled) {
           setGrid(data);
-          // Set default fixed values from the first scenario with non-null fields
+          // Default the embedded explorer to the first combination.
+          setSelName(data.scenarios[0]?.scenario ?? "");
+          // Seed the overlay selections (one value each ⇒ a single line) from
+          // the first scenario.
           const first = data.scenarios[0];
           if (first) {
-            setFixedDrones(first.number_of_drones != null ? String(first.number_of_drones) : "");
-            setFixedComm(first.comm_range ?? "");
-            // Max Mean TBV is undefined at n_visits=1. For models that have a
-            // TBV objective, default to SWEEPING n_visits so the TBV plot shows
-            // the n_visits 2→3 trend directly, and default the fixed n_visits to
-            // the smallest value > 1 so a drones/range sweep also yields a
-            // non-empty TBV plot. Non-TBV models keep the drones-sweep default.
+            setSeriesDrones(
+              first.number_of_drones != null ? [String(first.number_of_drones)] : []
+            );
+            setSeriesComm(first.comm_range != null ? [first.comm_range] : []);
+            // Max Mean TBV is undefined at n_visits=1. For TBV models, default to
+            // SWEEPING n_visits (so the TBV plot shows the 2→3 trend) and seed the
+            // n_visits overlay with the smallest value > 1 for non-TBV-sweeps.
             const hasTbv = data.objectives.some((o) => o.includes("TBV"));
             const nVisitsAboveOne = Array.from(
               new Set(
@@ -326,12 +604,18 @@ export default function ModelPage() {
                   .filter((v): v is number => v != null && v > 1)
               )
             ).sort((a, b) => a - b);
-            if (hasTbv && nVisitsAboveOne.length > 0) {
-              setFixedNVisits(String(nVisitsAboveOne[0]));
+            const decidedSweep: SweepParam =
+              hasTbv && nVisitsAboveOne.length > 0 ? "n_visits" : "drones";
+            if (decidedSweep === "n_visits") {
+              setSeriesNVisits([String(nVisitsAboveOne[0])]);
               setSweep("n_visits");
             } else {
-              setFixedNVisits(first.n_visits != null ? String(first.n_visits) : "");
+              setSeriesNVisits(first.n_visits != null ? [String(first.n_visits)] : []);
             }
+            // Default the x-axis to ALL values of the swept dimension.
+            setSweepValueSel(
+              availableDimValues(data, decidedSweep).map((o) => o.value)
+            );
           }
           setLoading(false);
         }
@@ -348,98 +632,102 @@ export default function ModelPage() {
     };
   }, [modelKey]);
 
-  // Filter scenarios for the current sweep + fixed values
-  const sweepScenarios = useMemo(() => {
-    if (!grid) return [];
-    let filtered = grid.scenarios;
+  // Currently-selected scenario object for the explorer dropdowns.
+  const selectedScenario = useMemo(
+    () => grid?.scenarios.find((s) => s.scenario === selName) ?? null,
+    [grid, selName]
+  );
 
-    // When a dimension is being held fixed, exclude scenarios where that
-    // dimension is null (can't match any fixed value) and only keep those
-    // whose value matches the chosen fixed value.
-    if (sweep !== "drones") {
-      // Always exclude null-drones when drones is a fixed dimension
-      filtered = filtered.filter((s) => s.number_of_drones != null);
-      if (fixedDrones) {
-        filtered = filtered.filter(
-          (s) => String(s.number_of_drones) === fixedDrones
-        );
+  // Select a combination and bring the explorer into view (used by table rows).
+  const selectCombination = useCallback((name: string) => {
+    setSelName(name);
+    requestAnimationFrame(() => {
+      explorerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, []);
+
+  // Toggle overlay values for a dimension, keeping at least one selected.
+  const onToggleDim = useCallback((dim: SweepParam, values: string[]) => {
+    if (values.length === 0) return; // never allow an empty (zero-line) state
+    if (dim === "drones") setSeriesDrones(values);
+    else if (dim === "comm_range") setSeriesComm(values);
+    else setSeriesNVisits(values);
+  }, []);
+
+  // Change the swept dimension and reset its x-axis to all available values.
+  const handleSweepChange = useCallback(
+    (next: SweepParam) => {
+      setSweep(next);
+      if (grid) {
+        setSweepValueSel(availableDimValues(grid, next).map((o) => o.value));
       }
-    }
-    if (sweep !== "comm_range") {
-      // Always exclude null-comm_range when comm_range is a fixed dimension
-      filtered = filtered.filter((s) => s.comm_range != null);
-      if (fixedComm) {
-        filtered = filtered.filter((s) => s.comm_range === fixedComm);
-      }
-    }
-    if (sweep !== "n_visits" && fixedNVisits !== "") {
-      filtered = filtered.filter(
-        (s) => String(s.n_visits ?? "") === fixedNVisits
-      );
-    }
+    },
+    [grid]
+  );
 
-    // When sweeping a dimension, exclude scenarios where that dimension is
-    // null — they have no meaningful x position on the chart.
-    if (sweep === "drones") {
-      filtered = filtered.filter((s) => s.number_of_drones != null);
-      filtered = [...filtered].sort(
-        (a, b) => (a.number_of_drones as number) - (b.number_of_drones as number)
-      );
-    } else if (sweep === "comm_range") {
-      filtered = filtered.filter((s) => s.comm_range_value != null);
-      filtered = [...filtered].sort(
-        (a, b) => (a.comm_range_value as number) - (b.comm_range_value as number)
-      );
-    } else {
-      // n_visits sweep: null sorts last, then ascending
-      filtered = [...filtered].sort((a, b) => {
-        if (a.n_visits == null && b.n_visits == null) return 0;
-        if (a.n_visits == null) return 1;
-        if (b.n_visits == null) return -1;
-        return a.n_visits - b.n_visits;
-      });
-    }
-    return filtered;
-  }, [grid, sweep, fixedDrones, fixedComm, fixedNVisits]);
+  // Toggle which sweep values appear on the x-axis, keeping at least one.
+  const onToggleSweepValues = useCallback((values: string[]) => {
+    if (values.length === 0) return;
+    setSweepValueSel(values);
+  }, []);
 
-  // Build EffectPoint[] for each objective
-  const effectPointsByObj = useMemo((): Record<string, EffectPoint[]> => {
+  // Build one EffectSeries[] per objective, with overlay values ordered by the
+  // natural parameter order (so legends read 2 → sqrt(8) → 4, etc.).
+  const seriesByObj = useMemo<Record<string, EffectSeries[]>>(() => {
     if (!grid) return {};
-    const result: Record<string, EffectPoint[]> = {};
+    const hasNVisits = grid.scenarios.some((s) => s.n_visits != null);
+    const orderSel = (dim: SweepParam, sel: string[]): string[] => {
+      const order = availableDimValues(grid, dim).map((o) => o.value);
+      return [...sel].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+    };
+    const selByDim: Record<SweepParam, string[]> = {
+      drones: orderSel("drones", seriesDrones),
+      comm_range: orderSel("comm_range", seriesComm),
+      n_visits: hasNVisits ? orderSel("n_visits", seriesNVisits) : [],
+    };
+    return buildSeriesByObjective(grid, sweep, selByDim, sweepValueSel, grid.objectives);
+  }, [grid, sweep, seriesDrones, seriesComm, seriesNVisits, sweepValueSel]);
+
+  // Largest line count across objectives — drives plot height + grid columns.
+  const lineCount = useMemo(() => {
+    if (!grid) return 1;
+    let m = 1;
     for (const obj of grid.objectives) {
-      result[obj] = sweepScenarios
-        .filter((s) => !tbvMeaningless(obj, s.n_visits))
-        .map((s) => {
-        const stats = s.objective_stats[obj];
-        return {
-          xLabel:
-            sweep === "drones"
-              ? (s.number_of_drones != null ? String(s.number_of_drones) : "—")
-              : sweep === "comm_range"
-              ? (s.comm_range ?? "—")
-              : String(s.n_visits ?? "—"),
-          xNum:
-            sweep === "drones"
-              ? (s.number_of_drones ?? 0)
-              : sweep === "comm_range"
-              ? (s.comm_range_value ?? 0)
-              : (s.n_visits ?? 0),
-          best: stats?.best ?? null,
-          min: stats?.min ?? null,
-          max: stats?.max ?? null,
-        };
-      });
+      const n = (seriesByObj[obj] ?? []).filter((s) => s.points.length > 0).length;
+      if (n > m) m = n;
     }
-    return result;
-  }, [grid, sweepScenarios, sweep]);
+    return m;
+  }, [grid, seriesByObj]);
+
+  const hasAnyData = useMemo(() => {
+    if (!grid) return false;
+    return grid.objectives.some((obj) =>
+      (seriesByObj[obj] ?? []).some((s) => s.points.length > 0)
+    );
+  }, [grid, seriesByObj]);
 
   if (!modelKey) return null;
+
+  // Plot sizing grows with the number of overlaid lines.
+  const heightClass =
+    lineCount >= 7 ? "h-80" : lineCount >= 4 ? "h-72" : lineCount >= 2 ? "h-60" : "h-48";
+  const objCount = grid?.objectives.length ?? 1;
+  const gridColsClass =
+    lineCount >= 7
+      ? "grid-cols-1"
+      : lineCount >= 4
+      ? "grid-cols-1 lg:grid-cols-2"
+      : objCount === 1
+      ? "grid-cols-1"
+      : objCount === 2
+      ? "grid-cols-1 md:grid-cols-2"
+      : "grid-cols-1 md:grid-cols-2 xl:grid-cols-3";
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6">
       {/* Back link */}
       <Link
-        href="/"
+        href="/missions"
         className="inline-flex items-center gap-1 text-xs font-mono tracking-widest text-muted-foreground hover:text-primary transition-colors uppercase"
       >
         ← MISSIONS
@@ -512,34 +800,29 @@ export default function ModelPage() {
               <SweepControls
                 grid={grid}
                 sweep={sweep}
-                onSweep={setSweep}
-                fixedDrones={fixedDrones}
-                onFixedDrones={setFixedDrones}
-                fixedComm={fixedComm}
-                onFixedComm={setFixedComm}
-                fixedNVisits={fixedNVisits}
-                onFixedNVisits={setFixedNVisits}
+                onSweep={handleSweepChange}
+                selByDim={{
+                  drones: seriesDrones,
+                  comm_range: seriesComm,
+                  n_visits: seriesNVisits,
+                }}
+                onToggleDim={onToggleDim}
+                sweepValues={sweepValueSel}
+                onToggleSweepValues={onToggleSweepValues}
               />
 
               {/* One chart per objective, or a note if the filter yields nothing */}
-              {sweepScenarios.length === 0 ? (
+              {!hasAnyData ? (
                 <p className="text-xs font-mono text-muted-foreground border border-dashed border-border rounded px-4 py-3">
-                  No data for this combination. Try a different fixed-parameter selection.
+                  No data for this selection. Try different overlay values.
                 </p>
               ) : (
-                <div
-                  className={cn(
-                    "grid gap-6",
-                    grid.objectives.length === 1
-                      ? "grid-cols-1"
-                      : grid.objectives.length === 2
-                      ? "grid-cols-1 md:grid-cols-2"
-                      : "grid-cols-1 md:grid-cols-2 xl:grid-cols-3"
-                  )}
-                >
+                <div className={cn("grid gap-6", gridColsClass)}>
                   {grid.objectives.map((obj, idx) => {
-                    const pts = effectPointsByObj[obj] ?? [];
-                    if (pts.length === 0) {
+                    const objSeries = (seriesByObj[obj] ?? []).filter(
+                      (s) => s.points.length > 0
+                    );
+                    if (objSeries.length === 0) {
                       return (
                         <div key={obj} className="flex flex-col gap-1">
                           <p className="text-xs font-mono tracking-wide text-foreground">
@@ -559,8 +842,9 @@ export default function ModelPage() {
                         objective={obj}
                         polarity={grid.polarities[obj] ?? 1}
                         sweepLabel={SWEEP_LABELS[sweep]}
-                        points={pts}
+                        series={objSeries}
                         colorIndex={idx}
+                        heightClass={heightClass}
                       />
                     );
                   })}
@@ -569,14 +853,44 @@ export default function ModelPage() {
 
               {/* Caption */}
               <p className="text-xs text-muted-foreground font-mono">
-                Each point is the best achievable value of that objective for
-                the given parameters.
-                {sweepScenarios.length > 0
-                  ? ` Showing ${sweepScenarios.length} combination${sweepScenarios.length !== 1 ? "s" : ""}.`
-                  : " No combinations match the current filter."}
+                Each point is the best achievable value of that objective for the
+                given parameters.
+                {lineCount > 1
+                  ? ` Overlaying ${lineCount} trend lines.`
+                  : ""}
               </p>
             </CardContent>
           </Card>
+
+          {/* ── Explore a combination (dropdowns + embedded deep-dive) ─────── */}
+          <div ref={explorerRef} className="flex flex-col gap-4 scroll-mt-6">
+            <div>
+              <h2
+                className="text-xs font-semibold tracking-widest uppercase text-primary font-display"
+                style={{ fontFamily: "var(--font-display)" }}
+              >
+                EXPLORE A COMBINATION
+              </h2>
+              <p className="text-xs text-muted-foreground font-mono mt-0.5">
+                Pick a parameter combination to load its Pareto front, merging
+                comparison, and mission animation.
+              </p>
+            </div>
+
+            <Card>
+              <CardContent className="pt-5">
+                <CombinationSelect
+                  grid={grid}
+                  selected={selectedScenario}
+                  onSelectName={setSelName}
+                />
+              </CardContent>
+            </Card>
+
+            {selName ? (
+              <ScenarioExplorer key={selName} scenario={selName} showTitle={false} />
+            ) : null}
+          </div>
 
           {/* ── Parameter-combination table ───────────────────────────────── */}
           <div className="flex flex-col gap-3">
@@ -588,7 +902,7 @@ export default function ModelPage() {
                 ALL PARAMETER COMBINATIONS
               </h2>
               <p className="text-xs text-muted-foreground font-mono mt-0.5">
-                Click a row to open the full Pareto / merging / animation analysis.
+                Click a row to load that combination in the explorer above.
               </p>
             </div>
 
@@ -625,22 +939,20 @@ export default function ModelPage() {
                   {grid.scenarios.map((s) => (
                     <TableRow
                       key={s.scenario}
-                      onClick={() =>
-                        router.push(
-                          "/explore/" + encodeURIComponent(s.scenario)
-                        )
-                      }
-                      className="cursor-pointer hover:bg-primary/5 transition-colors"
+                      onClick={() => selectCombination(s.scenario)}
+                      className={cn(
+                        "cursor-pointer hover:bg-primary/5 transition-colors",
+                        s.scenario === selName && "bg-primary/10"
+                      )}
                       role="button"
                       tabIndex={0}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
-                          router.push(
-                            "/explore/" + encodeURIComponent(s.scenario)
-                          );
+                          e.preventDefault();
+                          selectCombination(s.scenario);
                         }
                       }}
-                      aria-label={`Open scenario ${s.scenario}`}
+                      aria-label={`Load scenario ${s.scenario} in the explorer`}
                     >
                       <TableCell className="font-mono text-xs tabular-nums">
                         {s.number_of_drones}

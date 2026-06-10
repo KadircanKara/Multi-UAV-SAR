@@ -3,74 +3,78 @@
 @tailwind utilities;
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   TACTICAL MISSION CONTROL THEME
-   Dark palette is the default. Set on both :root and .dark so it is always dark.
-   html.dark is also set in layout.tsx.
-
-   Hex source of truth:
-     background     #05080a   card    #0a0f12   primary (amber)      #f2a900
-     foreground     #c7d0c9   secondary #16202a  accent (signal-grn)  #39ff8b
-     muted          #11181d   muted-fg  #6b7d77  destructive          #ff5f56
-     border/input   #16242b   ring    #f2a900
-     chart-3 (cyan) #22d3ee   chart-4 (magenta) #e879f9  chart-5 (grey) #8aa0a8
-   Converted to HSL triplets (H S% L% — space-separated, no hsl(), no commas):
+   CLEAN INDIGO + SLATE THEME
+   Light is the friendly default; .dark is toggled by next-themes (class strategy).
+   Tokens are HSL triplets (H S% L% — space-separated, no hsl(), no commas).
+   Charts/canvas read --chart-1..5 + --border/--muted-foreground, so they re-skin
+   automatically when these change.
    ───────────────────────────────────────────────────────────────────────── */
 
 @layer base {
   :root {
-    --background: 204 36% 3%;
-    --foreground: 150 8% 80%;
-    --card: 207 32% 6%;
-    --card-foreground: 150 8% 80%;
-    --popover: 207 32% 6%;
-    --popover-foreground: 150 8% 80%;
-    --primary: 42 100% 47%;
-    --primary-foreground: 204 36% 3%;
-    --secondary: 213 30% 13%;
-    --secondary-foreground: 150 8% 80%;
-    --muted: 208 28% 9%;
-    --muted-foreground: 169 8% 45%;
-    --accent: 151 100% 61%;
-    --accent-foreground: 204 36% 3%;
-    --destructive: 3 100% 67%;
-    --destructive-foreground: 204 36% 3%;
-    --border: 205 30% 13%;
-    --input: 205 30% 13%;
-    --ring: 42 100% 47%;
-    --chart-1: 42 100% 47%;
-    --chart-2: 151 100% 61%;
-    --chart-3: 190 82% 53%;
-    --chart-4: 294 94% 70%;
-    --chart-5: 200 17% 59%;
-    --radius: 0.25rem;
+    /* Light theme — clean indigo + slate (friendly default) */
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    /* Primary = high-contrast near-black (reference uses near-black buttons) */
+    --primary: 222 47% 11%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    /* Accent = subtle slate hover (shadcn convention); indigo lives in chart-1/ring */
+    --accent: 210 40% 96%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 243 75% 59%;
+    --chart-1: 243 75% 59%;   /* indigo  */
+    --chart-2: 160 84% 39%;   /* emerald */
+    --chart-3: 25 95% 53%;    /* orange  */
+    --chart-4: 339 90% 51%;   /* rose    */
+    --chart-5: 262 83% 58%;   /* violet  */
+    --radius: 0.75rem;
+
+    /* Fonts — Geist (Sans for UI + display, Mono for code/numerics) */
+    --font-sans: var(--font-geist-sans);
+    --font-display: var(--font-geist-sans);
+    --font-mono: var(--font-geist-mono);
   }
 
   .dark {
-    --background: 204 36% 3%;
-    --foreground: 150 8% 80%;
-    --card: 207 32% 6%;
-    --card-foreground: 150 8% 80%;
-    --popover: 207 32% 6%;
-    --popover-foreground: 150 8% 80%;
-    --primary: 42 100% 47%;
-    --primary-foreground: 204 36% 3%;
-    --secondary: 213 30% 13%;
-    --secondary-foreground: 150 8% 80%;
-    --muted: 208 28% 9%;
-    --muted-foreground: 169 8% 45%;
-    --accent: 151 100% 61%;
-    --accent-foreground: 204 36% 3%;
-    --destructive: 3 100% 67%;
-    --destructive-foreground: 204 36% 3%;
-    --border: 205 30% 13%;
-    --input: 205 30% 13%;
-    --ring: 42 100% 47%;
-    --chart-1: 42 100% 47%;
-    --chart-2: 151 100% 61%;
-    --chart-3: 190 82% 53%;
-    --chart-4: 294 94% 70%;
-    --chart-5: 200 17% 59%;
-    --radius: 0.25rem;
+    /* Dark theme — clean slate with the same indigo accent */
+    --background: 222 47% 6%;
+    --foreground: 210 40% 96%;
+    --card: 222 44% 9%;
+    --card-foreground: 210 40% 96%;
+    --popover: 222 44% 9%;
+    --popover-foreground: 210 40% 96%;
+    /* In dark, the high-contrast primary flips to near-white */
+    --primary: 210 40% 96%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 96%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 217 33% 17%;
+    --accent-foreground: 210 40% 96%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 217 33% 20%;
+    --input: 217 33% 20%;
+    --ring: 234 89% 74%;
+    --chart-1: 234 89% 74%;   /* indigo  */
+    --chart-2: 158 64% 52%;   /* emerald */
+    --chart-3: 27 96% 61%;    /* orange  */
+    --chart-4: 351 95% 71%;   /* rose    */
+    --chart-5: 258 90% 76%;   /* violet  */
+    --radius: 0.75rem;
   }
 
   * {
@@ -78,7 +82,7 @@
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans antialiased;
   }
 }
 
@@ -134,6 +138,18 @@
   50%       { opacity: 0.2; }
 }
 
+/* HUD entrance — fade + rise, used with staggered animation-delay on the landing */
+@keyframes hud-rise {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Slow drifting conic glow behind the landing hero */
+@keyframes hud-orbit {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
    GENERAL UTILITIES
    ───────────────────────────────────────────────────────────────────────── */
@@ -153,5 +169,26 @@
 
   .animate-radar-sweep {
     animation: radar-sweep 3s linear infinite;
+  }
+
+  /* Landing entrance — starts hidden (fill: both); pair with inline animationDelay */
+  .animate-hud-rise {
+    animation: hud-rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  /* Per-route page entrance — same fade-rise, but NO fill so it leaves no
+     lingering transform (which would break `position: sticky` descendants). */
+  .animate-page-enter {
+    animation: hud-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .animate-hud-orbit {
+    animation: hud-orbit 18s linear infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-hud-rise { animation: none; }
+    .animate-page-enter { animation: none; }
+    .animate-hud-orbit { animation: none; }
   }
 }

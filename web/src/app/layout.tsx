@@ -1,29 +1,18 @@
 import type { Metadata } from "next";
-import { JetBrains_Mono, Orbitron } from "next/font/google";
+import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
 import "./globals.css";
-import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
+import { ThemeProvider } from "@/components/theme-provider";
+import { SiteHeader } from "@/components/site-header";
+import { PageTransition } from "@/components/page-transition";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
-
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono",
-  weight: ["100", "200", "300", "400", "500", "600", "700", "800"],
-  display: "swap",
-});
-
-const orbitron = Orbitron({
-  subsets: ["latin"],
-  variable: "--font-display",
-  weight: ["400", "500", "600", "700", "800", "900"],
-  display: "swap",
-});
 
 export const metadata: Metadata = {
-  title: "Multi-UAV SAR · OPS Console",
+  title: "Multi-UAV SAR",
   description:
-    "Tactical mission control interface for Multi-UAV Search-and-Rescue optimisation.",
+    "Interactive, explainable optimiser for multi-UAV search-and-rescue path planning.",
 };
 
 export default function RootLayout({
@@ -32,60 +21,24 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={cn("dark", jetbrainsMono.variable, orbitron.variable)}
+      suppressHydrationWarning
+      className={cn(GeistSans.variable, GeistMono.variable)}
     >
-      <body
-        className={cn(
-          "min-h-screen bg-background text-foreground font-mono antialiased bg-grid"
-        )}
-      >
-        {/* Scanline CRT overlay */}
-        <div className="scanline" aria-hidden="true" />
-
-        <TooltipProvider>
-          {/* ── OPS CONSOLE top bar ────────────────────────────────────── */}
-          <header className="relative z-50 flex h-11 items-center justify-between px-4 bg-card border-b border-border">
-            {/* Left: brand + live indicator */}
-            <div className="flex items-center gap-3">
-              <span
-                className="font-display text-sm font-semibold tracking-widest text-primary uppercase"
-                style={{ fontFamily: "var(--font-display)" }}
-              >
-                MULTI-UAV SAR
-              </span>
-              <span className="text-muted-foreground text-xs tracking-widest select-none">
-                ·
-              </span>
-              <span
-                className="font-display text-xs font-medium tracking-widest text-muted-foreground uppercase"
-                style={{ fontFamily: "var(--font-display)" }}
-              >
-                OPS CONSOLE
-              </span>
-              <span className="flex items-center gap-1.5 ml-2">
-                <span
-                  className="size-2 rounded-full bg-accent animate-pulse-dot"
-                  aria-hidden="true"
-                />
-                <span className="text-xs text-accent tracking-widest font-semibold">
-                  ● LIVE
-                </span>
-              </span>
-            </div>
-
-            {/* Right: mono readout slot */}
-            <div className="text-xs text-muted-foreground tracking-wider font-mono tabular-nums">
-              SYS:NOMINAL
-            </div>
-          </header>
-
-          <Separator />
-
-          {/* ── Page content ──────────────────────────────────────────── */}
-          <main className="relative z-10">{children}</main>
-        </TooltipProvider>
-
-        <Toaster />
+      <body className="min-h-screen">
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="light"
+          enableSystem={false}
+          disableTransitionOnChange
+        >
+          <TooltipProvider>
+            <SiteHeader />
+            <main className="relative">
+              <PageTransition>{children}</PageTransition>
+            </main>
+          </TooltipProvider>
+          <Toaster />
+        </ThemeProvider>
       </body>
     </html>
   );

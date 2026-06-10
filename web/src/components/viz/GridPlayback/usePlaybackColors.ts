@@ -2,8 +2,12 @@
 
 /**
  * usePlaybackColors — resolves all canvas drawing colors from CSS theme tokens.
- * NO hardcoded hex/rgb/hsl literals in this file; every color comes from
- * getComputedStyle on document.documentElement.
+ * NO hardcoded hex/rgb/hsl literals drive the live UI; every color comes from
+ * getComputedStyle on document.documentElement. The literals below are only
+ * SSR / first-paint fallbacks (light theme).
+ *
+ * Note: the vivid roles (found / connected / belief heat) read --chart-* rather
+ * than --accent, because in the clean theme --accent is a subtle slate hover.
  */
 
 import { useEffect, useState } from "react";
@@ -11,43 +15,43 @@ import { useEffect, useState } from "react";
 export interface PlaybackColors {
   /** Grid cell fill when belief = 0 (background card color) */
   beliefLow: string;
-  /** Grid cell fill when belief = 1 (warm amber) */
+  /** Grid cell fill when belief = 1 (warm heat) */
   beliefHigh: string;
   /** Grid line stroke */
   gridLine: string;
   /** Target cell outline stroke */
   targetOutline: string;
-  /** "Found" target fill (accent green) */
+  /** "Found" target fill */
   foundFill: string;
-  /** Connectivity edge — base-connected (accent) */
+  /** Connectivity edge — base-connected */
   edgeConnected: string;
   /** Connectivity edge — not connected to base (muted) */
   edgeMuted: string;
   /** Drone trail + marker colors cycling chart-1..5 */
   droneColors: string[];
-  /** Base station glyph color (primary amber) */
+  /** Base station glyph color */
   baseColor: string;
   /** Belief label text color */
   labelColor: string;
 }
 
 const FALLBACKS: PlaybackColors = {
-  beliefLow:      "hsl(207 32% 6%)",   // --card
-  beliefHigh:     "hsl(42 100% 47%)",  // --chart-1 amber
-  gridLine:       "hsl(205 30% 13%)",  // --border
-  targetOutline:  "hsl(42 100% 47%)",  // --primary
-  foundFill:      "hsl(151 100% 61%)", // --accent
-  edgeConnected:  "hsl(151 100% 61%)", // --accent
-  edgeMuted:      "hsl(169 8% 45%)",   // --muted-foreground
+  beliefLow:      "hsl(0 0% 100%)",     // --card (white)
+  beliefHigh:     "hsl(25 95% 53%)",    // --chart-3 orange (heat)
+  gridLine:       "hsl(214 32% 91%)",   // --border
+  targetOutline:  "hsl(222 47% 11%)",   // --primary
+  foundFill:      "hsl(160 84% 39%)",   // --chart-2 emerald
+  edgeConnected:  "hsl(243 75% 59%)",   // --chart-1 indigo
+  edgeMuted:      "hsl(215 16% 47%)",   // --muted-foreground
   droneColors: [
-    "hsl(42 100% 47%)",   // chart-1
-    "hsl(151 100% 61%)",  // chart-2
-    "hsl(190 82% 53%)",   // chart-3
-    "hsl(294 94% 70%)",   // chart-4
-    "hsl(200 17% 59%)",   // chart-5
+    "hsl(243 75% 59%)",   // chart-1 indigo
+    "hsl(160 84% 39%)",   // chart-2 emerald
+    "hsl(25 95% 53%)",    // chart-3 orange
+    "hsl(339 90% 51%)",   // chart-4 rose
+    "hsl(262 83% 58%)",   // chart-5 violet
   ],
-  baseColor:  "hsl(42 100% 47%)",  // --primary
-  labelColor: "hsl(150 8% 80%)",   // --foreground
+  baseColor:  "hsl(222 47% 11%)",  // --primary
+  labelColor: "hsl(222 47% 11%)",  // --foreground
 };
 
 export function usePlaybackColors(): PlaybackColors {
@@ -55,29 +59,39 @@ export function usePlaybackColors(): PlaybackColors {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const style = getComputedStyle(document.documentElement);
 
-    function read(token: string, fallback: string): string {
-      const raw = style.getPropertyValue(token).trim();
-      return raw ? `hsl(${raw})` : fallback;
+    function resolve(): PlaybackColors {
+      const style = getComputedStyle(document.documentElement);
+      function read(token: string, fallback: string): string {
+        const raw = style.getPropertyValue(token).trim();
+        return raw ? `hsl(${raw})` : fallback;
+      }
+      const droneColors = [1, 2, 3, 4, 5].map((i) =>
+        read(`--chart-${i}`, FALLBACKS.droneColors[i - 1]!)
+      );
+      return {
+        beliefLow:     read("--card",             FALLBACKS.beliefLow),
+        beliefHigh:    read("--chart-3",          FALLBACKS.beliefHigh),
+        gridLine:      read("--border",           FALLBACKS.gridLine),
+        targetOutline: read("--primary",          FALLBACKS.targetOutline),
+        foundFill:     read("--chart-2",          FALLBACKS.foundFill),
+        edgeConnected: read("--chart-1",          FALLBACKS.edgeConnected),
+        edgeMuted:     read("--muted-foreground", FALLBACKS.edgeMuted),
+        droneColors,
+        baseColor:     read("--primary",          FALLBACKS.baseColor),
+        labelColor:    read("--foreground",       FALLBACKS.labelColor),
+      };
     }
 
-    const droneColors = [1, 2, 3, 4, 5].map((i) =>
-      read(`--chart-${i}`, FALLBACKS.droneColors[i - 1]!)
-    );
+    setColors(resolve());
 
-    setColors({
-      beliefLow:     read("--card",             FALLBACKS.beliefLow),
-      beliefHigh:    read("--chart-1",          FALLBACKS.beliefHigh),
-      gridLine:      read("--border",           FALLBACKS.gridLine),
-      targetOutline: read("--primary",          FALLBACKS.targetOutline),
-      foundFill:     read("--accent",           FALLBACKS.foundFill),
-      edgeConnected: read("--accent",           FALLBACKS.edgeConnected),
-      edgeMuted:     read("--muted-foreground", FALLBACKS.edgeMuted),
-      droneColors,
-      baseColor:     read("--primary",          FALLBACKS.baseColor),
-      labelColor:    read("--foreground",       FALLBACKS.labelColor),
+    // Re-resolve when the theme (class on <html>) changes.
+    const observer = new MutationObserver(() => setColors(resolve()));
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
     });
+    return () => observer.disconnect();
   }, []);
 
   return colors;

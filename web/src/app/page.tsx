@@ -1,271 +1,179 @@
-"use client";
-
-import { useEffect, useState, useMemo } from "react";
-import { useRouter } from "next/navigation";
-import { getLibrary } from "@/lib/api";
-import type { ScenarioSummary } from "@/lib/types";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Input } from "@/components/ui/input";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 
-// ─── Model group (derived from ScenarioSummary[]) ────────────────────────────
+/**
+ * Landing page (route "/").
+ *
+ * Clean two-card layout: a bold heading + subtitle, then Mission Select and
+ * Model Comparison as large, friendly cards. Fully token-based so it adapts to
+ * light/dark. Subtle staggered fade-rise entrance (globals: hud-rise).
+ */
 
-interface ModelGroup {
-  model_key: string;
-  type: string;
-  algorithm: string;
-  objectives: string[];
-  scenarios: ScenarioSummary[];
-  droneRange: [number, number] | null;
-  nVisitsRange: [number, number] | null;
-  combinationCount: number;
-}
+// ─── Card glyphs ──────────────────────────────────────────────────────────────
 
-function buildModelGroups(scenarios: ScenarioSummary[]): ModelGroup[] {
-  const map = new Map<string, ScenarioSummary[]>();
-  for (const s of scenarios) {
-    const arr = map.get(s.model_key) ?? [];
-    arr.push(s);
-    map.set(s.model_key, arr);
-  }
-
-  return Array.from(map.entries()).map(([model_key, items]) => {
-    const first = items[0]!;
-
-    const drones = items
-      .map((s) => s.number_of_drones)
-      .filter((d): d is number => d != null);
-    const nVisits = items
-      .map((s) => s.variant_value)
-      .filter((v): v is number => v != null);
-
-    return {
-      model_key,
-      type: first.type,
-      algorithm: first.algorithm,
-      objectives: first.objectives,
-      scenarios: items,
-      droneRange:
-        drones.length > 0
-          ? [Math.min(...drones), Math.max(...drones)]
-          : null,
-      nVisitsRange:
-        nVisits.length > 0
-          ? [Math.min(...nVisits), Math.max(...nVisits)]
-          : null,
-      combinationCount: items.length,
-    };
-  });
-}
-
-// ─── Loading skeleton ─────────────────────────────────────────────────────────
-
-function ModelCardSkeleton() {
+function MissionsGlyph() {
   return (
-    <div className="flex flex-col gap-3 rounded border border-border bg-card p-4">
-      <Skeleton className="h-5 w-40" />
-      <div className="flex gap-2">
-        <Skeleton className="h-5 w-12" />
-        <Skeleton className="h-5 w-20" />
-        <Skeleton className="h-5 w-20" />
-      </div>
-      <Skeleton className="h-4 w-full" />
-      <Skeleton className="h-4 w-3/4" />
-    </div>
+    <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="3" width="7" height="7" rx="1.5" />
+      <rect x="3" y="14" width="7" height="7" rx="1.5" />
+      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+    </svg>
   );
 }
 
-// ─── Single model card ────────────────────────────────────────────────────────
-
-function ModelCard({ group }: { group: ModelGroup }) {
-  const router = useRouter();
-
-  function handleClick() {
-    router.push("/model/" + encodeURIComponent(group.model_key));
-  }
-
-  const summaryParts: string[] = [
-    `${group.combinationCount} parameter combination${group.combinationCount !== 1 ? "s" : ""}`,
-  ];
-  if (group.droneRange) {
-    const [lo, hi] = group.droneRange;
-    summaryParts.push(lo === hi ? `${lo} drone${lo !== 1 ? "s" : ""}` : `drones ${lo}–${hi}`);
-  }
-  if (group.nVisitsRange) {
-    const [lo, hi] = group.nVisitsRange;
-    summaryParts.push(lo === hi ? `n_visits ${lo}` : `n_visits ${lo}–${hi}`);
-  }
-
+function CompareGlyph() {
   return (
-    <Card
-      onClick={handleClick}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") handleClick();
-      }}
-      aria-label={`Open model ${group.model_key}`}
+    <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <line x1="6" y1="20" x2="6" y2="12" />
+      <line x1="12" y1="20" x2="12" y2="4" />
+      <line x1="18" y1="20" x2="18" y2="9" />
+    </svg>
+  );
+}
+
+function OptimizeGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <line x1="4" y1="6" x2="14" y2="6" />
+      <line x1="18" y1="6" x2="20" y2="6" />
+      <circle cx="16" cy="6" r="2" />
+      <line x1="4" y1="12" x2="8" y2="12" />
+      <line x1="12" y1="12" x2="20" y2="12" />
+      <circle cx="10" cy="12" r="2" />
+      <line x1="4" y1="18" x2="14" y2="18" />
+      <line x1="18" y1="18" x2="20" y2="18" />
+      <circle cx="16" cy="18" r="2" />
+    </svg>
+  );
+}
+
+function ArrowIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <line x1="5" y1="12" x2="19" y2="12" />
+      <polyline points="12 5 19 12 12 19" />
+    </svg>
+  );
+}
+
+// ─── Deck card ────────────────────────────────────────────────────────────────
+
+interface CardProps {
+  href: string;
+  title: string;
+  description: string;
+  bullets: string[];
+  glyph: React.ReactNode;
+  delay: number;
+}
+
+function DeckCard({ href, title, description, bullets, glyph, delay }: CardProps) {
+  return (
+    <Link
+      href={href}
+      style={{ animationDelay: `${delay}ms` }}
       className={cn(
-        "cursor-pointer transition-all duration-150",
-        "hover:ring-1 hover:ring-primary hover:shadow-[0_0_14px_hsl(var(--primary)/0.3)]"
+        "group animate-hud-rise relative flex flex-col gap-5 rounded-2xl border border-border bg-card p-7",
+        "transition-all duration-200 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-lg hover:shadow-foreground/5"
       )}
     >
-      <CardHeader>
-        <CardTitle
-          className="text-sm font-semibold tracking-widest uppercase text-primary truncate font-display"
-          style={{ fontFamily: "var(--font-display)" }}
-        >
-          {group.model_key}
-        </CardTitle>
-      </CardHeader>
+      <div className="flex items-start justify-between">
+        <span className="grid size-11 place-items-center rounded-xl bg-muted text-foreground">
+          {glyph}
+        </span>
+        <span className="text-muted-foreground transition-all duration-200 group-hover:translate-x-0.5 group-hover:text-foreground">
+          <ArrowIcon />
+        </span>
+      </div>
 
-      <CardContent className="flex flex-col gap-3">
-        {/* Type + objectives badges */}
-        <div className="flex flex-wrap gap-1">
-          <Badge className="text-xs font-mono tracking-widest bg-secondary text-secondary-foreground">
-            {group.type}
-          </Badge>
-          {group.objectives.map((obj) => (
-            <Badge key={obj} variant="outline" className="text-xs tracking-wide">
-              {obj}
-            </Badge>
-          ))}
-        </div>
-
-        {/* Summary line */}
-        <p className="text-xs font-mono text-muted-foreground">
-          {summaryParts.join(" · ")}
+      <div className="flex flex-col gap-2">
+        <h2 className="text-xl font-semibold tracking-tight text-foreground">
+          {title}
+        </h2>
+        <p className="text-[15px] leading-relaxed text-muted-foreground">
+          {description}
         </p>
-      </CardContent>
-    </Card>
-  );
-}
+      </div>
 
-// ─── Offline / error banner ───────────────────────────────────────────────────
-
-function OfflineBanner({ message }: { message: string }) {
-  return (
-    <div className="rounded border border-destructive bg-destructive/10 px-4 py-3 font-mono">
-      <span className="text-sm font-semibold tracking-wide text-destructive">
-        BACKEND OFFLINE
-      </span>
-      <span className="text-sm text-muted-foreground">
-        {" — "}start the API on :8000
-      </span>
-      {message && (
-        <p className="mt-1 text-xs text-muted-foreground/70 truncate">
-          {message}
-        </p>
-      )}
-    </div>
+      <ul className="flex flex-col gap-2 pt-1">
+        {bullets.map((b) => (
+          <li key={b} className="flex items-center gap-2.5 text-sm text-foreground/80">
+            <span className="size-1.5 shrink-0 rounded-full bg-chart-1" aria-hidden="true" />
+            {b}
+          </li>
+        ))}
+      </ul>
+    </Link>
   );
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function MissionSelectPage() {
-  const [scenarios, setScenarios] = useState<ScenarioSummary[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-
-    getLibrary()
-      .then((data) => {
-        if (!cancelled) {
-          setScenarios(data);
-          setLoading(false);
-        }
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
-          setLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const allGroups = useMemo(() => buildModelGroups(scenarios), [scenarios]);
-
-  const filteredGroups = useMemo(() => {
-    if (!query.trim()) return allGroups;
-    const q = query.toLowerCase();
-    return allGroups.filter(
-      (g) =>
-        g.model_key.toLowerCase().includes(q) ||
-        g.type.toLowerCase().includes(q) ||
-        g.objectives.some((o) => o.toLowerCase().includes(q))
-    );
-  }, [allGroups, query]);
-
+export default function LandingPage() {
   return (
-    <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6">
-      {/* Page header */}
-      <div className="flex flex-col gap-1">
-        <h1
-          className="text-lg font-semibold tracking-widest uppercase text-primary"
-          style={{ fontFamily: "var(--font-display)" }}
+    <div className="mx-auto max-w-5xl px-6 py-16 md:py-24">
+      <div className="flex flex-col gap-3">
+        <span
+          className="animate-hud-rise text-sm font-medium text-chart-1"
+          style={{ animationDelay: "0ms" }}
         >
-          MISSION SELECT
+          Interactive · Explainable optimiser
+        </span>
+        <h1
+          className="animate-hud-rise max-w-2xl text-balance text-4xl font-bold tracking-tight text-foreground md:text-5xl"
+          style={{ animationDelay: "60ms" }}
+        >
+          Two views. One mission.
         </h1>
-        <p className="text-xs tracking-wide text-muted-foreground">
-          SELECT A MODEL TO BROWSE ITS PARAMETER COMBINATIONS AND OBJECTIVE-EFFECT ANALYSIS
+        <p
+          className="animate-hud-rise max-w-2xl text-[15px] leading-relaxed text-muted-foreground md:text-base"
+          style={{ animationDelay: "120ms" }}
+        >
+          Browse and analyse 20 search-and-rescue path-optimisation models, or
+          compare them head-to-head across objectives and sensing time-metrics —
+          with Pareto fronts, belief-merging analysis, and live mission playback.
         </p>
       </div>
 
-      {/* Filter input */}
-      <div className="max-w-sm">
-        <Input
-          type="search"
-          placeholder="FILTER MODELS…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="text-xs tracking-widest uppercase placeholder:tracking-widest"
+      <div className="mt-12 grid grid-cols-1 gap-5 md:grid-cols-3">
+        <DeckCard
+          href="/missions"
+          title="Mission Select"
+          description="Pick a model to explore its parameter sweeps, trade-offs, merging strategies, and live mission animations."
+          bullets={[
+            "Parameter-effect analysis",
+            "Pareto front & solution selection",
+            "Belief-merging & mission playback",
+          ]}
+          glyph={<MissionsGlyph />}
+          delay={200}
+        />
+        <DeckCard
+          href="/optimize"
+          title="Optimizer"
+          description="Configure and run your own optimization — pick the objectives, method, and algorithm, then watch it solve."
+          bullets={[
+            "SOO & MOO (NSGA-II / NSGA-III)",
+            "Weighted-sum with custom weights",
+            "Live generation progress",
+          ]}
+          glyph={<OptimizeGlyph />}
+          delay={280}
+        />
+        <DeckCard
+          href="/compare"
+          title="Model Comparison"
+          description="Put models head-to-head across every objective and sensing time-metric — even objectives a model never optimised."
+          bullets={[
+            "Bar, line, radar & table views",
+            "Objective & time-metric comparison",
+            "Cross-model, cross-parameter",
+          ]}
+          glyph={<CompareGlyph />}
+          delay={360}
         />
       </div>
-
-      {/* Error state */}
-      {error && <OfflineBanner message={error} />}
-
-      {/* Loading skeletons */}
-      {loading && !error && (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <ModelCardSkeleton key={i} />
-          ))}
-        </div>
-      )}
-
-      {/* Empty filter result */}
-      {!loading && !error && filteredGroups.length === 0 && (
-        <p className="font-mono text-sm tracking-wide text-muted-foreground">
-          NO MODELS MATCH FILTER.
-        </p>
-      )}
-
-      {/* Model cards */}
-      {!loading && !error && filteredGroups.length > 0 && (
-        <>
-          <p className="font-mono text-xs tabular-nums text-muted-foreground">
-            {filteredGroups.length}/{allGroups.length} MODELS · {scenarios.length} TOTAL COMBINATIONS
-          </p>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {filteredGroups.map((g) => (
-              <ModelCard key={g.model_key} group={g} />
-            ))}
-          </div>
-        </>
-      )}
     </div>
   );
 }

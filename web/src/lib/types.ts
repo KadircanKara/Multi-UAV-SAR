@@ -107,6 +107,73 @@ export interface SelectResponse {
   detail: SolutionDetail;
 }
 
+// ─── Optimizer (run your own optimisation) ────────────────────────────────────
+
+export interface OptimizeConfig {
+  optimization_type: "SOO" | "MOO";
+  method: string;
+  objectives: string[];
+  weights?: Record<string, number> | null;
+  pop_size: number;
+  n_gen: number;
+  seed?: number;
+  scenario: ScenarioConfig;
+}
+
+export interface OptimizeFrontSolution {
+  index: number;
+  objectives_signed: Record<string, number | null>;
+  objectives_abs: Record<string, number | null>;
+}
+
+export interface OptimizeFront {
+  scenario: string;
+  model_key: string;
+  objectives: string[];
+  polarities: Record<string, number>;
+  result_kind: "front" | "single";
+  n_solutions: number;
+  solutions: OptimizeFrontSolution[];
+  /** True when the user stopped the run early; the front is the best-so-far. */
+  cancelled?: boolean;
+  stopped_at_gen?: number | null;
+}
+
+export interface OptimizeStartResponse {
+  run_id: string;
+  scenario_name: string;
+  model_key: string;
+  exists: boolean;
+}
+
+export interface OptimizeCheckResponse {
+  scenario_name: string;
+  model_key: string;
+  exists: boolean;
+}
+
+export interface OptimizeStatus {
+  state: "running" | "done" | "failed";
+  gen?: number;
+  n_gen?: number;
+  front?: OptimizeFront;
+  error?: string;
+  exists_in_library?: boolean;
+  /** Live progress while running. */
+  best?: Record<string, number>;
+  live_front?: Record<string, number>[];
+}
+
+export interface OptimizeStopResponse {
+  run_id: string;
+  stopping: boolean;
+}
+
+export interface OptimizeSaveResponse {
+  scenario_name: string;
+  model_key: string;
+}
+
 // ─── Sensing Config ───────────────────────────────────────────────────────────
 
 export interface SensingConfig {
@@ -174,6 +241,54 @@ export interface ModelGrid {
   objectives: string[];
   polarities: Record<string, number>;
   scenarios: ModelGridScenario[];
+}
+
+// ─── Cross-model objective comparison (/api/comparison) ──────────────────────
+
+export interface ComparisonScenario {
+  scenario: string;
+  model_key: string;
+  type: string;
+  algorithm: string;
+  /** Objectives this model actually optimised (the rest are computed for compare). */
+  optimized_objectives: string[];
+  number_of_drones: number | null;
+  comm_range: string | null;
+  comm_range_value: number | null;
+  n_visits: number | null;
+  n_solutions: number;
+  /** Per-objective stats; null for an objective with no data (e.g. TBV at n_visits=1). */
+  objective_stats: Record<string, ObjectiveStat | null>;
+}
+
+export interface ComparisonResponse {
+  objectives: string[];
+  polarities: Record<string, number>;
+  scenarios: ComparisonScenario[];
+  skipped: string[];
+}
+
+// ─── Cross-model time-metric comparison (/api/comparison/time) ───────────────
+
+export interface TimeComparisonScenario {
+  scenario: string;
+  model_key: string;
+  type: string;
+  algorithm: string;
+  number_of_drones: number | null;
+  comm_range: string | null;
+  comm_range_value: number | null;
+  n_visits: number | null;
+  selected_index: number;
+  /** Keyed by metric name (the four sensing time-metrics). */
+  metric_values: Record<string, number | null>;
+}
+
+export interface TimeComparisonResponse {
+  metrics: string[];
+  scenarios: TimeComparisonScenario[];
+  skipped: string[];
+  strategy: string;
 }
 
 // ─── Playback payload (typed from /api/playback response) ────────────────────

@@ -84,10 +84,13 @@ function SliderField({
 // ─── Speed options ─────────────────────────────────────────────────────────────
 
 const SPEED_OPTIONS: { label: string; value: number }[] = [
-  { label: "0.5×", value: 0.5 },
-  { label: "1×",   value: 1   },
-  { label: "2×",   value: 2   },
-  { label: "4×",   value: 4   },
+  { label: "0.1×",   value: 0.1   },
+  { label: "0.175×", value: 0.175 },
+  { label: "0.25×",  value: 0.25  },
+  { label: "0.5×",  value: 0.5  },
+  { label: "1×",    value: 1    },
+  { label: "2×",    value: 2    },
+  { label: "4×",    value: 4    },
 ];
 
 // ─── GridPlayback component ───────────────────────────────────────────────────
@@ -111,7 +114,7 @@ export default function GridPlayback({ scenario, front, selectedIndex }: Props) 
   // ── Playback UI state (kept small; canvas reads frameRef directly) ────────
   const [displayStep, setDisplayStep] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [speedMultiplier, setSpeedMultiplier] = useState(1);
+  const [speedMultiplier, setSpeedMultiplier] = useState(0.5);
   const [showAllLabels, setShowAllLabels] = useState(false);
 
   const canvasHandle = useRef<GridCanvasHandle>(null);

@@ -24,20 +24,20 @@ export interface ChartColors {
   reference: string;
 }
 
-// SSR / first-paint literal fallbacks derived from the theme token values.
+// SSR / first-paint literal fallbacks (light theme — clean indigo + slate).
 const FALLBACKS: ChartColors = {
   series: [
-    "hsl(42 100% 47%)",   // chart-1 amber / primary
-    "hsl(151 100% 61%)",  // chart-2 accent green
-    "hsl(190 82% 53%)",   // chart-3 cyan
-    "hsl(294 94% 70%)",   // chart-4 magenta
-    "hsl(200 17% 59%)",   // chart-5 muted grey
+    "hsl(243 75% 59%)",   // chart-1 indigo
+    "hsl(160 84% 39%)",   // chart-2 emerald
+    "hsl(25 95% 53%)",    // chart-3 orange
+    "hsl(339 90% 51%)",   // chart-4 rose
+    "hsl(262 83% 58%)",   // chart-5 violet
   ],
-  grid:          "hsl(205 30% 13%)",  // --border
-  axis:          "hsl(169 8% 45%)",   // --muted-foreground
-  tooltipBg:     "hsl(207 32% 6%)",   // --card
-  tooltipBorder: "hsl(205 30% 13%)",  // --border
-  reference:     "hsl(42 100% 47%)",  // --chart-1
+  grid:          "hsl(214 32% 91%)",  // --border
+  axis:          "hsl(215 16% 47%)",  // --muted-foreground
+  tooltipBg:     "hsl(0 0% 100%)",    // --card
+  tooltipBorder: "hsl(214 32% 91%)",  // --border
+  reference:     "hsl(243 75% 59%)",  // --chart-1
 };
 
 export function useChartColors(): ChartColors {
@@ -46,25 +46,33 @@ export function useChartColors(): ChartColors {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const el = ref.current ?? document.documentElement;
-    const style = getComputedStyle(el);
 
-    function read(token: string, fallback: string): string {
-      const raw = style.getPropertyValue(token).trim();
-      return raw ? `hsl(${raw})` : fallback;
+    function resolve(): ChartColors {
+      const el = ref.current ?? document.documentElement;
+      const style = getComputedStyle(el);
+      function read(token: string, fallback: string): string {
+        const raw = style.getPropertyValue(token).trim();
+        return raw ? `hsl(${raw})` : fallback;
+      }
+      const series = [1, 2, 3, 4, 5].map((i) =>
+        read(`--chart-${i}`, FALLBACKS.series[i - 1]!)
+      );
+      const grid          = read("--border",           FALLBACKS.grid);
+      const axis          = read("--muted-foreground",  FALLBACKS.axis);
+      const tooltipBg     = read("--card",              FALLBACKS.tooltipBg);
+      const tooltipBorder = read("--border",            FALLBACKS.tooltipBorder);
+      return { series, grid, axis, tooltipBg, tooltipBorder, reference: series[0]! };
     }
 
-    const series = [1, 2, 3, 4, 5].map((i) =>
-      read(`--chart-${i}`, FALLBACKS.series[i - 1]!)
-    );
-    const grid          = read("--border",           FALLBACKS.grid);
-    const axis          = read("--muted-foreground",  FALLBACKS.axis);
-    const tooltipBg     = read("--card",              FALLBACKS.tooltipBg);
-    const tooltipBorder = read("--border",            FALLBACKS.tooltipBorder);
-    const reference     = series[0]!;
+    setColors(resolve());
 
-    setColors({ series, grid, axis, tooltipBg, tooltipBorder, reference });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Re-resolve when the theme class on <html> changes (light ↔ dark).
+    const observer = new MutationObserver(() => setColors(resolve()));
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+    return () => observer.disconnect();
   }, []);
 
   return colors;
