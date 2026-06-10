@@ -20,6 +20,11 @@ def limit_cell_range(sol:PathSolution):
     return cell_range - 3
 
 def max_mission_time(sol:PathSolution):
+    # User-set threshold (e.g. from the interactive optimizer) overrides the
+    # legacy hardcoded cap when present on the info object.
+    thr = getattr(sol.info, "max_mission_time_constraint", None)
+    if thr is not None:
+        return sol.mission_time - thr
     if sol.info.n_visits < 4:
         return sol.mission_time - 3600
     else:

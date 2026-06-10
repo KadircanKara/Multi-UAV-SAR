@@ -87,12 +87,16 @@ class PathProblem(ElementwiseProblem):
 
         if model['Type']=="WS":
             objectives = get_objectives_from_weighted_sum_model(model)
+            # Optional per-objective weights (e.g. set by the interactive optimizer).
+            # Backward-compatible: when absent, every objective is weighted equally (1.0).
+            weights = model.get("Weights")
             score = 0
             for i in range(len(objectives)):
                 obj_name = objectives[i]
                 obj_calc = model_metric_info["Objectives"][obj_name][0]
                 obj_pol = model_metric_info["Objectives"][obj_name][1]
-                score += obj_calc(sol)/get_objective_normalization_factors(sol.info)[obj_name]*obj_pol
+                w = weights.get(obj_name, 0.0) if weights else 1.0
+                score += w * obj_calc(sol)/get_objective_normalization_factors(sol.info)[obj_name]*obj_pol
             f.append(score)
 
         else:

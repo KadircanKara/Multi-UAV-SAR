@@ -3,6 +3,11 @@ from collections import deque
 from PathSolution import PathSolution
 
 def min_perc_conn_constraint(sol:PathSolution):
+    # User-set threshold (e.g. from the interactive optimizer) overrides the
+    # legacy hardcoded floor when present on the info object.
+    thr = getattr(sol.info, "min_connectivity_constraint", None)
+    if thr is not None:
+        return thr - sol.percentage_connectivity
     if sol.info.number_of_drones > 2:
         return 0.5 - sol.percentage_connectivity
     else:
