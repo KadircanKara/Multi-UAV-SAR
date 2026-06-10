@@ -1,3 +1,8 @@
+# Claude
+docs/current_session.md
+.agents/
+skills-lock.json
+
 # Byte-compiled / caches
 __pycache__/
 *.py[cod]
