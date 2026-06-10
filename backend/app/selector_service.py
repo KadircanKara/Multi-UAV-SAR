@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 import app.rootpath  # side-effect: inserts repo root into sys.path
-from app import settings
+from app import settings, models_registry
 from app.library_service import _is_safe_scenario_name, resolve_model_key
 
 from PathOptimizationModel import AVAILABLE_MODELS
@@ -79,15 +79,15 @@ def _resolve_model_key(scenario: str, model_key: Optional[str]) -> str:
     Raises _SelectorNotFound for unknown keys.
     """
     if model_key:
-        if model_key not in AVAILABLE_MODELS:
+        if not models_registry.known(model_key):
             raise _SelectorNotFound(f"Unknown model_key {model_key!r}")
         return model_key
     try:
         resolved = resolve_model_key(scenario)
     except Exception as exc:
         raise _SelectorNotFound(f"Cannot derive model key for {scenario!r}: {exc}") from exc
-    if resolved not in AVAILABLE_MODELS:
-        raise _SelectorNotFound(f"Derived model key {resolved!r} not in AVAILABLE_MODELS")
+    if not models_registry.known(resolved):
+        raise _SelectorNotFound(f"Derived model key {resolved!r} is not a known model")
     return resolved
 
 
@@ -119,7 +119,7 @@ def _load_selector(scenario: str, resolved_model_key: str) -> SolutionSelector:
         )
     F: pd.DataFrame = pd.read_pickle(obj_path)
     raw_solutions = pd.read_pickle(sol_path)
-    model = AVAILABLE_MODELS[resolved_model_key]
+    model = models_registry.get_model(resolved_model_key)
     # Normalise rows: SolutionObjects rows can be 1-element numpy arrays
     solutions = [
         s[0] if isinstance(s, np.ndarray) else s for s in list(raw_solutions)
@@ -177,7 +177,7 @@ def build_front(scenario: str, model_key: Optional[str] = None) -> dict:
     """
     selector = get_selector(scenario, model_key)
     resolved = _resolve_model_key(scenario, model_key)
-    model = AVAILABLE_MODELS[resolved]
+    model = models_registry.get_model(resolved)
     objectives = list(selector.F.columns)
     polarities = get_polarities(model)
     return {

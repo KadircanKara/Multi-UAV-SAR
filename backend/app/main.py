@@ -11,7 +11,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
 from app import settings
-from app.routers import fronts, library, models, scenarios, replay, playback
+from app.routers import (
+    fronts, library, models, scenarios, replay, playback, comparison, optimize,
+)
 
 app = FastAPI(
     title="Multi-UAV-SAR API",
@@ -32,6 +34,8 @@ app.include_router(library.router)
 app.include_router(fronts.router)
 app.include_router(replay.router)
 app.include_router(playback.router)
+app.include_router(comparison.router)
+app.include_router(optimize.router)
 
 
 @app.get("/api/health")

@@ -14,7 +14,7 @@ from typing import Optional
 import pandas as pd
 
 import app.rootpath  # side-effect: inserts repo root into sys.path
-from app import settings
+from app import settings, models_registry
 from PathOptimizationModel import AVAILABLE_MODELS
 
 
@@ -192,10 +192,10 @@ def _read_scenario_meta(scenario: str) -> Optional[dict]:
         model_key = resolve_model_key(scenario)
     except Exception:
         return None
-    if model_key not in AVAILABLE_MODELS:
+    if not models_registry.known(model_key):
         return None
 
-    model_dict = AVAILABLE_MODELS[model_key]
+    model_dict = models_registry.get_model(model_key)
 
     obj_path = _obj_path(scenario)
     if not _assert_path_in_results_root(obj_path):
@@ -338,10 +338,10 @@ def model_grid(model_key: str) -> Optional[dict]:
     # so we import at call-time not at module load.
     from app.selector_service import get_polarities  # noqa: PLC0415
 
-    if model_key not in AVAILABLE_MODELS:
+    if not models_registry.known(model_key):
         return None
 
-    model_dict = AVAILABLE_MODELS[model_key]
+    model_dict = models_registry.get_model(model_key)
     polarities = get_polarities(model_dict)
 
     obj_dir = _objectives_dir()

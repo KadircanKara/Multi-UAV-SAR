@@ -245,6 +245,210 @@ class ModelGrid(BaseModel):
     scenarios: list[ModelGridScenario]
 
 
+# ---------------------------------------------------------------------------
+# Cross-model objective comparison schemas
+# ---------------------------------------------------------------------------
+
+class ComparisonRequest(BaseModel):
+    """Body for POST /api/comparison — the scenarios to compare."""
+
+    scenarios: list[str] = Field(..., min_length=1, max_length=24)
+
+
+class ComparisonScenario(BaseModel):
+    """All-objective summary for one scenario in a comparison."""
+
+    scenario: str
+    model_key: str
+    type: str
+    algorithm: str
+    # The objective names this model actually optimised (WS expanded); the rest
+    # are still reported, computed from the solution objects for comparability.
+    optimized_objectives: list[str]
+    number_of_drones: Optional[int] = None
+    comm_range: Optional[str] = None
+    comm_range_value: Optional[float] = None
+    n_visits: Optional[int] = None
+    n_solutions: int
+    # None for an objective with no data (e.g. Max Mean TBV at n_visits == 1).
+    objective_stats: dict[str, Optional[ObjectiveStat]]
+
+
+class ComparisonResponse(BaseModel):
+    objectives: list[str]
+    polarities: dict[str, int]
+    scenarios: list[ComparisonScenario]
+    skipped: list[str]
+
+
+# ---------------------------------------------------------------------------
+# Cross-model time-metric comparison schemas
+# ---------------------------------------------------------------------------
+
+class TimeComparisonRequest(BaseModel):
+    """Body for POST /api/comparison/time — scenarios + shared sensing config."""
+
+    scenarios: list[str] = Field(..., min_length=1, max_length=24)
+    config: SensingConfigModel
+    strategy: str = "balanced"
+    objective_name: Optional[str] = None
+    weights: Optional[dict[str, float]] = None
+
+
+class TimeComparisonScenario(BaseModel):
+    """Time-metric summary for one scenario in a comparison."""
+
+    scenario: str
+    model_key: str
+    type: str
+    algorithm: str
+    number_of_drones: Optional[int] = None
+    comm_range: Optional[str] = None
+    comm_range_value: Optional[float] = None
+    n_visits: Optional[int] = None
+    selected_index: int
+    metric_values: dict[str, Optional[float]]
+
+
+class TimeComparisonResponse(BaseModel):
+    metrics: list[str]
+    scenarios: list[TimeComparisonScenario]
+    skipped: list[str]
+    strategy: str
+
+
+# ---------------------------------------------------------------------------
+# Optimizer (Configure + Run) schemas
+# ---------------------------------------------------------------------------
+
+_VALID_OBJECTIVES = {
+    "Mission Time",
+    "Percentage Connectivity",
+    "Max Disconnected Time",
+    "Mean Disconnected Time",
+    "Max Mean TBV",
+}
+
+
+class OptimizeConfig(BaseModel):
+    """A user-configured optimization run."""
+
+    optimization_type: str = Field(description="SOO | MOO")
+    method: str = Field(description="SOO: GA | WS ; MOO: NSGA2 | NSGA3 (MOEAD blocked)")
+    objectives: list[str] = Field(..., min_length=1)
+    weights: Optional[dict[str, float]] = None
+    pop_size: int = Field(default=100, ge=10, le=500)
+    n_gen: int = Field(default=300, ge=5, le=1000)
+    seed: int = Field(default=1, ge=0)
+    # Configurable constraints (None = disabled). The speed-violation constraint
+    # is ALWAYS applied by the optimizer (required for path interpolation) and is
+    # not exposed here. mission_time is in seconds; connectivity is a fraction.
+    max_mission_time: Optional[float] = Field(default=3600.0)
+    min_connectivity: Optional[float] = Field(default=0.5)
+    scenario: ScenarioConfig = Field(default_factory=ScenarioConfig)
+
+    @model_validator(mode="after")
+    def _validate(self) -> "OptimizeConfig":
+        t, m = self.optimization_type, self.method
+        if t not in ("SOO", "MOO"):
+            raise ValueError("optimization_type must be 'SOO' or 'MOO'")
+        if self.max_mission_time is not None and self.max_mission_time <= 0:
+            raise ValueError("max_mission_time must be > 0")
+        if self.min_connectivity is not None and not (0.0 <= self.min_connectivity <= 1.0):
+            raise ValueError("min_connectivity must be between 0 and 1")
+        if t == "SOO" and m not in ("GA", "WS"):
+            raise ValueError("SOO method must be 'GA' or 'WS'")
+        if t == "MOO":
+            if m == "MOEAD":
+                raise ValueError("MOEAD is not available yet")
+            if m not in ("NSGA2", "NSGA3"):
+                raise ValueError("MOO method must be 'NSGA2' or 'NSGA3'")
+        bad = [o for o in self.objectives if o not in _VALID_OBJECTIVES]
+        if bad:
+            raise ValueError(f"unknown objectives: {bad}")
+        if len(set(self.objectives)) != len(self.objectives):
+            raise ValueError("duplicate objectives")
+        if t == "SOO" and m == "GA" and len(self.objectives) != 1:
+            raise ValueError("SOO-GA requires exactly one objective")
+        if t == "SOO" and m == "WS":
+            if len(self.objectives) < 2:
+                raise ValueError("Weighted-sum requires at least two objectives")
+            w = self.weights or {}
+            if set(w.keys()) != set(self.objectives):
+                raise ValueError("a weight must be provided for each objective")
+            if any(v < 0 for v in w.values()):
+                raise ValueError("weights must be non-negative")
+            total = sum(w.values())
+            # Tolerate 4-decimal rounding (e.g. an equal split of 3 objectives is
+            # 0.3333×3 = 0.9999). Matches the frontend run-gate's 1e-3 tolerance so
+            # any config it accepts the API accepts too; gross errors (sum 0.9 / 1.1)
+            # are still well outside this band.
+            if abs(total - 1.0) > 1e-3:
+                raise ValueError(f"weights must sum to 1 (got {total:.4f})")
+        if t == "MOO" and len(self.objectives) < 2:
+            raise ValueError("MOO requires at least two objectives")
+        return self
+
+
+class OptimizeStartResponse(BaseModel):
+    run_id: str
+    scenario_name: str
+    model_key: str
+    exists: bool
+
+
+class OptimizeCheckResponse(BaseModel):
+    scenario_name: str
+    model_key: str
+    exists: bool
+
+
+class OptimizeFrontSolution(BaseModel):
+    index: int
+    objectives_signed: dict[str, Optional[float]]
+    objectives_abs: dict[str, Optional[float]]
+
+
+class OptimizeFront(BaseModel):
+    scenario: str
+    model_key: str
+    objectives: list[str]
+    polarities: dict[str, int]
+    result_kind: str
+    n_solutions: int
+    solutions: list[OptimizeFrontSolution]
+    # True when the run was stopped early by the user; the front is the best-so-far.
+    cancelled: bool = False
+    stopped_at_gen: Optional[int] = None
+
+
+class OptimizeStatusResponse(BaseModel):
+    state: str  # running | done | failed
+    gen: Optional[int] = None
+    n_gen: Optional[int] = None
+    front: Optional[OptimizeFront] = None
+    error: Optional[str] = None
+    exists_in_library: Optional[bool] = None
+    # Live progress while running: per-objective best (absolute) + the current
+    # non-dominated front as absolute objective points.
+    best: Optional[dict[str, float]] = None
+    live_front: Optional[list[dict[str, float]]] = None
+
+
+class OptimizeStopResponse(BaseModel):
+    run_id: str
+    stopping: bool  # False if the run had already finished (nothing to stop)
+
+
+class OptimizeSaveRequest(BaseModel):
+    overwrite: bool = False
+
+
+class OptimizeSaveResponse(BaseModel):
+    scenario_name: str
+    model_key: str
+
+
 class ReplayRequest(BaseModel):
     model_key: Optional[str] = None
     index: int
