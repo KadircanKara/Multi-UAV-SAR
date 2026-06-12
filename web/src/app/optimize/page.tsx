@@ -1037,7 +1037,10 @@ export default function OptimizePage() {
             </div>
           </div>
         ) : (
-          <div className="columns-1 gap-6 md:columns-2 xl:columns-3 [&>*]:mb-6 [&>*]:break-inside-avoid">
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3 xl:items-start">
+            {/* Optimization (type · method · objectives) — spans columns 2-3 */}
+            <Card className="xl:col-start-2 xl:col-span-2 xl:row-start-1">
+              <CardContent className="flex flex-col gap-6 pt-6">
             {/* Optimisation type */}
             <div className="flex flex-col gap-2.5">
               <SectionLabel>Optimization type</SectionLabel>
@@ -1192,11 +1195,15 @@ export default function OptimizePage() {
                 </div>
               )}
             </div>
+              </CardContent>
+            </Card>
 
-            {/* GA parameters */}
-            <div className="flex flex-col gap-4">
-              <SectionLabel>Algorithm parameters</SectionLabel>
-
+            {/* Algorithm parameters — column 1 */}
+            <Card className="xl:col-start-1 xl:row-start-1 xl:row-span-2">
+              <CardHeader>
+                <CardTitle>Algorithm parameters</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-6">
               <div className="flex flex-col gap-5">
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-3">
@@ -1382,10 +1389,11 @@ export default function OptimizePage() {
                   className="h-8 w-24 text-right tabular-nums"
                 />
               </div>
-            </div>
+              </CardContent>
+            </Card>
 
             {/* Constraints */}
-            <Card>
+            <Card className="xl:col-start-2 xl:row-start-2">
               <CardHeader>
                 <CardTitle>Constraints</CardTitle>
                 <CardDescription>
@@ -1470,7 +1478,7 @@ export default function OptimizePage() {
             </Card>
 
             {/* Scenario */}
-            <Card>
+            <Card className="xl:col-start-3 xl:row-start-2">
               <CardHeader>
                 <CardTitle>Scenario</CardTitle>
                 <CardDescription>
