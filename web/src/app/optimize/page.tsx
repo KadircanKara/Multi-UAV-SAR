@@ -432,7 +432,6 @@ export default function OptimizePage() {
   const [popSize, setPopSize] = useState(POP_DEFAULT);
   const [nGen, setNGen] = useState(NGEN_DEFAULT);
   const [genStrategy, setGenStrategy] = useState<GenStrategy>("fixed");
-  const [genAdvancedOpen, setGenAdvancedOpen] = useState(false);
   const [earlyStopPatience, setEarlyStopPatience] = useState(ES_PATIENCE_DEFAULT);
   const [earlyStopThresholdPct, setEarlyStopThresholdPct] =
     useState(ES_THRESH_PCT_DEFAULT);
@@ -443,14 +442,12 @@ export default function OptimizePage() {
   const [minConnEnabled, setMinConnEnabled] = useState(true);
   const [minConnValue, setMinConnValue] = useState(MIN_CONN_DEFAULT);
   const [seed, setSeed] = useState(SEED_DEFAULT);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   // Scenario
   const [scenario, setScenario] = useState<ScenarioConfig | null>(null);
   // Comm range: when true the user is entering a raw metre distance (not a preset).
   const [commCustom, setCommCustom] = useState(false);
   const [commMetresRaw, setCommMetresRaw] = useState("");
-  const [scenarioOpen, setScenarioOpen] = useState(false);
 
   // Duplicate pre-check
   const [duplicate, setDuplicate] = useState<{
@@ -904,7 +901,7 @@ export default function OptimizePage() {
 
   return (
     <TooltipProvider delayDuration={150}>
-      <div className="mx-auto flex max-w-6xl flex-col gap-8 px-6 py-10">
+      <div className="mx-auto flex max-w-7xl flex-col gap-6 px-6 py-8">
         {/* Header */}
         <div className="flex flex-col gap-1.5">
           <h1 className="text-2xl font-bold tracking-tight text-foreground">
@@ -916,10 +913,119 @@ export default function OptimizePage() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
-          {/* ── Config column (replaced by live progress while running) ── */}
-          <div className="flex flex-col gap-7">
-            {running ? (
+        {/* ── Sticky run bar (always visible on scroll) ── */}
+        <div className="sticky top-14 z-30 flex flex-col gap-3 rounded-xl border border-border bg-background/85 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/70">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              onClick={handleRun}
+              disabled={!isValid}
+              size="lg"
+              className="min-w-[220px] flex-1 sm:flex-none"
+            >
+              {running ? "Running…" : "Run optimization"}
+            </Button>
+            {running && runId && (
+              <Button
+                onClick={handleStop}
+                disabled={stopping}
+                variant="outline"
+                size="lg"
+              >
+                {stopping ? "Stopping…" : "Stop"}
+              </Button>
+            )}
+            {running && progress ? (
+              <div className="flex min-w-[220px] flex-1 flex-col gap-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Solving…</span>
+                  <span className="tabular-nums text-foreground">
+                    Generation {progress.gen} / {progress.nGen}
+                  </span>
+                </div>
+                <Progress
+                  value={
+                    progress.nGen > 0 ? (progress.gen / progress.nGen) * 100 : 0
+                  }
+                />
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Configure below, then run — results render at the bottom.
+              </p>
+            )}
+          </div>
+          {duplicate && !running && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-chart-1/30 bg-chart-1/5 px-3 py-2">
+              <p className="text-sm text-foreground">
+                A run for this model and parameter combination already exists.
+              </p>
+              <span className="break-all font-mono text-[11px] text-muted-foreground">
+                {duplicate.scenario_name}
+              </span>
+              <Link
+                href={`/explore/${encodeURIComponent(duplicate.scenario_name)}`}
+                className="text-sm font-medium text-chart-1 hover:underline"
+              >
+                Open it →
+              </Link>
+            </div>
+          )}
+        </div>
+
+        {/* ── Body: live progress while running, else the config grid ── */}
+        {running ? (
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+            {runParams && (
+              <div className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4 lg:w-72 lg:shrink-0">
+                <p className="text-sm font-medium text-foreground">
+                  Run parameters
+                </p>
+                <div className="flex flex-col gap-1.5 text-xs">
+                  <ParamRow
+                    label="Method"
+                    value={`${runParams.optType} · ${runParams.method}`}
+                  />
+                  <ParamRow
+                    label="Objectives"
+                    value={runParams.objectives.join(", ")}
+                  />
+                  {runParams.weights && (
+                    <ParamRow
+                      label="Weights"
+                      value={runParams.objectives
+                        .map((o) => `${runParams.weights![o] ?? 0}`)
+                        .join(" · ")}
+                    />
+                  )}
+                  <ParamRow label="Population" value={`${runParams.popSize}`} />
+                  <ParamRow
+                    label="Generations"
+                    value={`${runParams.nGen} (${
+                      runParams.genStrategy === "max" ? "max · early-stop" : "fixed"
+                    })`}
+                  />
+                  {runParams.genStrategy === "max" && (
+                    <ParamRow
+                      label="Early-stop"
+                      value={`≥${runParams.earlyStopThresholdPct}% · ${runParams.earlyStopPatience} gen`}
+                    />
+                  )}
+                  <ParamRow
+                    label="Scenario"
+                    value={scenarioSummary(runParams.scenario)}
+                  />
+                  <ParamRow
+                    label="Grid"
+                    value={`${runParams.scenario.grid_size} × ${runParams.scenario.grid_size} · cell ${runParams.scenario.cell_side_length} m · speed ${runParams.scenario.max_drone_speed}`}
+                  />
+                  <ParamRow
+                    label="Constraints"
+                    value={constraintsSummary(runParams)}
+                  />
+                </div>
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
               <LiveProgress
                 gen={progress?.gen ?? 0}
                 nGen={progress?.nGen ?? nGen}
@@ -928,8 +1034,10 @@ export default function OptimizePage() {
                 liveFront={liveFront}
                 isMOO={optType === "MOO"}
               />
-            ) : (
-              <>
+            </div>
+          </div>
+        ) : (
+          <div className="columns-1 gap-6 md:columns-2 xl:columns-3 [&>*]:mb-6 [&>*]:break-inside-avoid">
             {/* Optimisation type */}
             <div className="flex flex-col gap-2.5">
               <SectionLabel>Optimization type</SectionLabel>
@@ -1192,106 +1300,88 @@ export default function OptimizePage() {
                   </p>
 
                   {genStrategy === "max" && (
-                    <div className="flex flex-col gap-3">
-                      <button
-                        type="button"
-                        onClick={() => setGenAdvancedOpen((o) => !o)}
-                        className="self-start text-xs font-medium text-muted-foreground hover:text-foreground"
-                      >
-                        {genAdvancedOpen ? "− Hide advanced" : "+ Advanced"}
-                      </button>
-                      {genAdvancedOpen && (
-                        <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="flex flex-col">
-                              <Label className="text-sm text-foreground">
-                                Patience
-                              </Label>
-                              <span className="text-xs text-muted-foreground">
-                                Generations with no qualifying improvement before
-                                stopping.
-                              </span>
-                            </div>
-                            <Input
-                              type="number"
-                              min={2}
-                              max={500}
-                              value={earlyStopPatience}
-                              onChange={(e) => {
-                                const n = parseInt(e.target.value, 10);
-                                if (!Number.isNaN(n)) setEarlyStopPatience(n);
-                              }}
-                              onBlur={() =>
-                                setEarlyStopPatience((p) =>
-                                  Number.isFinite(p) && p >= 2
-                                    ? Math.min(500, p)
-                                    : ES_PATIENCE_DEFAULT
-                                )
-                              }
-                              className="h-9 w-24 text-right tabular-nums"
-                            />
-                          </div>
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="flex flex-col">
-                              <Label className="text-sm text-foreground">
-                                Improvement threshold (%)
-                              </Label>
-                              <span className="text-xs text-muted-foreground">
-                                Minimum objective gain that counts as progress.
-                              </span>
-                            </div>
-                            <Input
-                              type="number"
-                              min={1}
-                              max={100}
-                              step={1}
-                              value={earlyStopThresholdPct}
-                              onChange={(e) => {
-                                const n = Number(e.target.value);
-                                if (!Number.isNaN(n)) setEarlyStopThresholdPct(n);
-                              }}
-                              onBlur={() =>
-                                setEarlyStopThresholdPct((t) =>
-                                  Number.isFinite(t) && t > 0 && t <= 100
-                                    ? t
-                                    : ES_THRESH_PCT_DEFAULT
-                                )
-                              }
-                              className="h-9 w-24 text-right tabular-nums"
-                            />
-                          </div>
+                    <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex flex-col">
+                          <Label className="text-sm text-foreground">Patience</Label>
+                          <span className="text-xs text-muted-foreground">
+                            Generations with no qualifying improvement before stopping.
+                          </span>
                         </div>
-                      )}
+                        <Input
+                          type="number"
+                          min={2}
+                          max={500}
+                          value={earlyStopPatience}
+                          onChange={(e) => {
+                            const n = parseInt(e.target.value, 10);
+                            if (!Number.isNaN(n)) setEarlyStopPatience(n);
+                          }}
+                          onBlur={() =>
+                            setEarlyStopPatience((p) =>
+                              Number.isFinite(p) && p >= 2
+                                ? Math.min(500, p)
+                                : ES_PATIENCE_DEFAULT
+                            )
+                          }
+                          className="h-9 w-24 text-right tabular-nums"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex flex-col">
+                          <Label className="text-sm text-foreground">
+                            Improvement threshold (%)
+                          </Label>
+                          <span className="text-xs text-muted-foreground">
+                            Minimum objective gain that counts as progress.
+                          </span>
+                        </div>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={100}
+                          step={1}
+                          value={earlyStopThresholdPct}
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            if (!Number.isNaN(n)) setEarlyStopThresholdPct(n);
+                          }}
+                          onBlur={() =>
+                            setEarlyStopThresholdPct((t) =>
+                              Number.isFinite(t) && t > 0 && t <= 100
+                                ? t
+                                : ES_THRESH_PCT_DEFAULT
+                            )
+                          }
+                          className="h-9 w-24 text-right tabular-nums"
+                        />
+                      </div>
                     </div>
                   )}
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setAdvancedOpen((o) => !o)}
-                className="self-start text-xs font-medium text-muted-foreground hover:text-foreground"
-              >
-                {advancedOpen ? "− Hide advanced" : "+ Advanced"}
-              </button>
-              {advancedOpen && (
-                <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-4">
-                  <Label className="text-sm text-muted-foreground">Seed</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={seed}
-                    onChange={(e) => {
-                      const n = parseInt(e.target.value, 10);
-                      if (!Number.isNaN(n)) setSeed(n);
-                    }}
-                    onBlur={() =>
-                      setSeed((s) => (Number.isFinite(s) && s >= 0 ? s : SEED_DEFAULT))
-                    }
-                    className="h-8 w-24 text-right tabular-nums"
-                  />
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-4">
+                <div className="flex flex-col">
+                  <Label className="text-sm text-foreground">Seed</Label>
+                  <span className="text-xs text-muted-foreground">
+                    Same seed ⇒ reproducible run; change it to sample a different result.
+                  </span>
                 </div>
-              )}
+                <Input
+                  type="number"
+                  min={0}
+                  value={seed}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value, 10);
+                    if (!Number.isNaN(n)) setSeed(n);
+                  }}
+                  onBlur={() =>
+                    setSeed((s) => (Number.isFinite(s) && s >= 0 ? s : SEED_DEFAULT))
+                  }
+                  className="h-8 w-24 text-right tabular-nums"
+                />
+              </div>
             </div>
 
             {/* Constraints */}
@@ -1382,27 +1472,15 @@ export default function OptimizePage() {
             {/* Scenario */}
             <Card>
               <CardHeader>
-                <button
-                  type="button"
-                  onClick={() => setScenarioOpen((o) => !o)}
-                  className="flex w-full items-center justify-between text-left"
-                >
-                  <div className="flex flex-col gap-1">
-                    <CardTitle>Scenario</CardTitle>
-                    <CardDescription>
-                      {scenario
-                        ? `${scenario.number_of_drones} drones · n_visits ${scenario.n_visits} · grid ${scenario.grid_size}`
-                        : "Loading defaults…"}
-                    </CardDescription>
-                  </div>
-                  <span className="text-muted-foreground">
-                    {scenarioOpen ? "−" : "+"}
-                  </span>
-                </button>
+                <CardTitle>Scenario</CardTitle>
+                <CardDescription>
+                  {scenario
+                    ? `${scenario.number_of_drones} drones · n_visits ${scenario.n_visits} · grid ${scenario.grid_size}`
+                    : "Loading defaults…"}
+                </CardDescription>
               </CardHeader>
-              {scenarioOpen && scenario && (
+              {scenario && (
                 <CardContent className="flex flex-col gap-4">
-                  <Separator />
                   <div className="grid grid-cols-2 gap-4">
                     {/* number_of_drones */}
                     <div className="flex flex-col gap-1.5">
@@ -1568,133 +1646,8 @@ export default function OptimizePage() {
                 </CardContent>
               )}
             </Card>
-              </>
-            )}
           </div>
-
-          {/* ── Action / status column ── */}
-          <div className="flex flex-col gap-4 lg:sticky lg:top-20 lg:self-start">
-            {duplicate && !running && (
-              <div className="flex flex-col gap-2 rounded-xl border border-chart-1/30 bg-chart-1/5 p-4">
-                <p className="text-sm text-foreground">
-                  A run for this model and parameter combination already exists in
-                  the mission browser.
-                </p>
-                {scenario && (
-                  <p className="text-xs text-muted-foreground">
-                    {selected.length > 0 ? `${selected.join(" · ")} — ` : ""}
-                    {scenarioSummary(scenario)}
-                  </p>
-                )}
-                <p className="break-all font-mono text-[11px] text-muted-foreground">
-                  {duplicate.scenario_name}
-                </p>
-                <Link
-                  href={`/explore/${encodeURIComponent(duplicate.scenario_name)}`}
-                  className="text-sm font-medium text-chart-1 hover:underline"
-                >
-                  Open it →
-                </Link>
-              </div>
-            )}
-
-            <Button
-              onClick={handleRun}
-              disabled={!isValid}
-              size="lg"
-              className="w-full"
-            >
-              {running ? "Running…" : "Run optimization"}
-            </Button>
-
-            {running && runId && (
-              <Button
-                onClick={handleStop}
-                disabled={stopping}
-                variant="outline"
-                size="lg"
-                className="w-full"
-              >
-                {stopping ? "Stopping…" : "Stop optimization"}
-              </Button>
-            )}
-
-            {running && progress && (
-              <div className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Solving…</span>
-                  <span className="tabular-nums text-foreground">
-                    Generation {progress.gen} / {progress.nGen}
-                  </span>
-                </div>
-                <Progress
-                  value={
-                    progress.nGen > 0
-                      ? (progress.gen / progress.nGen) * 100
-                      : 0
-                  }
-                />
-              </div>
-            )}
-
-            {running && runParams && (
-              <div className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4">
-                <p className="text-sm font-medium text-foreground">
-                  Run parameters
-                </p>
-                <div className="flex flex-col gap-1.5 text-xs">
-                  <ParamRow
-                    label="Method"
-                    value={`${runParams.optType} · ${runParams.method}`}
-                  />
-                  <ParamRow
-                    label="Objectives"
-                    value={runParams.objectives.join(", ")}
-                  />
-                  {runParams.weights && (
-                    <ParamRow
-                      label="Weights"
-                      value={runParams.objectives
-                        .map((o) => `${runParams.weights![o] ?? 0}`)
-                        .join(" · ")}
-                    />
-                  )}
-                  <ParamRow label="Population" value={`${runParams.popSize}`} />
-                  <ParamRow
-                    label="Generations"
-                    value={`${runParams.nGen} (${
-                      runParams.genStrategy === "max" ? "max · early-stop" : "fixed"
-                    })`}
-                  />
-                  {runParams.genStrategy === "max" && (
-                    <ParamRow
-                      label="Early-stop"
-                      value={`≥${runParams.earlyStopThresholdPct}% · ${runParams.earlyStopPatience} gen`}
-                    />
-                  )}
-                  <ParamRow
-                    label="Scenario"
-                    value={scenarioSummary(runParams.scenario)}
-                  />
-                  <ParamRow
-                    label="Grid"
-                    value={`${runParams.scenario.grid_size} × ${runParams.scenario.grid_size} · cell ${runParams.scenario.cell_side_length} m · speed ${runParams.scenario.max_drone_speed}`}
-                  />
-                  <ParamRow
-                    label="Constraints"
-                    value={constraintsSummary(runParams)}
-                  />
-                </div>
-              </div>
-            )}
-
-            <p className="text-xs text-muted-foreground">
-              {running
-                ? "The run polls every second; results appear below when done."
-                : "Configure on the left, then run. Results render below."}
-            </p>
-          </div>
-        </div>
+        )}
 
         {/* ── Result ── */}
         {result && (
