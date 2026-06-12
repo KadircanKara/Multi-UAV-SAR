@@ -62,6 +62,14 @@ class AlreadyExistsError(Exception):
     """Scenario already in the library and overwrite was not requested."""
 
 
+class EmptyRunError(Exception):
+    """The run found no feasible solutions, so there is nothing to save."""
+
+
+class SeededScenarioError(Exception):
+    """Refusing to overwrite an existing preset/seeded library scenario."""
+
+
 # ─── Model synthesis ──────────────────────────────────────────────────────────
 
 def _derive_type_alg(optimization_type: str, method: str) -> tuple[str, str]:
@@ -192,6 +200,71 @@ def _get_executor() -> ProcessPoolExecutor:
     return _executor
 
 
+def shutdown(wait: bool = False) -> None:
+    """Tear down the worker executor (on app shutdown / test teardown) so the
+    interpreter doesn't block at exit joining a stale pool."""
+    global _executor
+    if _executor is not None:
+        try:
+            _executor.shutdown(wait=wait, cancel_futures=True)
+        except TypeError:  # cancel_futures added in 3.9
+            _executor.shutdown(wait=wait)
+        _executor = None
+
+
+# ─── On-disk recovery (survives a backend restart that wiped _jobs) ───────────
+
+import re as _re
+
+_RUN_ID_RE = _re.compile(r"^[0-9a-fA-F]{6,32}$")
+
+
+def _run_dir(run_id: str) -> Optional[str]:
+    """Validated path to a run dir, or None if the id is unsafe/absent."""
+    if not _RUN_ID_RE.match(run_id):
+        return None
+    d = os.path.join(settings.RESULTS_ROOT, ".runs", run_id)
+    return d if os.path.isdir(d) else None
+
+
+def _disk_status(run_id: str) -> Optional[dict]:
+    """Reconstruct a *finished* run's status from its on-disk run dir, or None.
+
+    Only DONE runs are recoverable — a run that was mid-flight when the process
+    died left a stale "running" status with no live worker, so it is treated as
+    gone (404) rather than a stuck spinner."""
+    d = _run_dir(run_id)
+    if d is None:
+        return None
+    try:
+        with open(os.path.join(d, "status.json")) as fh:
+            s = json.load(fh)
+    except Exception:
+        return None
+    if s.get("state") != "done":
+        return None
+    return s
+
+
+def _disk_job(run_id: str) -> Optional[dict]:
+    """Reconstruct a job dict (for save_run) from a finished run's meta.json."""
+    d = _run_dir(run_id)
+    if d is None:
+        return None
+    try:
+        with open(os.path.join(d, "meta.json")) as fh:
+            meta = json.load(fh)
+    except Exception:
+        return None
+    return {
+        "future": None,
+        "run_dir": d,
+        "scenario_name": meta.get("scenario_name"),
+        "model_key": meta.get("model_key"),
+        "model_dict": meta.get("model_dict"),
+    }
+
+
 def start_run(
     optimization_type: str, method: str, objectives: list[str],
     weights: Optional[dict], pop_size: int, n_gen: int, seed: int,
@@ -239,6 +312,14 @@ def get_status(run_id: str) -> dict:
     """Poll a run: running (with gen X/Y), done (with the front), or failed."""
     job = _jobs.get(run_id)
     if job is None:
+        # Recover a finished run from disk after a restart that wiped _jobs.
+        disk = _disk_status(run_id)
+        if disk is not None:
+            result = dict(disk)
+            dj = _disk_job(run_id)
+            scen = dj["scenario_name"] if dj else None
+            result["exists_in_library"] = _exists(scen) if scen else False
+            return result
         raise RunNotFoundError(f"Unknown run_id {run_id!r}")
     fut = job["future"]
     if fut.done():
@@ -270,6 +351,9 @@ def request_stop(run_id: str) -> dict:
     completed run. Idempotent: a no-op (``stopping: False``) if already finished."""
     job = _jobs.get(run_id)
     if job is None:
+        # A finished run recovered from disk is already done — nothing to stop.
+        if _disk_status(run_id) is not None:
+            return {"run_id": run_id, "stopping": False}
         raise RunNotFoundError(f"Unknown run_id {run_id!r}")
     if job["future"].done():
         return {"run_id": run_id, "stopping": False}
@@ -288,14 +372,34 @@ def save_run(run_id: str, overwrite: bool) -> dict:
 
     job = _jobs.get(run_id)
     if job is None:
-        raise RunNotFoundError(f"Unknown run_id {run_id!r}")
-    fut = job["future"]
-    if not fut.done() or fut.exception() is not None:
+        # Recover a finished run from its on-disk meta after a restart.
+        job = _disk_job(run_id)
+        if job is None:
+            raise RunNotFoundError(f"Unknown run_id {run_id!r}")
+    fut = job.get("future")
+    if fut is not None and (not fut.done() or fut.exception() is not None):
         raise RunNotReadyError("Run has not finished successfully.")
 
     scenario_name = job["scenario_name"]
-    if _exists(scenario_name) and not overwrite:
-        raise AlreadyExistsError(scenario_name)
+
+    # Refuse to persist a run that found no feasible solutions — an empty front
+    # in the library breaks selection/replay endpoints with 500s.
+    src_obj = os.path.join(job["run_dir"], "Objectives.pkl")
+    try:
+        import pandas as pd
+        n_solutions = int(pd.read_pickle(src_obj).shape[0])
+    except Exception:
+        n_solutions = 0
+    if n_solutions < 1:
+        raise EmptyRunError("Run found no feasible solutions; nothing to save.")
+
+    if _exists(scenario_name):
+        # Seeded thesis scenarios live under PRESET model keys and are
+        # irreplaceable — never let a web run overwrite them, even on overwrite.
+        if job["model_key"] in AVAILABLE_MODELS:
+            raise SeededScenarioError(scenario_name)
+        if not overwrite:
+            raise AlreadyExistsError(scenario_name)
 
     obj_dst = os.path.join(settings.RESULTS_ROOT, "Objectives", f"{scenario_name}-ObjectiveValues.pkl")
     sol_dst = os.path.join(settings.RESULTS_ROOT, "Solutions", f"{scenario_name}-SolutionObjects.pkl")

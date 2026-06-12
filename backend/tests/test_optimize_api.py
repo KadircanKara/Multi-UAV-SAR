@@ -177,6 +177,180 @@ def test_run_to_completion_returns_front(client):
     assert front["n_solutions"] >= 0 and "solutions" in front
 
 
+def test_save_empty_run_is_rejected(client):
+    """A run that found 0 feasible solutions must not be persisted — an empty
+    front in the library breaks selection/replay endpoints with 500s."""
+    import os
+    import shutil
+    from concurrent.futures import Future
+
+    import pandas as pd
+    from app import optimizer_service, settings
+
+    run_id = "emptyrun_test"
+    run_dir = os.path.join(settings.RESULTS_ROOT, ".runs", run_id)
+    os.makedirs(run_dir, exist_ok=True)
+    pd.to_pickle(
+        pd.DataFrame(columns=["Mission Time", "Percentage Connectivity"]),
+        os.path.join(run_dir, "Objectives.pkl"),
+    )
+    pd.to_pickle([], os.path.join(run_dir, "Solutions.pkl"))
+
+    fut: Future = Future()
+    fut.set_result({"n_solutions": 0, "solutions": []})
+    scenario_name = "MOO_NSGA2_ZZQ_g_8_a_50_n_4_v_2.5_r_2_nvisits_2"
+    optimizer_service._jobs[run_id] = {
+        "future": fut,
+        "run_dir": run_dir,
+        "scenario_name": scenario_name,
+        "model_key": "ZZQ_MOO_NSGA2",
+        "model_dict": {
+            "Type": "MOO", "Exp": "ZZQ", "Alg": "NSGA2",
+            "F": ["Mission Time", "Percentage Connectivity"], "G": [], "H": [],
+        },
+    }
+    obj = os.path.join(
+        settings.RESULTS_ROOT, "Objectives", f"{scenario_name}-ObjectiveValues.pkl"
+    )
+    reg_path = os.path.join(settings.RESULTS_ROOT, "custom_models.json")
+    reg_backup = open(reg_path, "rb").read() if os.path.isfile(reg_path) else None
+    try:
+        resp = client.post(f"/api/optimize/{run_id}/save", json={"overwrite": True})
+        assert resp.status_code == 422, resp.text
+        assert not os.path.isfile(obj), "empty run must not be written to the library"
+    finally:
+        optimizer_service._jobs.pop(run_id, None)
+        shutil.rmtree(run_dir, ignore_errors=True)
+        if os.path.isfile(obj):
+            os.remove(obj)
+        # Restore the registry in case the guard ever regresses and registers it.
+        if reg_backup is not None:
+            with open(reg_path, "wb") as fh:
+                fh.write(reg_backup)
+        elif os.path.isfile(reg_path):
+            os.remove(reg_path)
+        from app import models_registry
+        models_registry._invalidate_cache()
+
+
+def test_finished_run_recovers_from_disk_after_restart(client):
+    """A finished run whose in-memory _jobs entry was lost (backend restart) is
+    still pollable and saveable from its on-disk run dir."""
+    import json
+    import os
+    import shutil
+    from concurrent.futures import Future  # noqa: F401  (kept for symmetry)
+
+    import pandas as pd
+    from app import optimizer_service, settings
+
+    run_id = "abcdef012345"  # hex, like uuid4().hex[:12]
+    run_dir = os.path.join(settings.RESULTS_ROOT, ".runs", run_id)
+    os.makedirs(run_dir, exist_ok=True)
+    scenario = "MOO_NSGA2_ZZD_g_8_a_50_n_4_v_2.5_r_9_nvisits_2"
+    model_dict = {"Type": "MOO", "Exp": "ZZD", "Alg": "NSGA2",
+                  "F": ["Mission Time", "Percentage Connectivity"], "G": [], "H": []}
+    front = {
+        "scenario": scenario, "model_key": "ZZD_MOO_NSGA2",
+        "objectives": ["Mission Time", "Percentage Connectivity"],
+        "polarities": {"Mission Time": 1, "Percentage Connectivity": -1},
+        "result_kind": "front", "n_solutions": 2,
+        "solutions": [{"index": 0, "objectives_signed": {}, "objectives_abs": {}}],
+        "cancelled": False, "stopped_at_gen": 5,
+    }
+    with open(os.path.join(run_dir, "status.json"), "w") as fh:
+        json.dump({"state": "done", "gen": 5, "n_gen": 5, "front": front}, fh)
+    with open(os.path.join(run_dir, "meta.json"), "w") as fh:
+        json.dump({"scenario_name": scenario, "model_key": "ZZD_MOO_NSGA2",
+                   "model_dict": model_dict}, fh)
+    pd.to_pickle(
+        pd.DataFrame({"Mission Time": [1.0, 2.0], "Percentage Connectivity": [-0.5, -0.4]}),
+        os.path.join(run_dir, "Objectives.pkl"),
+    )
+    pd.to_pickle(["A", "B"], os.path.join(run_dir, "Solutions.pkl"))
+    optimizer_service._jobs.pop(run_id, None)  # simulate the wiped registry
+
+    reg_path = os.path.join(settings.RESULTS_ROOT, "custom_models.json")
+    reg_backup = open(reg_path, "rb").read() if os.path.isfile(reg_path) else None
+    obj_lib = os.path.join(settings.RESULTS_ROOT, "Objectives", f"{scenario}-ObjectiveValues.pkl")
+    sol_lib = os.path.join(settings.RESULTS_ROOT, "Solutions", f"{scenario}-SolutionObjects.pkl")
+    try:
+        s = client.get(f"/api/optimize/{run_id}")
+        assert s.status_code == 200, s.text
+        assert s.json()["state"] == "done"
+
+        save = client.post(f"/api/optimize/{run_id}/save", json={"overwrite": True})
+        assert save.status_code == 200, save.text
+        assert os.path.isfile(obj_lib)
+    finally:
+        optimizer_service._jobs.pop(run_id, None)
+        shutil.rmtree(run_dir, ignore_errors=True)
+        for p in (obj_lib, sol_lib):
+            if os.path.isfile(p):
+                os.remove(p)
+        if reg_backup is not None:
+            with open(reg_path, "wb") as fh:
+                fh.write(reg_backup)
+        elif os.path.isfile(reg_path):
+            os.remove(reg_path)
+        from app import models_registry
+        models_registry._invalidate_cache()
+
+
+def test_save_cannot_overwrite_seeded_preset_scenario(client):
+    """A run that resolves to a PRESET model key must never overwrite an existing
+    (seeded) library scenario — the seeded pickles are irreplaceable thesis data.
+    Uses a fabricated preset-key scenario (r_9 is never seeded) so the test never
+    touches real seeds, even if the guard is missing."""
+    import os
+    import shutil
+    from concurrent.futures import Future
+
+    import pandas as pd
+    from app import optimizer_service, settings
+
+    # r_9 is not a seeded comm range; resolve_model_key -> preset "TC_MOO_NSGA2".
+    scenario = "MOO_NSGA2_TC_g_8_a_50_n_4_v_2.5_r_9_nvisits_2"
+    obj_dir = os.path.join(settings.RESULTS_ROOT, "Objectives")
+    sol_dir = os.path.join(settings.RESULTS_ROOT, "Solutions")
+    os.makedirs(obj_dir, exist_ok=True)
+    os.makedirs(sol_dir, exist_ok=True)
+    seed_obj = os.path.join(obj_dir, f"{scenario}-ObjectiveValues.pkl")
+    seed_sol = os.path.join(sol_dir, f"{scenario}-SolutionObjects.pkl")
+    sentinel = pd.DataFrame({"Mission Time": [1.0], "Percentage Connectivity": [-0.5]})
+    pd.to_pickle(sentinel, seed_obj)
+    pd.to_pickle(["SEED_SENTINEL"], seed_sol)
+
+    run_id = "preset_overwrite_test"
+    run_dir = os.path.join(settings.RESULTS_ROOT, ".runs", run_id)
+    os.makedirs(run_dir, exist_ok=True)
+    pd.to_pickle(
+        pd.DataFrame({"Mission Time": [9.0, 8.0], "Percentage Connectivity": [-0.1, -0.2]}),
+        os.path.join(run_dir, "Objectives.pkl"),
+    )
+    pd.to_pickle(["RUN_A", "RUN_B"], os.path.join(run_dir, "Solutions.pkl"))
+
+    fut: Future = Future()
+    fut.set_result({"n_solutions": 2, "solutions": []})
+    optimizer_service._jobs[run_id] = {
+        "future": fut, "run_dir": run_dir, "scenario_name": scenario,
+        "model_key": "TC_MOO_NSGA2",
+        "model_dict": {"Type": "MOO", "Exp": "TC", "Alg": "NSGA2",
+                       "F": ["Mission Time", "Percentage Connectivity"], "G": [], "H": []},
+    }
+    try:
+        resp = client.post(f"/api/optimize/{run_id}/save", json={"overwrite": True})
+        assert resp.status_code == 409, resp.text
+        # The seeded pickle is untouched.
+        assert pd.read_pickle(seed_sol) == ["SEED_SENTINEL"]
+    finally:
+        optimizer_service._jobs.pop(run_id, None)
+        shutil.rmtree(run_dir, ignore_errors=True)
+        for p in (seed_obj, seed_sol):
+            if os.path.isfile(p):
+                os.remove(p)
+
+
 def test_save_run_makes_it_browsable(client):
     import os
     from app import settings
@@ -191,24 +365,35 @@ def test_save_run_makes_it_browsable(client):
     start = client.post("/api/optimize", json=cfg).json()
     run_id, scenario = start["run_id"], start["scenario_name"]
 
-    for _ in range(60):
+    state, front_meta = None, None
+    for _ in range(180):  # generous budget — a loaded machine can exceed 60s
         s = client.get(f"/api/optimize/{run_id}").json()
-        if s["state"] == "done":
+        state = s["state"]
+        if state == "done":
+            front_meta = s["front"]
             break
-        if s["state"] == "failed":
+        if state == "failed":
             raise AssertionError(s.get("error"))
         time.sleep(1)
+    assert state == "done", f"run did not finish in time (last state: {state})"
 
     obj_pkl = os.path.join(settings.RESULTS_ROOT, "Objectives", f"{scenario}-ObjectiveValues.pkl")
     sol_pkl = os.path.join(settings.RESULTS_ROOT, "Solutions", f"{scenario}-SolutionObjects.pkl")
     try:
         save = client.post(f"/api/optimize/{run_id}/save", json={"overwrite": True})
-        assert save.status_code == 200
-        assert save.json()["scenario_name"] == scenario
-        # Now browsable via the existing fronts endpoint (custom model resolved).
-        front = client.get(f"/api/fronts/{scenario}")
-        assert front.status_code == 200
-        assert "Mission Time" in front.json()["objectives"]
+        if front_meta["n_solutions"] == 0:
+            # A run with no feasible solutions must be refused (empty library
+            # scenarios break selection/replay). Browse-ability of a *non-empty*
+            # custom run is covered by test_custom_model_resolution.
+            assert save.status_code == 422
+            assert not os.path.isfile(obj_pkl)
+        else:
+            assert save.status_code == 200, save.text
+            assert save.json()["scenario_name"] == scenario
+            # Now browsable via the existing fronts endpoint (custom model resolved).
+            front = client.get(f"/api/fronts/{scenario}")
+            assert front.status_code == 200
+            assert "Mission Time" in front.json()["objectives"]
     finally:
         for p in (obj_pkl, sol_pkl):
             if os.path.isfile(p):

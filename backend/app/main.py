@@ -38,6 +38,13 @@ app.include_router(comparison.router)
 app.include_router(optimize.router)
 
 
+@app.on_event("shutdown")
+def _shutdown_optimizer() -> None:
+    """Release the optimizer worker pool so the process can exit cleanly."""
+    from app import optimizer_service
+    optimizer_service.shutdown(wait=False)
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok"}
