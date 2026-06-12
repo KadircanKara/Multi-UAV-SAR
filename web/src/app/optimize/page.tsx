@@ -144,6 +144,10 @@ const COMM_PRESETS = [
 const COMM_CUSTOM = "custom";
 const COMM_EPS = 1e-9;
 
+// Persist the in-flight run id so a reload / navigation can re-attach to it
+// (the backend recovers a finished run from disk; a lost run is cleared).
+const RUN_STORAGE_KEY = "optimize.runId";
+
 /** Pretty-print a comm_cell_range in cell-length units (symbolic where it matches). */
 function formatCommCells(v: number): string {
   if (Math.abs(v - Math.SQRT2) < COMM_EPS) return "√2";
@@ -218,8 +222,20 @@ function sumWeights(weights: Record<string, number>, objs: string[]): number {
   return objs.reduce((acc, o) => acc + (Number(weights[o]) || 0), 0);
 }
 
-function fmt(n: number | null | undefined, digits = 2): string {
-  return n == null || Number.isNaN(n) ? "—" : n.toFixed(digits);
+/** Format an objective's absolute value for display. Percentage Connectivity is
+ *  a 0–1 fraction in the data — render it as a percentage so the result views
+ *  agree with the live-progress view (which already scales ×100). */
+function fmtObjValue(obj: string, n: number | null | undefined): string {
+  if (n == null || Number.isNaN(n)) return "—";
+  if (obj === "Percentage Connectivity") return `${(n * 100).toFixed(1)}%`;
+  return n.toFixed(2);
+}
+
+/** The unit suffix to show after a formatted value (none for connectivity — the
+ *  "%" is already baked into the formatted percentage). */
+function unitFor(obj: string): string | null {
+  if (obj === "Percentage Connectivity") return null;
+  return OBJECTIVES.find((s) => s.name === obj)?.unit ?? null;
 }
 
 // ─── Small presentational pieces (module scope) ────────────────────────────────
@@ -308,7 +324,7 @@ function ResultTable({
                   key={o}
                   className="px-3 py-2 text-right tabular-nums text-foreground"
                 >
-                  {fmt(sol.objectives_abs[o])}
+                  {fmtObjValue(o, sol.objectives_abs[o])}
                 </td>
               ))}
             </tr>
@@ -329,7 +345,7 @@ function SingleResult({ front }: { front: OptimizeFront }) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {front.objectives.map((o) => {
-        const spec = OBJECTIVES.find((s) => s.name === o);
+        const unit = unitFor(o);
         return (
           <div
             key={o}
@@ -337,10 +353,10 @@ function SingleResult({ front }: { front: OptimizeFront }) {
           >
             <p className="text-xs text-muted-foreground">{o}</p>
             <p className="text-2xl font-semibold tabular-nums text-foreground">
-              {fmt(sol.objectives_abs[o])}
-              {spec?.unit && (
+              {fmtObjValue(o, sol.objectives_abs[o])}
+              {unit && (
                 <span className="ml-1 text-sm font-normal text-muted-foreground">
-                  {spec.unit}
+                  {unit}
                 </span>
               )}
             </p>
@@ -410,6 +426,7 @@ export default function OptimizePage() {
   const [overwritePrompt, setOverwritePrompt] = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mountedRef = useRef(true);
 
   // Load default scenario once.
   useEffect(() => {
@@ -434,8 +451,27 @@ export default function OptimizePage() {
   // Stop polling on unmount.
   useEffect(() => {
     return () => {
+      mountedRef.current = false;
       if (pollRef.current) clearInterval(pollRef.current);
     };
+  }, []);
+
+  // Re-attach to an in-flight run after a reload / navigation back. The backend
+  // recovers a finished run from disk; a run that's truly gone is cleared by the
+  // poll loop's 404 handling (so this never wedges into a stuck spinner).
+  useEffect(() => {
+    let stored: string | null = null;
+    try {
+      stored = sessionStorage.getItem(RUN_STORAGE_KEY);
+    } catch {
+      stored = null;
+    }
+    if (!stored) return;
+    setRunId(stored);
+    setRunning(true);
+    setProgress({ gen: 0, nGen: nGen });
+    beginPoll(stored);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Type change: reset method + fit the selection. ──
@@ -507,8 +543,15 @@ export default function OptimizePage() {
   const tbvWarning =
     tbvSelected && scenario != null && scenario.n_visits < 2;
 
+  // A cleared number input coerces to 0/NaN; gate the run so we never POST an
+  // invalid constraint (max_mission_time must be > 0; min_connectivity ∈ [0,1]).
+  const mmtOk = !mmtEnabled || (Number.isFinite(mmtValue) && mmtValue > 0);
+  const minConnOk =
+    !minConnEnabled ||
+    (Number.isFinite(minConnValue) && minConnValue >= 0 && minConnValue <= 1);
+
   const isValid =
-    scenario != null && selectionOk && weightsOk && !running;
+    scenario != null && selectionOk && weightsOk && mmtOk && minConnOk && !running;
 
   // ── Build the config object from state. ──
   const config: OptimizeConfig | null = useMemo(() => {
@@ -570,21 +613,61 @@ export default function OptimizePage() {
   }, [config, selectionOk, weightsOk]);
 
   // ── Run + poll. ──
+  function stopPolling() {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }
+
+  function clearStoredRun() {
+    try {
+      sessionStorage.removeItem(RUN_STORAGE_KEY);
+    } catch {
+      /* sessionStorage unavailable — ignore */
+    }
+  }
+
   function beginPoll(runId: string) {
-    if (pollRef.current) clearInterval(pollRef.current);
+    stopPolling();
+    let inFlight = false; // serialize: never overlap requests (avoids reordering)
+    let lastGen = -1; // monotonic guard against any stale response
+    let failures = 0;
     pollRef.current = setInterval(async () => {
+      if (inFlight) return;
+      inFlight = true;
       let status: OptimizeStatus;
       try {
         status = await getOptimizeStatus(runId);
-      } catch {
-        return; // transient; keep polling
-      }
-      if (status.state === "running") {
-        if (status.gen != null && status.n_gen != null) {
-          setProgress({ gen: status.gen, nGen: status.n_gen });
+        failures = 0;
+      } catch (err: unknown) {
+        inFlight = false;
+        const msg = err instanceof Error ? err.message : String(err);
+        // A 404 means the run is gone (e.g. the server restarted and it wasn't
+        // a finished run recoverable from disk). Don't spin forever.
+        const permanent = msg.includes("404");
+        if (permanent || ++failures >= 5) {
+          stopPolling();
+          clearStoredRun();
+          setRunning(false);
+          setProgress(null);
+          setStopping(false);
+          toast.error("Lost contact with the optimization run", {
+            description: permanent
+              ? "The run is no longer available (the server may have restarted). Configure and run it again."
+              : "Repeated errors while polling the run status.",
+          });
         }
-        if (status.best && status.gen != null) {
-          const g = status.gen;
+        return;
+      }
+      inFlight = false;
+
+      if (status.state === "running") {
+        const g = status.gen ?? 0;
+        if (g < lastGen) return; // out-of-order / stale tick — ignore
+        lastGen = g;
+        if (status.n_gen != null) setProgress({ gen: g, nGen: status.n_gen });
+        if (status.best) {
           const best = status.best;
           setProgressHistory((h) =>
             h.length && h[h.length - 1].gen === g ? h : [...h, { gen: g, best }]
@@ -594,10 +677,8 @@ export default function OptimizePage() {
         return;
       }
       // terminal
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
+      stopPolling();
+      clearStoredRun();
       setRunning(false);
       setProgress(null);
       setStopping(false);
@@ -645,6 +726,12 @@ export default function OptimizePage() {
     setRunning(true);
     try {
       const res = await startOptimize(config);
+      try {
+        sessionStorage.setItem(RUN_STORAGE_KEY, res.run_id);
+      } catch {
+        /* sessionStorage unavailable — ignore */
+      }
+      if (!mountedRef.current) return; // unmounted during the await — don't poll
       setRunId(res.run_id);
       beginPoll(res.run_id);
     } catch (err: unknown) {
@@ -973,8 +1060,15 @@ export default function OptimizePage() {
                   <Label className="text-sm text-muted-foreground">Seed</Label>
                   <Input
                     type="number"
+                    min={0}
                     value={seed}
-                    onChange={(e) => setSeed(Number(e.target.value))}
+                    onChange={(e) => {
+                      const n = parseInt(e.target.value, 10);
+                      if (!Number.isNaN(n)) setSeed(n);
+                    }}
+                    onBlur={() =>
+                      setSeed((s) => (Number.isFinite(s) && s >= 0 ? s : SEED_DEFAULT))
+                    }
                     className="h-8 w-24 text-right tabular-nums"
                   />
                 </div>
@@ -1020,6 +1114,11 @@ export default function OptimizePage() {
                           const n = Number(e.target.value);
                           if (!Number.isNaN(n)) setMmtValue(n);
                         }}
+                        onBlur={() =>
+                          setMmtValue((v) =>
+                            Number.isFinite(v) && v > 0 ? v : MMT_DEFAULT
+                          )
+                        }
                         className="h-9 w-28 tabular-nums"
                       />
                     )}
@@ -1045,6 +1144,13 @@ export default function OptimizePage() {
                           const n = Number(e.target.value);
                           if (!Number.isNaN(n)) setMinConnValue(n);
                         }}
+                        onBlur={() =>
+                          setMinConnValue((v) =>
+                            Number.isFinite(v) && v >= 0 && v <= 1
+                              ? v
+                              : MIN_CONN_DEFAULT
+                          )
+                        }
                         className="h-9 w-28 tabular-nums"
                       />
                     )}

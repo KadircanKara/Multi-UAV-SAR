@@ -105,7 +105,7 @@ export default function CompareMetricTable({
                     className={cn(
                       "font-mono text-xs tabular-nums",
                       isBest
-                        ? "text-accent font-semibold"
+                        ? "text-emerald-600 dark:text-emerald-400 font-semibold"
                         : v == null
                         ? "text-muted-foreground"
                         : "text-foreground"

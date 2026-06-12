@@ -117,6 +117,11 @@ export interface OptimizeConfig {
   pop_size: number;
   n_gen: number;
   seed?: number;
+  /** Constraint thresholds — null disables the constraint. Omitting them makes
+   *  the backend apply its defaults (3600 s / 0.5), so callers should send them
+   *  explicitly to reflect the user's toggles. */
+  max_mission_time?: number | null;
+  min_connectivity?: number | null;
   scenario: ScenarioConfig;
 }
 

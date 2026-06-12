@@ -88,7 +88,16 @@ export function LiveProgress({
             .filter((d) => d.v != null && !Number.isNaN(d.v));
           const color =
             colors.series[i % colors.series.length] ?? colors.series[0];
-          const dir = (POLARITY[obj] ?? 1) < 0 ? "↑ maximise" : "↓ minimise";
+          // Weighted-sum runs report a single composite score column (pymoo only
+          // has the scalar live), so give it a clean title rather than the long
+          // "A & B & C Weighted Sum" name.
+          const isWS = obj.includes("Weighted Sum");
+          const title = isWS ? "Weighted-sum score" : obj;
+          const dir = isWS
+            ? "↓ minimise"
+            : (POLARITY[obj] ?? 1) < 0
+              ? "↑ maximise"
+              : "↓ minimise";
           return (
             <div
               key={obj}
@@ -96,7 +105,7 @@ export function LiveProgress({
             >
               <div className="flex items-baseline justify-between gap-2">
                 <span className="truncate text-sm font-medium text-foreground">
-                  {obj}
+                  {title}
                 </span>
                 <span className="shrink-0 text-[11px] text-muted-foreground">
                   {dir}
@@ -121,7 +130,7 @@ export function LiveProgress({
                         fontSize: 12,
                       }}
                       labelFormatter={(g) => `Gen ${g}`}
-                      formatter={(val) => [fmtVal(obj, Number(val)), obj]}
+                      formatter={(val) => [fmtVal(obj, Number(val)), title]}
                     />
                     <Line
                       type="monotone"

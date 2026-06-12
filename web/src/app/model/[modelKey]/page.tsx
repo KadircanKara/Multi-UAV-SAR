@@ -963,7 +963,7 @@ export default function ModelPage() {
                       <TableCell className="font-mono text-xs tabular-nums">
                         {s.n_visits ?? "—"}
                       </TableCell>
-                      <TableCell className="font-mono text-xs tabular-nums text-accent">
+                      <TableCell className="font-mono text-xs tabular-nums text-chart-1">
                         {s.n_solutions}
                       </TableCell>
                       {grid.objectives.map((obj) => (

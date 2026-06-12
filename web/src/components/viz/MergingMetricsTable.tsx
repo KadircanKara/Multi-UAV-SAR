@@ -50,7 +50,7 @@ export default function MergingMetricsTable({ tableRows, metricNames }: Props) {
       <Table>
         <TableCaption className="font-mono text-xs text-muted-foreground tracking-wide pb-3">
           ALL METRICS IN SIMULATION TIME UNITS — LOWER IS BETTER —{" "}
-          <span className="text-accent">GREEN</span> = BEST PER COLUMN
+          <span className="text-emerald-600 dark:text-emerald-400">GREEN</span> = BEST PER COLUMN
         </TableCaption>
         <TableHeader>
           <TableRow>
@@ -85,7 +85,7 @@ export default function MergingMetricsTable({ tableRows, metricNames }: Props) {
                     className={cn(
                       "font-mono text-xs tabular-nums",
                       isBest
-                        ? "text-accent font-semibold"
+                        ? "text-emerald-600 dark:text-emerald-400 font-semibold"
                         : v == null
                         ? "text-muted-foreground"
                         : "text-foreground"
