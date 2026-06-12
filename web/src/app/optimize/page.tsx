@@ -448,8 +448,11 @@ export default function OptimizePage() {
     };
   }, []);
 
-  // Stop polling on unmount.
+  // Track mount state + stop polling on unmount. Set true on every mount: React
+  // 18 Strict Mode remounts in dev, and useRef does NOT re-init on remount, so
+  // without this mountedRef would stay false and block handleRun's beginPoll.
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       if (pollRef.current) clearInterval(pollRef.current);
