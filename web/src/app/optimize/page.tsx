@@ -1039,7 +1039,7 @@ export default function OptimizePage() {
         ) : (
           <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3 xl:items-start">
             {/* Optimization (type · method · objectives) — spans columns 2-3 */}
-            <Card className="xl:col-start-2 xl:col-span-2 xl:row-start-1">
+            <Card className="xl:col-start-1 xl:row-start-1">
               <CardContent className="flex flex-col gap-6 pt-6">
             {/* Optimisation type */}
             <div className="flex flex-col gap-2.5">
@@ -1198,13 +1198,12 @@ export default function OptimizePage() {
               </CardContent>
             </Card>
 
-            {/* Algorithm parameters — column 1 */}
-            <Card className="xl:col-start-1 xl:row-start-1 xl:row-span-2">
+            {/* Algorithm parameters (pop · gen · seed) — row 2, column 1 */}
+            <Card className="xl:col-start-1 xl:row-start-2">
               <CardHeader>
                 <CardTitle>Algorithm parameters</CardTitle>
               </CardHeader>
               <CardContent className="flex flex-col gap-6">
-              <div className="flex flex-col gap-5">
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-3">
                     <Label className="text-sm text-muted-foreground">
@@ -1239,21 +1238,9 @@ export default function OptimizePage() {
 
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-1.5">
-                      <Label className="text-sm text-muted-foreground">
-                        {genStrategy === "max" ? "Max generations" : "Generations"}
-                      </Label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span className="inline-flex size-4 cursor-help items-center justify-center rounded-full border border-border text-[10px] font-medium text-muted-foreground">
-                            i
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent className="max-w-xs text-xs leading-relaxed">
-                          {GEN_STRATEGY_HELP}
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
+                    <Label className="text-sm text-muted-foreground">
+                      {genStrategy === "max" ? "Max generations (cap)" : "Generations"}
+                    </Label>
                     <Input
                       type="number"
                       inputMode="numeric"
@@ -1279,121 +1266,121 @@ export default function OptimizePage() {
                     value={[nGen]}
                     onValueChange={(v) => setNGen(v[0] ?? NGEN_DEFAULT)}
                   />
-                  <ToggleGroup
-                    type="single"
-                    value={genStrategy}
-                    onValueChange={(v) => v && setGenStrategy(v as GenStrategy)}
-                    className="grid grid-cols-2 gap-2"
-                  >
-                    <ToggleGroupItem
-                      value="fixed"
-                      variant="outline"
-                      className="text-xs"
-                    >
-                      Fixed Generations
-                    </ToggleGroupItem>
-                    <ToggleGroupItem
-                      value="max"
-                      variant="outline"
-                      className="text-xs"
-                    >
-                      Max Generations
-                    </ToggleGroupItem>
-                  </ToggleGroup>
-                  <p className="text-xs text-muted-foreground">
-                    {genStrategy === "max"
-                      ? `Stops early once no objective improves ≥${earlyStopThresholdPct}% for ${earlyStopPatience} generations (a cap, not a target).`
-                      : "Runs the full number of generations for the most refined solutions."}
-                  </p>
+                </div>
 
-                  {genStrategy === "max" && (
-                    <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex flex-col">
-                          <Label className="text-sm text-foreground">Patience</Label>
-                          <span className="text-xs text-muted-foreground">
-                            Generations with no qualifying improvement before stopping.
-                          </span>
-                        </div>
-                        <Input
-                          type="number"
-                          min={2}
-                          max={500}
-                          value={earlyStopPatience}
-                          onChange={(e) => {
-                            const n = parseInt(e.target.value, 10);
-                            if (!Number.isNaN(n)) setEarlyStopPatience(n);
-                          }}
-                          onBlur={() =>
-                            setEarlyStopPatience((p) =>
-                              Number.isFinite(p) && p >= 2
-                                ? Math.min(500, p)
-                                : ES_PATIENCE_DEFAULT
-                            )
-                          }
-                          className="h-9 w-24 text-right tabular-nums"
-                        />
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-4">
+                  <div className="flex flex-col">
+                    <Label className="text-sm text-foreground">Seed</Label>
+                    <span className="text-xs text-muted-foreground">
+                      Same seed ⇒ reproducible run; change it to sample a different result.
+                    </span>
+                  </div>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={seed}
+                    onChange={(e) => {
+                      const n = parseInt(e.target.value, 10);
+                      if (!Number.isNaN(n)) setSeed(n);
+                    }}
+                    onBlur={() =>
+                      setSeed((s) => (Number.isFinite(s) && s >= 0 ? s : SEED_DEFAULT))
+                    }
+                    className="h-8 w-24 text-right tabular-nums"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Optimizer settings (generation strategy + early-stop) — row 2, cols 2-3 */}
+            <Card className="xl:col-start-2 xl:col-span-2 xl:row-start-2">
+              <CardHeader>
+                <CardTitle>Optimizer settings</CardTitle>
+                <CardDescription>{GEN_STRATEGY_HELP}</CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4">
+                <ToggleGroup
+                  type="single"
+                  value={genStrategy}
+                  onValueChange={(v) => v && setGenStrategy(v as GenStrategy)}
+                  className="grid grid-cols-2 gap-2 sm:max-w-sm"
+                >
+                  <ToggleGroupItem value="fixed" variant="outline" className="text-xs">
+                    Fixed Generations
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="max" variant="outline" className="text-xs">
+                    Max Generations
+                  </ToggleGroupItem>
+                </ToggleGroup>
+                <p className="text-xs text-muted-foreground">
+                  {genStrategy === "max"
+                    ? `Stops early once no objective improves ≥${earlyStopThresholdPct}% for ${earlyStopPatience} generations (a cap, not a target).`
+                    : "Runs the full number of generations for the most refined solutions."}
+                </p>
+                {genStrategy === "max" && (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-4">
+                      <div className="flex flex-col">
+                        <Label className="text-sm text-foreground">Patience</Label>
+                        <span className="text-xs text-muted-foreground">
+                          Generations with no qualifying improvement before stopping.
+                        </span>
                       </div>
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex flex-col">
-                          <Label className="text-sm text-foreground">
-                            Improvement threshold (%)
-                          </Label>
-                          <span className="text-xs text-muted-foreground">
-                            Minimum objective gain that counts as progress.
-                          </span>
-                        </div>
-                        <Input
-                          type="number"
-                          min={1}
-                          max={100}
-                          step={1}
-                          value={earlyStopThresholdPct}
-                          onChange={(e) => {
-                            const n = Number(e.target.value);
-                            if (!Number.isNaN(n)) setEarlyStopThresholdPct(n);
-                          }}
-                          onBlur={() =>
-                            setEarlyStopThresholdPct((t) =>
-                              Number.isFinite(t) && t > 0 && t <= 100
-                                ? t
-                                : ES_THRESH_PCT_DEFAULT
-                            )
-                          }
-                          className="h-9 w-24 text-right tabular-nums"
-                        />
-                      </div>
+                      <Input
+                        type="number"
+                        min={2}
+                        max={500}
+                        value={earlyStopPatience}
+                        onChange={(e) => {
+                          const n = parseInt(e.target.value, 10);
+                          if (!Number.isNaN(n)) setEarlyStopPatience(n);
+                        }}
+                        onBlur={() =>
+                          setEarlyStopPatience((p) =>
+                            Number.isFinite(p) && p >= 2
+                              ? Math.min(500, p)
+                              : ES_PATIENCE_DEFAULT
+                          )
+                        }
+                        className="h-9 w-20 text-right tabular-nums"
+                      />
                     </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-4">
-                <div className="flex flex-col">
-                  <Label className="text-sm text-foreground">Seed</Label>
-                  <span className="text-xs text-muted-foreground">
-                    Same seed ⇒ reproducible run; change it to sample a different result.
-                  </span>
-                </div>
-                <Input
-                  type="number"
-                  min={0}
-                  value={seed}
-                  onChange={(e) => {
-                    const n = parseInt(e.target.value, 10);
-                    if (!Number.isNaN(n)) setSeed(n);
-                  }}
-                  onBlur={() =>
-                    setSeed((s) => (Number.isFinite(s) && s >= 0 ? s : SEED_DEFAULT))
-                  }
-                  className="h-8 w-24 text-right tabular-nums"
-                />
-              </div>
+                    <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-4">
+                      <div className="flex flex-col">
+                        <Label className="text-sm text-foreground">
+                          Improvement threshold (%)
+                        </Label>
+                        <span className="text-xs text-muted-foreground">
+                          Minimum objective gain that counts as progress.
+                        </span>
+                      </div>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={100}
+                        step={1}
+                        value={earlyStopThresholdPct}
+                        onChange={(e) => {
+                          const n = Number(e.target.value);
+                          if (!Number.isNaN(n)) setEarlyStopThresholdPct(n);
+                        }}
+                        onBlur={() =>
+                          setEarlyStopThresholdPct((t) =>
+                            Number.isFinite(t) && t > 0 && t <= 100
+                              ? t
+                              : ES_THRESH_PCT_DEFAULT
+                          )
+                        }
+                        className="h-9 w-20 text-right tabular-nums"
+                      />
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
             {/* Constraints */}
-            <Card className="xl:col-start-2 xl:row-start-2">
+            <Card className="xl:col-start-3 xl:row-start-1">
               <CardHeader>
                 <CardTitle>Constraints</CardTitle>
                 <CardDescription>
@@ -1478,7 +1465,7 @@ export default function OptimizePage() {
             </Card>
 
             {/* Scenario */}
-            <Card className="xl:col-start-3 xl:row-start-2">
+            <Card className="xl:col-start-2 xl:row-start-1">
               <CardHeader>
                 <CardTitle>Scenario</CardTitle>
                 <CardDescription>
