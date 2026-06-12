@@ -103,6 +103,9 @@ const NGEN_DEFAULT = 300;
 const SEED_DEFAULT = 1;
 
 type GenStrategy = "fixed" | "max";
+// Early-stop tuning (Max Generations) — defaults match the backend.
+const ES_PATIENCE_DEFAULT = 10; // generations without meaningful improvement → stop
+const ES_THRESH_PCT_DEFAULT = 10; // % improvement that counts as progress
 const GEN_STRATEGY_HELP =
   "Fixed Generations runs the full number of generations for the most refined, " +
   "absolute objective-optimal solutions. Max Generations treats it as a cap and " +
@@ -187,6 +190,8 @@ interface RunParams {
   popSize: number;
   nGen: number;
   genStrategy: GenStrategy;
+  earlyStopPatience: number;
+  earlyStopThresholdPct: number;
   scenario: ScenarioConfig;
   maxMissionTime: number | null;
   minConnectivity: number | null;
@@ -427,6 +432,10 @@ export default function OptimizePage() {
   const [popSize, setPopSize] = useState(POP_DEFAULT);
   const [nGen, setNGen] = useState(NGEN_DEFAULT);
   const [genStrategy, setGenStrategy] = useState<GenStrategy>("fixed");
+  const [genAdvancedOpen, setGenAdvancedOpen] = useState(false);
+  const [earlyStopPatience, setEarlyStopPatience] = useState(ES_PATIENCE_DEFAULT);
+  const [earlyStopThresholdPct, setEarlyStopThresholdPct] =
+    useState(ES_THRESH_PCT_DEFAULT);
 
   // Constraints (speed-violation is always applied; these two are configurable)
   const [mmtEnabled, setMmtEnabled] = useState(true);
@@ -604,8 +613,22 @@ export default function OptimizePage() {
     !minConnEnabled ||
     (Number.isFinite(minConnValue) && minConnValue >= 0 && minConnValue <= 1);
 
+  const earlyStopOk =
+    genStrategy !== "max" ||
+    (Number.isFinite(earlyStopPatience) &&
+      earlyStopPatience >= 2 &&
+      Number.isFinite(earlyStopThresholdPct) &&
+      earlyStopThresholdPct > 0 &&
+      earlyStopThresholdPct <= 100);
+
   const isValid =
-    scenario != null && selectionOk && weightsOk && mmtOk && minConnOk && !running;
+    scenario != null &&
+    selectionOk &&
+    weightsOk &&
+    mmtOk &&
+    minConnOk &&
+    earlyStopOk &&
+    !running;
 
   // ── Build the config object from state. ──
   const config: OptimizeConfig | null = useMemo(() => {
@@ -621,6 +644,14 @@ export default function OptimizePage() {
       max_mission_time: mmtEnabled ? mmtValue : null,
       min_connectivity: minConnEnabled ? minConnValue : null,
       gen_strategy: genStrategy,
+      // Only send the tuning when Max mode is active; otherwise the backend
+      // applies its defaults (and a cleared field can't 422 a Fixed run).
+      ...(genStrategy === "max"
+        ? {
+            early_stop_patience: earlyStopPatience,
+            early_stop_threshold: earlyStopThresholdPct / 100,
+          }
+        : {}),
       // Target cells are irrelevant to optimization (they only affect the
       // sensing time-metrics, computed post-hoc). Send a valid placeholder so
       // PathInfo / ScenarioConfig validation passes for any grid size.
@@ -640,6 +671,8 @@ export default function OptimizePage() {
     minConnEnabled,
     minConnValue,
     genStrategy,
+    earlyStopPatience,
+    earlyStopThresholdPct,
   ]);
 
   // ── Debounced duplicate pre-check (guarded against stale responses). ──
@@ -790,6 +823,8 @@ export default function OptimizePage() {
       popSize,
       nGen,
       genStrategy,
+      earlyStopPatience,
+      earlyStopThresholdPct,
       scenario: config.scenario,
       maxMissionTime: mmtEnabled ? mmtValue : null,
       minConnectivity: minConnEnabled ? minConnValue : null,
@@ -1152,9 +1187,83 @@ export default function OptimizePage() {
                   </ToggleGroup>
                   <p className="text-xs text-muted-foreground">
                     {genStrategy === "max"
-                      ? "Stops early once no objective improves ≥10% for several generations (a cap, not a target)."
+                      ? `Stops early once no objective improves ≥${earlyStopThresholdPct}% for ${earlyStopPatience} generations (a cap, not a target).`
                       : "Runs the full number of generations for the most refined solutions."}
                   </p>
+
+                  {genStrategy === "max" && (
+                    <div className="flex flex-col gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setGenAdvancedOpen((o) => !o)}
+                        className="self-start text-xs font-medium text-muted-foreground hover:text-foreground"
+                      >
+                        {genAdvancedOpen ? "− Hide advanced" : "+ Advanced"}
+                      </button>
+                      {genAdvancedOpen && (
+                        <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex flex-col">
+                              <Label className="text-sm text-foreground">
+                                Patience
+                              </Label>
+                              <span className="text-xs text-muted-foreground">
+                                Generations with no qualifying improvement before
+                                stopping.
+                              </span>
+                            </div>
+                            <Input
+                              type="number"
+                              min={2}
+                              max={500}
+                              value={earlyStopPatience}
+                              onChange={(e) => {
+                                const n = parseInt(e.target.value, 10);
+                                if (!Number.isNaN(n)) setEarlyStopPatience(n);
+                              }}
+                              onBlur={() =>
+                                setEarlyStopPatience((p) =>
+                                  Number.isFinite(p) && p >= 2
+                                    ? Math.min(500, p)
+                                    : ES_PATIENCE_DEFAULT
+                                )
+                              }
+                              className="h-9 w-24 text-right tabular-nums"
+                            />
+                          </div>
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex flex-col">
+                              <Label className="text-sm text-foreground">
+                                Improvement threshold (%)
+                              </Label>
+                              <span className="text-xs text-muted-foreground">
+                                Minimum objective gain that counts as progress.
+                              </span>
+                            </div>
+                            <Input
+                              type="number"
+                              min={1}
+                              max={100}
+                              step={1}
+                              value={earlyStopThresholdPct}
+                              onChange={(e) => {
+                                const n = Number(e.target.value);
+                                if (!Number.isNaN(n)) setEarlyStopThresholdPct(n);
+                              }}
+                              onBlur={() =>
+                                setEarlyStopThresholdPct((t) =>
+                                  Number.isFinite(t) && t > 0 && t <= 100
+                                    ? t
+                                    : ES_THRESH_PCT_DEFAULT
+                                )
+                              }
+                              className="h-9 w-24 text-right tabular-nums"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1557,6 +1666,12 @@ export default function OptimizePage() {
                       runParams.genStrategy === "max" ? "max · early-stop" : "fixed"
                     })`}
                   />
+                  {runParams.genStrategy === "max" && (
+                    <ParamRow
+                      label="Early-stop"
+                      value={`≥${runParams.earlyStopThresholdPct}% · ${runParams.earlyStopPatience} gen`}
+                    />
+                  )}
                   <ParamRow
                     label="Scenario"
                     value={scenarioSummary(runParams.scenario)}
