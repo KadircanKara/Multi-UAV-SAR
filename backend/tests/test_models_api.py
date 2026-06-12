@@ -7,8 +7,13 @@ def test_get_models_status(client):
 
 
 def test_get_models_count(client):
+    from PathOptimizationModel import AVAILABLE_MODELS
+
     data = client.get("/api/models").json()
-    assert len(data) == 20
+    names = {m["name"] for m in data}
+    # All preset models are listed (plus any saved custom models the registry holds).
+    assert set(AVAILABLE_MODELS) <= names
+    assert len(data) >= len(AVAILABLE_MODELS)
 
 
 def test_get_models_known_names(client):

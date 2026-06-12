@@ -6,8 +6,8 @@ import app.rootpath  # must come before any root-module import
 
 from fastapi import APIRouter, HTTPException
 from PathInfo import PathInfo, default_scenario
-from PathOptimizationModel import AVAILABLE_MODELS
 
+from app import models_registry
 from app.schemas import (
     ScenarioConfig,
     ScenarioDerived,
@@ -46,12 +46,13 @@ def validate_scenario(req: ScenarioValidateRequest) -> ScenarioValidateResponse:
 
     scenario_str: str | None = None
     if req.model_key is not None:
-        if req.model_key not in AVAILABLE_MODELS:
+        model = models_registry.get_model(req.model_key)
+        if model is None:
             raise HTTPException(
                 status_code=404,
-                detail=f"model_key '{req.model_key}' not found in AVAILABLE_MODELS",
+                detail=f"model_key '{req.model_key}' is not a known model",
             )
-        info.model = AVAILABLE_MODELS[req.model_key]
+        info.model = model
         scenario_str = str(info)
 
     return ScenarioValidateResponse(valid=True, derived=derived, scenario_str=scenario_str)

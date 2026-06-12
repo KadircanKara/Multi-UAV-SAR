@@ -1,19 +1,46 @@
-"""GET /api/models — returns the full list of ready-made optimisation models."""
+"""GET /api/models — returns the full list of optimisation models (preset + custom)."""
 import app.rootpath  # must come before any root-module import
 
 from fastapi import APIRouter, HTTPException
-from PathOptimizationModel import AVAILABLE_MODELS, list_models
+from PathOptimizationModel import (
+    get_objectives_from_weighted_sum_model,
+    list_models,
+)
 
+from app import models_registry
 from app.library_service import model_grid
 from app.schemas import ModelGrid, ModelInfo
 
 router = APIRouter()
 
 
+def _custom_model_info(model_key: str, model: dict) -> dict:
+    """Build a ModelInfo-shaped row for a saved custom model."""
+    if model.get("Type") == "WS":
+        try:
+            objectives = list(get_objectives_from_weighted_sum_model(model))
+        except Exception:
+            objectives = list(model.get("F", []))
+    else:
+        objectives = list(model.get("F", []))
+    return {
+        "name": model_key,
+        "type": model.get("Type", ""),
+        "algorithm": model.get("Alg", ""),
+        "objectives": objectives,
+        "constraints": list(model.get("G", [])),
+    }
+
+
 @router.get("/api/models", response_model=list[ModelInfo])
 def get_models() -> list[dict]:
-    """Return all 20 ready-made optimisation models."""
-    return list_models().to_dict("records")
+    """Return the ready-made (preset) models plus any saved custom models."""
+    rows = list_models().to_dict("records")
+    rows.extend(
+        _custom_model_info(key, model)
+        for key, model in models_registry.custom_models().items()
+    )
+    return rows
 
 
 @router.get("/api/models/{model_key}/grid", response_model=ModelGrid)
@@ -27,7 +54,7 @@ def get_model_grid(model_key: str) -> dict:
 
     404 if the model_key is not in the registry or no seeded scenarios exist.
     """
-    if model_key not in AVAILABLE_MODELS:
+    if not models_registry.known(model_key):
         raise HTTPException(status_code=404, detail=f"Unknown model: {model_key!r}")
 
     grid = model_grid(model_key)

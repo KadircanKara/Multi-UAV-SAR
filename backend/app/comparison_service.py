@@ -25,11 +25,14 @@ from app.library_service import (
     parse_scenario_params,
     resolve_model_key,
 )
-from app import replay_service, selector_service
-from app.selector_service import _SelectorNotFound, get_selector
+from app import models_registry, replay_service, selector_service
+from app.selector_service import (
+    _SelectorNotFound,
+    StrategyUnavailableError,
+    get_selector,
+)
 
 from PathOptimizationModel import (
-    AVAILABLE_MODELS,
     get_objectives_from_weighted_sum_model,
 )
 from PathFuncDict import model_metric_info, objective_values
@@ -72,7 +75,7 @@ def _scenario_stats(scenario: str) -> Optional[dict]:
         model_key = resolve_model_key(scenario)
     except Exception:
         return None
-    model = AVAILABLE_MODELS.get(model_key)
+    model = models_registry.get_model(model_key)
     if model is None:
         return None
 
@@ -205,7 +208,7 @@ def _time_metrics_for_scenario(
     }
 
     model_key = resolve_model_key(scenario)
-    model = AVAILABLE_MODELS.get(model_key)
+    model = models_registry.get_model(model_key)
 
     params = parse_scenario_params(scenario)
     n_visits = (
@@ -261,9 +264,18 @@ def compare_time_metrics(
     results: list[dict] = []
     skipped: list[str] = []
     for scenario in ordered:
-        row = _time_metrics_for_scenario(
-            scenario, cfg_dict, strategy, objective_name, weights
-        )
+        try:
+            row = _time_metrics_for_scenario(
+                scenario, cfg_dict, strategy, objective_name, weights
+            )
+        except StrategyUnavailableError:
+            # 'best' on an objective THIS scenario's model didn't optimize → skip
+            # it rather than fail the whole comparison. A malformed request (e.g.
+            # 'best' with no objective_name at all) still propagates → 422.
+            if strategy == "best" and objective_name:
+                skipped.append(scenario)
+                continue
+            raise
         if row is None:
             skipped.append(scenario)
         else:

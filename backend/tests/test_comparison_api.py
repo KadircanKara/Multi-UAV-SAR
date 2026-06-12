@@ -172,6 +172,21 @@ def test_compare_time_best_without_objective_is_422(client):
     assert resp.status_code == 422
 
 
+def test_compare_time_best_skips_model_without_that_objective(client):
+    """'best' on an objective a given scenario's model did not optimize must skip
+    that scenario, not fail the whole multi-scenario comparison."""
+    tc = _scenario_with(client, "TC_MOO_NSGA2", 2)      # does NOT optimize TBV
+    tcdt = _scenario_with(client, "TCDT_MOO_NSGA2", 2)  # optimizes Max Mean TBV
+    assert tc and tcdt
+    resp = _compare_time(
+        client, [tc, tcdt], strategy="best", objective_name="Max Mean TBV"
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert tcdt in [s["scenario"] for s in data["scenarios"]]
+    assert tc in data["skipped"]
+
+
 def test_compare_time_bad_config_is_422(client):
     a = _scenario_with(client, "TCD_MOO_NSGA2", 2)
     assert a

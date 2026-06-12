@@ -91,13 +91,15 @@ def test_library_list_is_array(client):
 
 
 def test_library_all_model_keys_valid(client):
-    from PathOptimizationModel import AVAILABLE_MODELS
+    from app import models_registry
 
     data = client.get("/api/library").json()
     if len(data) == 0:
         pytest.skip("no seeded scenarios present")
     for row in data:
-        assert row["model_key"] in AVAILABLE_MODELS, (
+        # A listed scenario resolves to a known model — a preset OR a saved
+        # custom model (the library lists both since the registry migration).
+        assert models_registry.known(row["model_key"]), (
             f"Unknown model_key: {row['model_key']}"
         )
 
