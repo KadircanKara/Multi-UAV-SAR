@@ -86,6 +86,16 @@ def test_ws_weights_rounding_tolerated(client):
     assert resp.status_code == 200
 
 
+def test_gen_strategy_max_is_accepted(client):
+    assert client.post("/api/optimize/check", json=_cfg(gen_strategy="max")).status_code == 200
+    # default is fixed
+    assert client.post("/api/optimize/check", json=_cfg()).status_code == 200
+
+
+def test_gen_strategy_invalid_is_422(client):
+    assert client.post("/api/optimize/check", json=_cfg(gen_strategy="bogus")).status_code == 422
+
+
 def test_moead_blocked(client):
     resp = client.post("/api/optimize/check", json=_cfg(method="MOEAD"))
     assert resp.status_code == 422

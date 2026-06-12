@@ -53,6 +53,7 @@ def post_optimize(body: OptimizeConfig) -> dict:
             body.optimization_type, body.method, body.objectives, body.weights,
             body.pop_size, body.n_gen, body.seed, body.scenario.to_scenario_dict(),
             body.max_mission_time, body.min_connectivity,
+            body.gen_strategy, body.early_stop_patience, body.early_stop_threshold,
         )
     except RunInProgressError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

@@ -101,6 +101,15 @@ const NGEN_MIN = 5;
 const NGEN_MAX = 1000;
 const NGEN_DEFAULT = 300;
 const SEED_DEFAULT = 1;
+
+type GenStrategy = "fixed" | "max";
+const GEN_STRATEGY_HELP =
+  "Fixed Generations runs the full number of generations for the most refined, " +
+  "absolute objective-optimal solutions. Max Generations treats it as a cap and " +
+  "stops early once no objective improves by ≥10% for several generations — " +
+  "faster, but you may lose some middle-ground solutions. Choose Fixed when the " +
+  "absolute best objective values matter most.";
+
 // Constraint defaults (the speed-violation constraint is always applied).
 const MMT_DEFAULT = 3600; // max mission time (seconds)
 const MIN_CONN_DEFAULT = 0.5; // min percentage connectivity (fraction)
@@ -177,6 +186,7 @@ interface RunParams {
   weights: Record<string, number> | null;
   popSize: number;
   nGen: number;
+  genStrategy: GenStrategy;
   scenario: ScenarioConfig;
   maxMissionTime: number | null;
   minConnectivity: number | null;
@@ -416,6 +426,7 @@ export default function OptimizePage() {
   // GA parameters
   const [popSize, setPopSize] = useState(POP_DEFAULT);
   const [nGen, setNGen] = useState(NGEN_DEFAULT);
+  const [genStrategy, setGenStrategy] = useState<GenStrategy>("fixed");
 
   // Constraints (speed-violation is always applied; these two are configurable)
   const [mmtEnabled, setMmtEnabled] = useState(true);
@@ -609,6 +620,7 @@ export default function OptimizePage() {
       seed,
       max_mission_time: mmtEnabled ? mmtValue : null,
       min_connectivity: minConnEnabled ? minConnValue : null,
+      gen_strategy: genStrategy,
       // Target cells are irrelevant to optimization (they only affect the
       // sensing time-metrics, computed post-hoc). Send a valid placeholder so
       // PathInfo / ScenarioConfig validation passes for any grid size.
@@ -627,6 +639,7 @@ export default function OptimizePage() {
     mmtValue,
     minConnEnabled,
     minConnValue,
+    genStrategy,
   ]);
 
   // ── Debounced duplicate pre-check (guarded against stale responses). ──
@@ -776,6 +789,7 @@ export default function OptimizePage() {
       weights: needsWeights(optType, method) ? weights : null,
       popSize,
       nGen,
+      genStrategy,
       scenario: config.scenario,
       maxMissionTime: mmtEnabled ? mmtValue : null,
       minConnectivity: minConnEnabled ? minConnValue : null,
@@ -1075,9 +1089,21 @@ export default function OptimizePage() {
 
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-3">
-                    <Label className="text-sm text-muted-foreground">
-                      Generations
-                    </Label>
+                    <div className="flex items-center gap-1.5">
+                      <Label className="text-sm text-muted-foreground">
+                        {genStrategy === "max" ? "Max generations" : "Generations"}
+                      </Label>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-flex size-4 cursor-help items-center justify-center rounded-full border border-border text-[10px] font-medium text-muted-foreground">
+                            i
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs text-xs leading-relaxed">
+                          {GEN_STRATEGY_HELP}
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
                     <Input
                       type="number"
                       inputMode="numeric"
@@ -1103,6 +1129,32 @@ export default function OptimizePage() {
                     value={[nGen]}
                     onValueChange={(v) => setNGen(v[0] ?? NGEN_DEFAULT)}
                   />
+                  <ToggleGroup
+                    type="single"
+                    value={genStrategy}
+                    onValueChange={(v) => v && setGenStrategy(v as GenStrategy)}
+                    className="grid grid-cols-2 gap-2"
+                  >
+                    <ToggleGroupItem
+                      value="fixed"
+                      variant="outline"
+                      className="text-xs"
+                    >
+                      Fixed Generations
+                    </ToggleGroupItem>
+                    <ToggleGroupItem
+                      value="max"
+                      variant="outline"
+                      className="text-xs"
+                    >
+                      Max Generations
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                  <p className="text-xs text-muted-foreground">
+                    {genStrategy === "max"
+                      ? "Stops early once no objective improves ≥10% for several generations (a cap, not a target)."
+                      : "Runs the full number of generations for the most refined solutions."}
+                  </p>
                 </div>
               </div>
 
@@ -1498,9 +1550,12 @@ export default function OptimizePage() {
                         .join(" · ")}
                     />
                   )}
+                  <ParamRow label="Population" value={`${runParams.popSize}`} />
                   <ParamRow
-                    label="Pop · gen"
-                    value={`${runParams.popSize} · ${runParams.nGen}`}
+                    label="Generations"
+                    value={`${runParams.nGen} (${
+                      runParams.genStrategy === "max" ? "max · early-stop" : "fixed"
+                    })`}
                   />
                   <ParamRow
                     label="Scenario"
@@ -1549,6 +1604,16 @@ export default function OptimizePage() {
                       ? ` at generation ${result.stopped_at_gen}`
                       : ""}{" "}
                     — showing the best solutions found so far.
+                  </p>
+                )}
+                {result.early_stopped && !result.cancelled && (
+                  <p className="text-xs font-medium text-amber-600 dark:text-amber-500">
+                    Converged
+                    {result.stopped_at_gen != null
+                      ? ` at generation ${result.stopped_at_gen}`
+                      : ""}{" "}
+                    — no ≥10% objective improvement for several generations.
+                    Feasible solutions retained.
                   </p>
                 )}
               </div>

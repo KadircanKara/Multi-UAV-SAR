@@ -345,6 +345,13 @@ class OptimizeConfig(BaseModel):
     # not exposed here. mission_time is in seconds; connectivity is a fraction.
     max_mission_time: Optional[float] = Field(default=3600.0)
     min_connectivity: Optional[float] = Field(default=0.5)
+    # Generation strategy. "fixed" runs exactly n_gen generations; "max" treats
+    # n_gen as a cap and stops early once the feasible objective optima converge
+    # (no objective improves by >= early_stop_threshold for early_stop_patience
+    # generations). Patience/threshold are predefined defaults.
+    gen_strategy: str = Field(default="fixed")
+    early_stop_patience: int = Field(default=10, ge=2, le=500)
+    early_stop_threshold: float = Field(default=0.10, gt=0.0, le=1.0)
     scenario: ScenarioConfig = Field(default_factory=ScenarioConfig)
 
     @model_validator(mode="after")
@@ -352,6 +359,8 @@ class OptimizeConfig(BaseModel):
         t, m = self.optimization_type, self.method
         if t not in ("SOO", "MOO"):
             raise ValueError("optimization_type must be 'SOO' or 'MOO'")
+        if self.gen_strategy not in ("fixed", "max"):
+            raise ValueError("gen_strategy must be 'fixed' or 'max'")
         if self.max_mission_time is not None and self.max_mission_time <= 0:
             raise ValueError("max_mission_time must be > 0")
         if self.min_connectivity is not None and not (0.0 <= self.min_connectivity <= 1.0):
@@ -419,6 +428,8 @@ class OptimizeFront(BaseModel):
     solutions: list[OptimizeFrontSolution]
     # True when the run was stopped early by the user; the front is the best-so-far.
     cancelled: bool = False
+    # True when "Max Generations" converged and stopped before n_gen.
+    early_stopped: bool = False
     stopped_at_gen: Optional[int] = None
 
 

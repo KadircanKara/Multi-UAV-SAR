@@ -11,9 +11,57 @@ no shared module globals are mutated.
 from __future__ import annotations
 
 import json
+import math
 import os
 
 import app.rootpath  # noqa: F401  (side-effect: repo root on sys.path)
+
+
+class _EarlyStop:
+    """Convergence early-stop for the "Max Generations" mode.
+
+    Works in SIGNED objective space (pymoo minimizes actual×polarity), so 'better'
+    is always 'smaller' and objective direction is already encoded: a maximized
+    objective like Percentage Connectivity has a negative signed optimum that
+    improves by going more negative.
+
+    Rule: keep a reference of the best signed value per objective. Each generation,
+    if ANY objective's optimum has improved by at least ``threshold`` (relative)
+    versus the reference, reset the reference to the new optima and the stall
+    counter to 0. Otherwise increment the stall counter. Stop once the run has
+    gone ``patience`` consecutive generations without such an improvement.
+
+    Only the model's own objectives are passed in (the caller uses the model's F
+    columns), so e.g. a TCD model never considers Max Mean TBV.
+    """
+
+    def __init__(self, patience: int, threshold: float):
+        self.patience = max(1, int(patience))
+        self.threshold = float(threshold)
+        self.ref: list[float] | None = None
+        self.stall = 0
+
+    def update(self, best_signed) -> bool:
+        """Feed this generation's per-objective signed optima; return True to stop."""
+        cur = [float(v) for v in best_signed]
+        if self.ref is None:
+            self.ref = cur
+            self.stall = 0
+            return False
+        improved = False
+        for r, c in zip(self.ref, cur):
+            if not (math.isfinite(r) and math.isfinite(c)):
+                continue
+            denom = abs(r) if abs(r) > 1e-9 else 1e-9
+            if (r - c) / denom >= self.threshold:  # c smaller than r ⇒ better
+                improved = True
+                break
+        if improved:
+            self.ref = cur
+            self.stall = 0
+        else:
+            self.stall += 1
+        return self.stall >= self.patience
 
 
 # Mutation config — copied verbatim from main.py (the tuned interactive config).
@@ -74,9 +122,15 @@ def run_optimization(
     polarities: dict,
     max_mission_time=None,
     min_connectivity=None,
+    gen_strategy: str = "fixed",
+    early_stop_patience: int = 10,
+    early_stop_threshold: float = 0.10,
 ) -> dict:
     """Run the optimization, persist artifacts into ``run_dir``, return the
-    inline front payload. Executed in a child process; args must be picklable."""
+    inline front payload. Executed in a child process; args must be picklable.
+
+    gen_strategy: "fixed" runs exactly n_gen generations; "max" treats n_gen as a
+    cap and stops early once the feasible optima converge (see _EarlyStop)."""
     import numpy as np
     import pandas as pd
 
@@ -100,6 +154,14 @@ def run_optimization(
     # absolute/display value is F_signed * polarity — cheap to invert, no recompute).
     _cols = list(model_dict["F"])
     _pol = np.array([polarities.get(c, 1) for c in _cols], dtype=float)
+
+    # Convergence early-stop (only for "Max Generations" mode).
+    _early = (
+        _EarlyStop(early_stop_patience, early_stop_threshold)
+        if gen_strategy == "max"
+        else None
+    )
+    _es_flag = {"stopped": False}  # set when early-stop fires (read after minimize)
 
     class _Progress(Callback):
         def notify(self, algorithm):
@@ -128,6 +190,20 @@ def run_optimization(
                         _cols[c]: float(Fabs[int(np.argmin(Fsigned[:, c])), c])
                         for c in range(len(_cols))
                     }
+                    # Convergence check — only on FEASIBLE optima. While no feasible
+                    # solution exists yet, keep searching (don't stall): the objective
+                    # values of infeasible plans aren't meaningful, and feasible
+                    # solutions must survive in the final generation.
+                    if _early is not None:
+                        cv = opt.get("CV")
+                        if cv is not None:
+                            cv = np.asarray(cv, dtype=float).reshape(Fsigned.shape[0], -1)
+                            feas = Fsigned[(cv <= 1e-9).all(axis=1)]
+                        else:
+                            feas = Fsigned
+                        if len(feas) and _early.update(feas.min(axis=0)):
+                            _es_flag["stopped"] = True
+                            algorithm.termination.terminate()
                 _write_status(run_dir, snap)
             except Exception:
                 pass
@@ -160,9 +236,11 @@ def run_optimization(
         callback=_Progress(),
     )
 
-    # Was the run stopped early (cancel flag present)? The front below is then the
-    # best-so-far population at the generation it reached.
+    # How did the run end? cancel flag = user stop; _es_flag = convergence
+    # early-stop ("Max Generations"). The front below is the best-so-far feasible
+    # population at the generation it reached.
     cancelled = os.path.exists(cancel_path)
+    early_stopped = bool(_es_flag["stopped"]) and not cancelled
     stopped_at_gen = int(getattr(getattr(res, "algorithm", None), "n_gen", n_gen) or n_gen)
 
     # Unwrap solution objects (mirrors selector_service / PathUnitTest).
@@ -194,6 +272,7 @@ def run_optimization(
             "polarities": polarities,
             "result_kind": result_kind,
             "cancelled": cancelled,
+            "early_stopped": early_stopped,
             "stopped_at_gen": stopped_at_gen,
         }, fh)
 
@@ -206,11 +285,12 @@ def run_optimization(
         "n_solutions": len(sols),
         "solutions": rows,
         "cancelled": cancelled,
+        "early_stopped": early_stopped,
         "stopped_at_gen": stopped_at_gen,
     }
     payload = {
         "state": "done",
-        "gen": stopped_at_gen if cancelled else n_gen,
+        "gen": stopped_at_gen if (cancelled or early_stopped) else n_gen,
         "n_gen": n_gen,
         "front": front,
     }

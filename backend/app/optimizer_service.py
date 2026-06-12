@@ -270,6 +270,8 @@ def start_run(
     weights: Optional[dict], pop_size: int, n_gen: int, seed: int,
     scenario_dict: dict,
     max_mission_time: Optional[float] = None, min_connectivity: Optional[float] = None,
+    gen_strategy: str = "fixed",
+    early_stop_patience: int = 10, early_stop_threshold: float = 0.10,
 ) -> dict:
     """Submit a run to the worker process; returns {run_id, scenario_name,
     model_key, exists}. Raises RunInProgressError if one is already running."""
@@ -296,6 +298,7 @@ def start_run(
             int(pop_size), int(n_gen), int(seed), run_dir,
             scenario_name, model_key, list(objectives), polarities,
             max_mission_time, min_connectivity,
+            gen_strategy, int(early_stop_patience), float(early_stop_threshold),
         )
         _jobs[run_id] = {
             "future": future, "run_dir": run_dir,

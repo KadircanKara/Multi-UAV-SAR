@@ -122,6 +122,12 @@ export interface OptimizeConfig {
    *  explicitly to reflect the user's toggles. */
   max_mission_time?: number | null;
   min_connectivity?: number | null;
+  /** "fixed" runs all n_gen; "max" treats n_gen as a cap and stops early once
+   *  the feasible objective optima converge. Patience/threshold use backend
+   *  defaults unless provided. */
+  gen_strategy?: "fixed" | "max";
+  early_stop_patience?: number;
+  early_stop_threshold?: number;
   scenario: ScenarioConfig;
 }
 
@@ -141,6 +147,8 @@ export interface OptimizeFront {
   solutions: OptimizeFrontSolution[];
   /** True when the user stopped the run early; the front is the best-so-far. */
   cancelled?: boolean;
+  /** True when "Max Generations" converged and stopped before n_gen. */
+  early_stopped?: boolean;
   stopped_at_gen?: number | null;
 }
 
