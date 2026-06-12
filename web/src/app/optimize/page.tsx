@@ -147,6 +147,7 @@ const COMM_EPS = 1e-9;
 // Persist the in-flight run id so a reload / navigation can re-attach to it
 // (the backend recovers a finished run from disk; a lost run is cleared).
 const RUN_STORAGE_KEY = "optimize.runId";
+const RUN_PARAMS_STORAGE_KEY = "optimize.runParams";
 
 /** Pretty-print a comm_cell_range in cell-length units (symbolic where it matches). */
 function formatCommCells(v: number): string {
@@ -165,6 +166,37 @@ function scenarioSummary(s: ScenarioConfig): string {
 }
 
 type OptType = "SOO" | "MOO";
+
+/** A snapshot of the parameters a run was launched with — shown under the live
+ *  progress bar so the user doesn't lose track of what's running (the config
+ *  panel is hidden while solving). */
+interface RunParams {
+  optType: OptType;
+  method: string;
+  objectives: string[];
+  weights: Record<string, number> | null;
+  popSize: number;
+  nGen: number;
+  scenario: ScenarioConfig;
+  maxMissionTime: number | null;
+  minConnectivity: number | null;
+}
+
+function constraintsSummary(p: RunParams): string {
+  const extra: string[] = [];
+  if (p.maxMissionTime != null) extra.push(`max time ${p.maxMissionTime}s`);
+  if (p.minConnectivity != null) extra.push(`min conn ${p.minConnectivity}`);
+  return extra.length ? `speed · ${extra.join(" · ")}` : "speed only";
+}
+
+function ParamRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <span className="shrink-0 text-muted-foreground">{label}</span>
+      <span className="text-right text-foreground">{value}</span>
+    </div>
+  );
+}
 
 // ─── Pure helpers (module scope) ───────────────────────────────────────────────
 
@@ -418,6 +450,8 @@ export default function OptimizePage() {
   const [liveFront, setLiveFront] = useState<Record<string, number>[] | null>(
     null
   );
+  // Snapshot of the params the current run was launched with (shown while solving).
+  const [runParams, setRunParams] = useState<RunParams | null>(null);
 
   // Save-to-library state
   const [runId, setRunId] = useState<string | null>(null);
@@ -470,6 +504,12 @@ export default function OptimizePage() {
       stored = null;
     }
     if (!stored) return;
+    try {
+      const rp = sessionStorage.getItem(RUN_PARAMS_STORAGE_KEY);
+      if (rp) setRunParams(JSON.parse(rp) as RunParams);
+    } catch {
+      /* ignore — params are a nicety, not required to re-attach */
+    }
     setRunId(stored);
     setRunning(true);
     setProgress({ gen: 0, nGen: nGen });
@@ -626,6 +666,7 @@ export default function OptimizePage() {
   function clearStoredRun() {
     try {
       sessionStorage.removeItem(RUN_STORAGE_KEY);
+      sessionStorage.removeItem(RUN_PARAMS_STORAGE_KEY);
     } catch {
       /* sessionStorage unavailable — ignore */
     }
@@ -727,10 +768,24 @@ export default function OptimizePage() {
     setLiveFront(null);
     setProgress({ gen: 0, nGen: nGen });
     setRunning(true);
+    // Snapshot the submitted parameters so they stay visible while solving.
+    const snapshot: RunParams = {
+      optType,
+      method,
+      objectives: selected,
+      weights: needsWeights(optType, method) ? weights : null,
+      popSize,
+      nGen,
+      scenario: config.scenario,
+      maxMissionTime: mmtEnabled ? mmtValue : null,
+      minConnectivity: minConnEnabled ? minConnValue : null,
+    };
+    setRunParams(snapshot);
     try {
       const res = await startOptimize(config);
       try {
         sessionStorage.setItem(RUN_STORAGE_KEY, res.run_id);
+        sessionStorage.setItem(RUN_PARAMS_STORAGE_KEY, JSON.stringify(snapshot));
       } catch {
         /* sessionStorage unavailable — ignore */
       }
@@ -1418,6 +1473,48 @@ export default function OptimizePage() {
                       : 0
                   }
                 />
+              </div>
+            )}
+
+            {running && runParams && (
+              <div className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4">
+                <p className="text-sm font-medium text-foreground">
+                  Run parameters
+                </p>
+                <div className="flex flex-col gap-1.5 text-xs">
+                  <ParamRow
+                    label="Method"
+                    value={`${runParams.optType} · ${runParams.method}`}
+                  />
+                  <ParamRow
+                    label="Objectives"
+                    value={runParams.objectives.join(", ")}
+                  />
+                  {runParams.weights && (
+                    <ParamRow
+                      label="Weights"
+                      value={runParams.objectives
+                        .map((o) => `${runParams.weights![o] ?? 0}`)
+                        .join(" · ")}
+                    />
+                  )}
+                  <ParamRow
+                    label="Pop · gen"
+                    value={`${runParams.popSize} · ${runParams.nGen}`}
+                  />
+                  <ParamRow
+                    label="Scenario"
+                    value={scenarioSummary(runParams.scenario)}
+                  />
+                  <ParamRow
+                    label="Grid"
+                    value={`${runParams.scenario.grid_size} × ${runParams.scenario.grid_size} · cell ${runParams.scenario.cell_side_length} m · speed ${runParams.scenario.max_drone_speed}`}
+                  />
+                  <ParamRow
+                    label="Constraints"
+                    value={constraintsSummary(runParams)}
+                  />
+                </div>
               </div>
             )}
 
