@@ -174,19 +174,21 @@ export default function ParetoScatter({ front, selectedIndex, onSelectIndex }: P
       </div>
 
       {/* Chart */}
-      <div className="h-72 w-full">
+      <div className="h-80 w-full sm:h-96">
         <ResponsiveContainer width="100%" height="100%">
-          <ScatterChart margin={{ top: 8, right: 16, bottom: 24, left: 16 }}>
+          <ScatterChart margin={{ top: 12, right: 24, bottom: 28, left: 12 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} />
             <XAxis
               dataKey="xVal"
               type="number"
               name={xObj}
+              height={52}
+              tickMargin={8}
               label={{
                 value: xObj + (xIsMax ? " (max)" : ""),
                 position: "insideBottom",
-                offset: -10,
-                style: { fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis },
+                offset: -2,
+                style: { fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis, textAnchor: "middle" },
               }}
               tick={{ fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis }}
               tickLine={false}
@@ -196,12 +198,14 @@ export default function ParetoScatter({ front, selectedIndex, onSelectIndex }: P
               dataKey="yVal"
               type="number"
               name={yObj}
+              width={72}
+              tickMargin={8}
               label={{
                 value: yObj + (yIsMax ? " (max)" : ""),
                 angle: -90,
                 position: "insideLeft",
-                offset: 10,
-                style: { fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis },
+                offset: 12,
+                style: { fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis, textAnchor: "middle" },
               }}
               tick={{ fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis }}
               tickLine={false}

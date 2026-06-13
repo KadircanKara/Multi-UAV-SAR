@@ -18,6 +18,7 @@ model_metric_info = {
     "Constraints": {
         'Max Mission Time': max_mission_time,
         'Min Percentage Connectivity': min_perc_conn_constraint,
+        'Max Mean TBV Ceiling': max_mean_tbv_constraint,
         'Path Speed Violations as Constraint': path_speed_violations_as_constraint
     }
 }

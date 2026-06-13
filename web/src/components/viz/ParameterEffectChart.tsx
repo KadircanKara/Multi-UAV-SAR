@@ -16,7 +16,6 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
-  Legend,
   Tooltip as RechartsTooltip,
   ResponsiveContainer,
 } from "recharts";
@@ -186,6 +185,25 @@ export default function ParameterEffectChart({
           ({betterHint})
         </span>
       </p>
+      {/* HTML legend above the plot: wraps freely without ever overlapping the
+          chart area (an in-SVG Recharts legend mis-reserves space when it wraps). */}
+      {multi && (
+        <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
+          {series.map((s, i) => (
+            <span
+              key={s.key}
+              className="flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground"
+            >
+              <span
+                className="inline-block h-0.5 w-3 rounded-full"
+                style={{ backgroundColor: colorFor(i) }}
+                aria-hidden="true"
+              />
+              {s.label || objective}
+            </span>
+          ))}
+        </div>
+      )}
       <div className={cn("w-full", heightClass)}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
@@ -237,16 +255,6 @@ export default function ParameterEffectChart({
               }
               cursor={{ stroke: `${colors.reference}66` }}
             />
-            {multi && (
-              <Legend
-                wrapperStyle={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 10,
-                  paddingTop: 6,
-                }}
-                iconType="plainline"
-              />
-            )}
             {series.map((s, i) => (
               <Line
                 key={s.key}

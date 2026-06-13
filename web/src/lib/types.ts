@@ -122,6 +122,8 @@ export interface OptimizeConfig {
    *  explicitly to reflect the user's toggles. */
   max_mission_time?: number | null;
   min_connectivity?: number | null;
+  /** Max Mean TBV ceiling (seconds); null disables it. Only bites at n_visits ≥ 2. */
+  max_mean_tbv?: number | null;
   /** "fixed" runs all n_gen; "max" treats n_gen as a cap and stops early once
    *  the feasible objective optima converge. Patience/threshold use backend
    *  defaults unless provided. */

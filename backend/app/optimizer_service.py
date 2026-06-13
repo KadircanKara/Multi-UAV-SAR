@@ -100,7 +100,7 @@ def _synth_exp(objectives: list[str]) -> str:
     return "".join(_OBJ_CODE[o] for o in OBJECTIVES if o in objectives) or "X"
 
 
-def _constraints(max_mission_time, min_connectivity) -> tuple[list, list]:
+def _constraints(max_mission_time, min_connectivity, max_mean_tbv=None) -> tuple[list, list]:
     """Build (G, H) from the user's constraint config. The speed-violation
     constraint is ALWAYS in H (required for drone-path interpolation)."""
     G: list = []
@@ -108,6 +108,8 @@ def _constraints(max_mission_time, min_connectivity) -> tuple[list, list]:
         G.append("Max Mission Time")
     if min_connectivity is not None:
         G.append("Min Percentage Connectivity")
+    if max_mean_tbv is not None:
+        G.append("Max Mean TBV Ceiling")
     H = ["Path Speed Violations as Constraint"]
     return G, H
 
@@ -119,13 +121,14 @@ def resolve_model(
     weights: Optional[dict] = None,
     max_mission_time: Optional[float] = None,
     min_connectivity: Optional[float] = None,
+    max_mean_tbv: Optional[float] = None,
 ) -> tuple[str, dict]:
     """Synthesize (model_key, model_dict) from the user's config. Matches an
     existing preset's Type/Alg/Exp/F when the (type, method, objective-set) lines
     up (so the existence check finds seeded runs); the constraints are taken from
     the user's config (speed-violation always applied)."""
     model_type, alg = _derive_type_alg(optimization_type, method)
-    G, H = _constraints(max_mission_time, min_connectivity)
+    G, H = _constraints(max_mission_time, min_connectivity, max_mean_tbv)
 
     key, preset = _find_preset(model_type, alg, objectives)
     if preset is not None:
@@ -173,11 +176,13 @@ def check_config(
     optimization_type: str, method: str, objectives: list[str],
     weights: Optional[dict], scenario_dict: dict,
     max_mission_time: Optional[float] = None, min_connectivity: Optional[float] = None,
+    max_mean_tbv: Optional[float] = None,
 ) -> dict:
     """Existence pre-check: derive the scenario name + model key and report
     whether a matching run already exists in the library."""
     model_key, model_dict = resolve_model(
-        optimization_type, method, objectives, weights, max_mission_time, min_connectivity)
+        optimization_type, method, objectives, weights, max_mission_time, min_connectivity,
+        max_mean_tbv)
     scenario_name = scenario_name_for(model_dict, scenario_dict)
     return {
         "scenario_name": scenario_name,
@@ -270,6 +275,7 @@ def start_run(
     weights: Optional[dict], pop_size: int, n_gen: int, seed: int,
     scenario_dict: dict,
     max_mission_time: Optional[float] = None, min_connectivity: Optional[float] = None,
+    max_mean_tbv: Optional[float] = None,
     gen_strategy: str = "fixed",
     early_stop_patience: int = 10, early_stop_threshold: float = 0.10,
 ) -> dict:
@@ -278,7 +284,8 @@ def start_run(
     from app.optimizer_worker import run_optimization
 
     model_key, model_dict = resolve_model(
-        optimization_type, method, objectives, weights, max_mission_time, min_connectivity)
+        optimization_type, method, objectives, weights, max_mission_time, min_connectivity,
+        max_mean_tbv)
     scenario_name = scenario_name_for(model_dict, scenario_dict)
     polarities = {o: _POLARITY[o] for o in objectives}
     alg = model_dict["Alg"]
@@ -297,7 +304,7 @@ def start_run(
             run_optimization, run_id, model_dict, scenario_dict, alg,
             int(pop_size), int(n_gen), int(seed), run_dir,
             scenario_name, model_key, list(objectives), polarities,
-            max_mission_time, min_connectivity,
+            max_mission_time, min_connectivity, max_mean_tbv,
             gen_strategy, int(early_stop_patience), float(early_stop_threshold),
         )
         _jobs[run_id] = {

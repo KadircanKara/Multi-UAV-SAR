@@ -75,7 +75,7 @@ export default function TargetsKnownChart({ rows }: Props) {
       </p>
       <div className="h-64 w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
+          <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 16, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} />
             <XAxis
               dataKey="step"
@@ -106,10 +106,12 @@ export default function TargetsKnownChart({ rows }: Props) {
               labelStyle={{ color: colors.axis }}
             />
             <Legend
+              verticalAlign="top"
+              align="left"
               wrapperStyle={{
                 fontFamily: "var(--font-mono)",
                 fontSize: 10,
-                paddingTop: 8,
+                paddingBottom: 8,
               }}
             />
             {rows.map((row, i) => (

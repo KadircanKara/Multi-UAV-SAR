@@ -19,6 +19,8 @@ import type { ModelGrid, ModelGridScenario } from "@/lib/types";
 import ScenarioExplorer from "@/components/explore/ScenarioExplorer";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
@@ -37,6 +39,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { commLabel } from "@/lib/comm";
 import type {
   ParameterEffectChartProps,
   EffectPoint,
@@ -170,6 +173,17 @@ function tbvMeaningless(objective: string, nVisits: number | null): boolean {
   return objective.includes("TBV") && nVisits === 1;
 }
 
+// Fixed scenario params (grid, cell side, max speed) encoded in a scenario name:
+// "..._g_8_a_50_n_4_v_2.5_r_2_nvisits_2" → grid 8, cell 50 m, max speed 2.5 m/s.
+// These are constant for a given model, so they're shown as read-only context.
+function scenarioParams(
+  name: string
+): { grid: number; cell: number; speed: number } | null {
+  const m = /_g_(\d+)_a_([0-9.]+)_n_\d+_v_([0-9.]+)_/.exec(name);
+  if (!m) return null;
+  return { grid: Number(m[1]), cell: Number(m[2]), speed: Number(m[3]) };
+}
+
 // ─── Parameter-effect series construction ─────────────────────────────────────
 
 function availableDimValues(
@@ -180,7 +194,10 @@ function availableDimValues(
     return uniqueDrones(grid.scenarios).map((d) => ({ value: String(d), label: String(d) }));
   }
   if (dim === "comm_range") {
-    return uniqueCommRanges(grid.scenarios).map((c) => ({ value: c, label: c }));
+    return uniqueCommRanges(grid.scenarios).map((c) => ({
+      value: c,
+      label: commLabel(c),
+    }));
   }
   return uniqueNVisits(grid.scenarios)
     .filter((v): v is number => v != null)
@@ -189,7 +206,7 @@ function availableDimValues(
 
 function dimValueLabel(dim: SweepParam, value: string): string {
   if (dim === "drones") return `${value} drones`;
-  if (dim === "comm_range") return `comm ${value}`;
+  if (dim === "comm_range") return commLabel(value, 50, { short: true });
   return `${value} visits`;
 }
 
@@ -391,13 +408,13 @@ function CombinationSelect({ grid, selected, onSelectName }: CombinationSelectPr
           Comm Range
         </span>
         <Select value={selected.comm_range ?? ""} onValueChange={selectComm}>
-          <SelectTrigger className="h-8 w-28 text-xs font-mono">
+          <SelectTrigger className="h-8 w-44 text-xs font-mono">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             {commOptions.map((c) => (
               <SelectItem key={c} value={c} className="text-xs font-mono">
-                {c}
+                {commLabel(c)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -569,6 +586,13 @@ export default function ModelPage() {
   const [seriesComm, setSeriesComm] = useState<string[]>([]);
   const [seriesNVisits, setSeriesNVisits] = useState<string[]>([]);
 
+  // Scenario-parameter filters (speed / grid / cell). Constant for seeded models,
+  // but can vary across custom saved runs that share a model key — toggleable
+  // like the overlay dims, filtering which scenarios the analysis + table use.
+  const [selSpeed, setSelSpeed] = useState<string[]>([]);
+  const [selGrid, setSelGrid] = useState<string[]>([]);
+  const [selCell, setSelCell] = useState<string[]>([]);
+
   // Selected combination for the embedded explorer
   const [selName, setSelName] = useState<string>("");
   const explorerRef = useRef<HTMLDivElement>(null);
@@ -616,6 +640,26 @@ export default function ModelPage() {
             setSweepValueSel(
               availableDimValues(data, decidedSweep).map((o) => o.value)
             );
+            // Seed the scenario-parameter filters to all present values.
+            const sp = new Set<number>();
+            const gr = new Set<number>();
+            const ce = new Set<number>();
+            for (const s of data.scenarios) {
+              const p = scenarioParams(s.scenario);
+              if (p) {
+                sp.add(p.speed);
+                gr.add(p.grid);
+                ce.add(p.cell);
+              }
+            }
+            // Single-select: default each to its smallest present value.
+            const smallest = (s: Set<number>): string[] => {
+              const v = Array.from(s).sort((a, b) => a - b)[0];
+              return v != null ? [String(v)] : [];
+            };
+            setSelSpeed(smallest(sp));
+            setSelGrid(smallest(gr));
+            setSelCell(smallest(ce));
           }
           setLoading(false);
         }
@@ -638,6 +682,57 @@ export default function ModelPage() {
     [grid, selName]
   );
 
+  // Distinct scenario-parameter values (parsed from scenario names), with units.
+  const extraDimOpts = useMemo(() => {
+    const sp = new Set<number>();
+    const gr = new Set<number>();
+    const ce = new Set<number>();
+    for (const s of grid?.scenarios ?? []) {
+      const p = scenarioParams(s.scenario);
+      if (p) {
+        sp.add(p.speed);
+        gr.add(p.grid);
+        ce.add(p.cell);
+      }
+    }
+    const num = (a: number, b: number) => a - b;
+    return {
+      speed: Array.from(sp).sort(num).map((v) => ({ value: String(v), label: `${v} m/s` })),
+      grid: Array.from(gr).sort(num).map((v) => ({ value: String(v), label: `${v} × ${v}` })),
+      cell: Array.from(ce).sort(num).map((v) => ({ value: String(v), label: `${v} m` })),
+    };
+  }, [grid]);
+
+  // Scenario set after applying the speed/grid/cell filters (lenient: an empty
+  // selection means "all", so nothing is hidden during the initial seed window).
+  const filteredGrid = useMemo<ModelGrid | null>(() => {
+    if (!grid) return null;
+    const sp = new Set(selSpeed);
+    const gr = new Set(selGrid);
+    const ce = new Set(selCell);
+    const ok = (set: Set<string>, v: string) => set.size === 0 || set.has(v);
+    const scenarios = grid.scenarios.filter((s) => {
+      const p = scenarioParams(s.scenario);
+      if (!p) return true;
+      return (
+        ok(sp, String(p.speed)) && ok(gr, String(p.grid)) && ok(ce, String(p.cell))
+      );
+    });
+    return { ...grid, scenarios };
+  }, [grid, selSpeed, selGrid, selCell]);
+
+  // Toggleable scenario-parameter filter rows (rendered like the overlay dims).
+  const filterRows: {
+    label: string;
+    opts: { value: string; label: string }[];
+    sel: string[];
+    set: (v: string[]) => void;
+  }[] = [
+    { label: "Speed", opts: extraDimOpts.speed, sel: selSpeed, set: setSelSpeed },
+    { label: "Grid", opts: extraDimOpts.grid, sel: selGrid, set: setSelGrid },
+    { label: "Cell", opts: extraDimOpts.cell, sel: selCell, set: setSelCell },
+  ];
+
   // Select a combination and bring the explorer into view (used by table rows).
   const selectCombination = useCallback((name: string) => {
     setSelName(name);
@@ -645,6 +740,73 @@ export default function ModelPage() {
       explorerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   }, []);
+
+  // Shared table builder for both export formats: raw numeric bests (kept as
+  // numbers so XLSX cells are numeric), TBV blanked at n_visits === 1 to mirror
+  // the on-screen "—".
+  const buildCombinationsTable = useCallback((): {
+    headers: string[];
+    rows: (string | number)[][];
+  } | null => {
+    if (!filteredGrid) return null;
+    const headers = [
+      "Drones",
+      "Comm Range",
+      "n_visits",
+      "# Solutions",
+      ...filteredGrid.objectives.map((o) => `${o} (best)`),
+    ];
+    const rows: (string | number)[][] = filteredGrid.scenarios.map((s) => [
+      s.number_of_drones ?? "",
+      s.comm_range != null ? commLabel(s.comm_range) : "",
+      s.n_visits ?? "",
+      s.n_solutions,
+      ...filteredGrid.objectives.map((obj) => {
+        const v = s.objective_stats[obj]?.best;
+        return tbvMeaningless(obj, s.n_visits) || v == null ? "" : v;
+      }),
+    ]);
+    return { headers, rows };
+  }, [filteredGrid]);
+
+  const exportCombinationsCsv = useCallback(() => {
+    const table = buildCombinationsTable();
+    if (!table) return;
+    const esc = (v: string | number) => {
+      const s = String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csv = [table.headers, ...table.rows]
+      .map((r) => r.map(esc).join(","))
+      .join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${modelKey}-parameter-combinations.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, [buildCombinationsTable, modelKey]);
+
+  // XLSX uses SheetJS, dynamically imported so it stays out of the initial
+  // bundle (only fetched when the user actually exports an .xlsx).
+  const exportCombinationsXlsx = useCallback(async () => {
+    const table = buildCombinationsTable();
+    if (!table) return;
+    try {
+      const XLSX = await import("xlsx");
+      const ws = XLSX.utils.aoa_to_sheet([table.headers, ...table.rows]);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Combinations");
+      XLSX.writeFile(wb, `${modelKey}-parameter-combinations.xlsx`);
+    } catch (err: unknown) {
+      toast.error("XLSX export failed", {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, [buildCombinationsTable, modelKey]);
 
   // Toggle overlay values for a dimension, keeping at least one selected.
   const onToggleDim = useCallback((dim: SweepParam, values: string[]) => {
@@ -658,11 +820,11 @@ export default function ModelPage() {
   const handleSweepChange = useCallback(
     (next: SweepParam) => {
       setSweep(next);
-      if (grid) {
-        setSweepValueSel(availableDimValues(grid, next).map((o) => o.value));
+      if (filteredGrid) {
+        setSweepValueSel(availableDimValues(filteredGrid, next).map((o) => o.value));
       }
     },
-    [grid]
+    [filteredGrid]
   );
 
   // Toggle which sweep values appear on the x-axis, keeping at least one.
@@ -674,10 +836,10 @@ export default function ModelPage() {
   // Build one EffectSeries[] per objective, with overlay values ordered by the
   // natural parameter order (so legends read 2 → sqrt(8) → 4, etc.).
   const seriesByObj = useMemo<Record<string, EffectSeries[]>>(() => {
-    if (!grid) return {};
-    const hasNVisits = grid.scenarios.some((s) => s.n_visits != null);
+    if (!filteredGrid) return {};
+    const hasNVisits = filteredGrid.scenarios.some((s) => s.n_visits != null);
     const orderSel = (dim: SweepParam, sel: string[]): string[] => {
-      const order = availableDimValues(grid, dim).map((o) => o.value);
+      const order = availableDimValues(filteredGrid, dim).map((o) => o.value);
       return [...sel].sort((a, b) => order.indexOf(a) - order.indexOf(b));
     };
     const selByDim: Record<SweepParam, string[]> = {
@@ -685,8 +847,14 @@ export default function ModelPage() {
       comm_range: orderSel("comm_range", seriesComm),
       n_visits: hasNVisits ? orderSel("n_visits", seriesNVisits) : [],
     };
-    return buildSeriesByObjective(grid, sweep, selByDim, sweepValueSel, grid.objectives);
-  }, [grid, sweep, seriesDrones, seriesComm, seriesNVisits, sweepValueSel]);
+    return buildSeriesByObjective(
+      filteredGrid,
+      sweep,
+      selByDim,
+      sweepValueSel,
+      filteredGrid.objectives
+    );
+  }, [filteredGrid, sweep, seriesDrones, seriesComm, seriesNVisits, sweepValueSel]);
 
   // Largest line count across objectives — drives plot height + grid columns.
   const lineCount = useMemo(() => {
@@ -798,7 +966,7 @@ export default function ModelPage() {
             <CardContent className="flex flex-col gap-5">
               {/* Sweep controls */}
               <SweepControls
-                grid={grid}
+                grid={filteredGrid ?? grid}
                 sweep={sweep}
                 onSweep={handleSweepChange}
                 selByDim={{
@@ -811,8 +979,44 @@ export default function ModelPage() {
                 onToggleSweepValues={onToggleSweepValues}
               />
 
+              {/* Scenario-parameter filters (speed / grid / cell) — toggleable. */}
+              {extraDimOpts.speed.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  {filterRows.map(({ label, opts, sel, set }) => (
+                    <div key={label} className="flex flex-wrap items-center gap-2">
+                      <span className="w-16 text-xs font-mono tracking-widest text-muted-foreground uppercase">
+                        {label}
+                      </span>
+                      <ToggleGroup
+                        type="single"
+                        value={sel[0] ?? ""}
+                        onValueChange={(v: string) => {
+                          if (v) set([v]); // single-select; ignore deselect
+                        }}
+                        className="flex-wrap justify-start gap-1"
+                      >
+                        {opts.map((o) => (
+                          <ToggleGroupItem
+                            key={o.value}
+                            value={o.value}
+                            className="h-7 px-2.5 text-xs font-mono"
+                          >
+                            {o.label}
+                          </ToggleGroupItem>
+                        ))}
+                      </ToggleGroup>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* One chart per objective, or a note if the filter yields nothing */}
-              {!hasAnyData ? (
+              {filteredGrid && filteredGrid.scenarios.length === 0 ? (
+                <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-xs font-mono text-amber-700 dark:text-amber-400">
+                  ⚠ No saved mission matches the selected Speed / Grid / Cell —
+                  this combination may not have been run yet.
+                </p>
+              ) : !hasAnyData ? (
                 <p className="text-xs font-mono text-muted-foreground border border-dashed border-border rounded px-4 py-3">
                   No data for this selection. Try different overlay values.
                 </p>
@@ -894,16 +1098,41 @@ export default function ModelPage() {
 
           {/* ── Parameter-combination table ───────────────────────────────── */}
           <div className="flex flex-col gap-3">
-            <div>
-              <h2
-                className="text-xs font-semibold tracking-widest uppercase text-primary font-display"
-                style={{ fontFamily: "var(--font-display)" }}
-              >
-                ALL PARAMETER COMBINATIONS
-              </h2>
-              <p className="text-xs text-muted-foreground font-mono mt-0.5">
-                Click a row to load that combination in the explorer above.
-              </p>
+            <div className="flex items-end justify-between gap-3">
+              <div>
+                <h2
+                  className="text-xs font-semibold tracking-widest uppercase text-primary font-display"
+                  style={{ fontFamily: "var(--font-display)" }}
+                >
+                  ALL PARAMETER COMBINATIONS
+                </h2>
+                <p className="text-xs text-muted-foreground font-mono mt-0.5">
+                  Click a row to load that combination in the explorer above.
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
+                  Export
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={exportCombinationsCsv}
+                  disabled={!grid || grid.scenarios.length === 0}
+                  className="h-7 text-xs tracking-widest font-mono"
+                >
+                  CSV
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={exportCombinationsXlsx}
+                  disabled={!grid || grid.scenarios.length === 0}
+                  className="h-7 text-xs tracking-widest font-mono"
+                >
+                  XLSX
+                </Button>
+              </div>
             </div>
 
             <div className="rounded border border-border overflow-hidden">
@@ -936,7 +1165,7 @@ export default function ModelPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {grid.scenarios.map((s) => (
+                  {(filteredGrid ?? grid).scenarios.map((s) => (
                     <TableRow
                       key={s.scenario}
                       onClick={() => selectCombination(s.scenario)}
@@ -958,7 +1187,7 @@ export default function ModelPage() {
                         {s.number_of_drones}
                       </TableCell>
                       <TableCell className="font-mono text-xs">
-                        {s.comm_range}
+                        {s.comm_range != null ? commLabel(s.comm_range) : "—"}
                       </TableCell>
                       <TableCell className="font-mono text-xs tabular-nums">
                         {s.n_visits ?? "—"}

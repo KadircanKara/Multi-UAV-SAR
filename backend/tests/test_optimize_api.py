@@ -120,6 +120,46 @@ def test_constraint_values_validated(client):
     assert client.post("/api/optimize/check", json=_cfg(max_mission_time=None, min_connectivity=None)).status_code == 200
 
 
+def test_max_mean_tbv_constraint_validated(client):
+    assert client.post("/api/optimize/check", json=_cfg(max_mean_tbv=0)).status_code == 422
+    assert client.post("/api/optimize/check", json=_cfg(max_mean_tbv=40)).status_code == 200
+    # Omitted / null disables the constraint (the default).
+    assert client.post("/api/optimize/check", json=_cfg(max_mean_tbv=None)).status_code == 200
+
+
+def test_max_mean_tbv_added_to_model_constraints():
+    """A TBV ceiling adds the 'Max Mean TBV Ceiling' inequality constraint to G,
+    and the registered fn is feasible (<=0) iff Max Mean TBV <= the threshold."""
+    from app.optimizer_service import resolve_model
+    from PathFuncDict import model_metric_info
+
+    _key, model = resolve_model(
+        "MOO", "NSGA2", ["Mission Time", "Percentage Connectivity"],
+        max_mission_time=None, min_connectivity=None, max_mean_tbv=40.0)
+    assert "Max Mean TBV Ceiling" in model["G"]
+    assert "Max Mean TBV Ceiling" in model_metric_info["Constraints"]
+
+    fn = model_metric_info["Constraints"]["Max Mean TBV Ceiling"]
+
+    class _Info:
+        max_mean_tbv_constraint = 40.0
+
+    sol = type("S", (), {})()
+    sol.info = _Info()
+    sol.max_mean_tbv = 30.0
+    assert fn(sol) <= 0  # 30 <= 40 → feasible
+    sol.max_mean_tbv = 55.0
+    assert fn(sol) > 0   # 55 > 40 → infeasible
+
+
+def test_max_mean_tbv_omitted_leaves_g_without_it():
+    from app.optimizer_service import resolve_model
+    _key, model = resolve_model(
+        "MOO", "NSGA2", ["Mission Time", "Percentage Connectivity"],
+        max_mission_time=None, min_connectivity=None, max_mean_tbv=None)
+    assert "Max Mean TBV Ceiling" not in model["G"]
+
+
 def test_unknown_run_id_404(client):
     assert client.get("/api/optimize/nope").status_code == 404
 

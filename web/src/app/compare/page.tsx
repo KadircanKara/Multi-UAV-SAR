@@ -8,17 +8,19 @@
  *   • Time Metrics — sensing-replay time metrics from POST /api/comparison/time
  *                    (run on demand against a shared sensing config + strategy).
  *
- * Each tab offers a Bar | Line | Radar | Table chart-type switcher. Bar/Radar/
- * Table go through the shared MetricComparisonView; Line renders one
- * ParameterEffectChart per objective/metric with ONE SERIES PER MODEL (so ≥2
- * models ⇒ ≥2 lines), built by the pure buildModelSeries helper.
+ * Each tab offers a Bar | Line | Radar | Table chart-type switcher. Bar renders
+ * one CompareStackedBarChart per objective/metric (x = parameter combination,
+ * stacked by model); Line renders one ParameterEffectChart per objective/metric
+ * with one line per (model × non-swept-param combo), built by buildModelComboSeries;
+ * Radar/Table go through the shared MetricComparisonView. Stat is always "best".
  *
  * Mirrors the model page's dynamic chart import + skeleton/offline patterns and
- * the MergingTab sensing-config layout. Colors come only from the chart
- * components / theme tokens; all interactive controls use mono/uppercase labels.
+ * the MergingTab sensing-config layout. Uses the clean Geist-Sans styling of the
+ * landing/optimize pages (sentence-case labels, hud-rise entrance); colors come
+ * only from the chart components / theme tokens.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -26,7 +28,6 @@ import { getLibrary, compareObjectives, compareTimeMetrics } from "@/lib/api";
 import type {
   ScenarioSummary,
   ComparisonResponse,
-  ComparisonScenario,
   TimeComparisonResponse,
   SensingConfig,
 } from "@/lib/types";
@@ -38,10 +39,16 @@ import MetricComparisonView, {
   type CompareEntity,
 } from "@/components/compare/MetricComparisonView";
 import {
-  buildModelSeries,
+  buildModelComboSeries,
   type ModelSeriesRow,
   type SweepParam,
 } from "@/components/compare/buildModelSeries";
+import {
+  buildStackedBars,
+  type StackedScenarioRow,
+  type StackedBarData,
+} from "@/components/compare/buildStackedBars";
+import type { CompareStackedBarChartProps } from "@/components/viz/CompareStackedBarChart";
 import type {
   ParameterEffectChartProps,
   EffectSeries,
@@ -70,6 +77,11 @@ const ParameterEffectChart = dynamic<ParameterEffectChartProps>(
   { ssr: false, loading: () => <ChartSkeleton /> }
 );
 
+const CompareStackedBarChart = dynamic<CompareStackedBarChartProps>(
+  () => import("@/components/viz/CompareStackedBarChart"),
+  { ssr: false, loading: () => <ChartSkeleton /> }
+);
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 type ChartType = "bar" | "line" | "radar" | "table";
@@ -81,15 +93,42 @@ const SWEEP_LABELS: Record<SweepParam, string> = {
   n_visits: "n_visits",
 };
 
-// Backend caps each comparison request at 24 scenarios; cap the request here so
-// a large selection degrades gracefully (compare the first 24) instead of 422-ing.
-const MAX_COMPARE = 24;
+// Max model-scenario results per comparison (each is one bar segment). Objectives
+// read cached fronts, so a larger batch is cheap; the time tab runs a sensing
+// replay per scenario, so it stays smaller. Both match their backend max_length.
+const MAX_OBJ_SCENARIOS = 48;
+const MAX_TIME_SCENARIOS = 24;
 
-function OverflowNote({ total }: { total: number }) {
+// Parameter-combination key (drones · comm · n_visits) parsed from a scenario name
+// "..._n_{drones}_v_{speed}_r_{comm}_nvisits_{nv}" — one bar on the x-axis.
+function comboKeyFromName(scenario: string): string {
+  const m = /_n_(\d+)_v_[\d.]+_r_(.+?)_nvisits_(\d+)$/.exec(scenario);
+  return m ? `${m[1]}|${m[2]}|${m[3]}` : scenario;
+}
+
+// Cap the batch by WHOLE parameter combos (all their models), so every shown bar
+// is a complete stack rather than a partial one cut off by a flat slice.
+function capByCombos(scenarios: string[], maxScenarios: number): string[] {
+  const groups = new Map<string, string[]>();
+  for (const s of scenarios) {
+    const k = comboKeyFromName(s);
+    const g = groups.get(k);
+    if (g) g.push(s);
+    else groups.set(k, [s]);
+  }
+  const out: string[] = [];
+  for (const g of Array.from(groups.values())) {
+    if (out.length > 0 && out.length + g.length > maxScenarios) break;
+    out.push(...g);
+  }
+  return out;
+}
+
+function OverflowNote({ shown, total }: { shown: number; total: number }) {
   return (
     <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-      Comparing the first {MAX_COMPARE} of {total} selected combinations — narrow
-      your model/parameter selection to include them all.
+      Showing {shown} of {total} selected model-scenario results — narrow the
+      parameter selection (fewer values) to include them all.
     </p>
   );
 }
@@ -113,9 +152,9 @@ function PageSkeleton() {
 
 function OfflinePanel({ message }: { message: string }) {
   return (
-    <div className="rounded border border-destructive bg-destructive/10 px-4 py-4 font-mono">
-      <p className="text-sm font-semibold tracking-widest text-destructive uppercase">
-        BACKEND OFFLINE
+    <div className="rounded border border-destructive bg-destructive/10 px-4 py-4">
+      <p className="text-sm font-semibold text-destructive">
+        Backend offline
       </p>
       <p className="text-sm text-muted-foreground mt-1">
         Start the API on :8000 then reload.
@@ -162,17 +201,17 @@ function ChartTypeSwitch({
       }}
       className="justify-start gap-2"
     >
-      <ToggleGroupItem value="bar" className="h-7 px-3 text-xs font-mono tracking-widest uppercase">
-        BAR
+      <ToggleGroupItem value="bar" className="h-7 px-3 text-xs">
+        Bar
       </ToggleGroupItem>
-      <ToggleGroupItem value="line" className="h-7 px-3 text-xs font-mono tracking-widest uppercase">
-        LINE
+      <ToggleGroupItem value="line" className="h-7 px-3 text-xs">
+        Line
       </ToggleGroupItem>
-      <ToggleGroupItem value="radar" className="h-7 px-3 text-xs font-mono tracking-widest uppercase">
-        RADAR
+      <ToggleGroupItem value="radar" className="h-7 px-3 text-xs">
+        Radar
       </ToggleGroupItem>
-      <ToggleGroupItem value="table" className="h-7 px-3 text-xs font-mono tracking-widest uppercase">
-        TABLE
+      <ToggleGroupItem value="table" className="h-7 px-3 text-xs">
+        Table
       </ToggleGroupItem>
     </ToggleGroup>
   );
@@ -188,21 +227,21 @@ function SweepParamSelect({
 }) {
   return (
     <div className="flex items-center gap-2">
-      <span className="text-xs font-mono tracking-widest text-muted-foreground uppercase">
+      <span className="text-xs text-muted-foreground">
         Sweep parameter
       </span>
       <Select value={value} onValueChange={(v) => onChange(v as SweepParam)}>
-        <SelectTrigger className="h-7 w-40 text-xs font-mono">
+        <SelectTrigger className="h-7 w-40 text-xs">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="drones" className="text-xs font-mono">
+          <SelectItem value="drones" className="text-xs">
             Drones
           </SelectItem>
-          <SelectItem value="comm_range" className="text-xs font-mono">
+          <SelectItem value="comm_range" className="text-xs">
             Comm Range
           </SelectItem>
-          <SelectItem value="n_visits" className="text-xs font-mono">
+          <SelectItem value="n_visits" className="text-xs">
             n_visits
           </SelectItem>
         </SelectContent>
@@ -211,12 +250,31 @@ function SweepParamSelect({
   );
 }
 
-function LineMinModelsHint() {
+// Max Mean TBV is undefined at n_visits = 1 (no interval between visits); mirror
+// the model page and show this where the TBV chart would otherwise be.
+const TBV_NA_MESSAGE =
+  "Max Mean TBV is undefined at n_visits = 1 — there is no interval between " +
+  "visits. Increase n_visits to compare it.";
+
+// A titled placeholder shown in a chart slot (no data, or metric not applicable).
+function ChartEmptyNote({ title, message }: { title: string; message: string }) {
   return (
-    <p className="text-xs font-mono text-muted-foreground border border-dashed border-border rounded px-4 py-3">
-      Select at least two models for a line comparison.
-    </p>
+    <div className="flex flex-col gap-1">
+      <p className="text-xs font-medium text-foreground">{title}</p>
+      <p className="text-xs text-muted-foreground border border-dashed border-border rounded px-3 py-6 text-center">
+        {message}
+      </p>
+    </div>
   );
+}
+
+// True when the only selected n_visits value is 1 (so Max Mean TBV has no data).
+function onlyNVisits1(nVisits: string[]): boolean {
+  return nVisits.length > 0 && nVisits.every((v) => v === "1");
+}
+
+function isTbvName(name: string): boolean {
+  return name.includes("TBV");
 }
 
 function SliderField({
@@ -237,10 +295,10 @@ function SliderField({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex justify-between">
-        <Label className="text-xs text-muted-foreground tracking-widest uppercase font-mono">
+        <Label className="text-xs text-muted-foreground">
           {label}
         </Label>
-        <span className="text-xs font-mono tabular-nums text-primary">
+        <span className="text-xs tabular-nums text-primary">
           {value.toFixed(2)}
         </span>
       </div>
@@ -263,16 +321,21 @@ interface ObjectivesTabProps {
 
 function ObjectivesTab({ selection }: ObjectivesTabProps) {
   const { scenarios: allScenarios, models } = selection;
-  // Cap the request at the backend limit; degrade gracefully past it.
-  const scenarios = useMemo(() => allScenarios.slice(0, MAX_COMPARE), [allScenarios]);
-  const overflow = allScenarios.length > MAX_COMPARE;
+  const nVisitsSel = selection.sweepable.n_visits;
+  // Cap by whole combos so bars stay complete; objectives read cached fronts.
+  const scenarios = useMemo(
+    () => capByCombos(allScenarios, MAX_OBJ_SCENARIOS),
+    [allScenarios]
+  );
+  const overflow = allScenarios.length > scenarios.length;
 
   const [data, setData] = useState<ComparisonResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [chartType, setChartType] = useState<ChartType>("bar");
-  const [statKey, setStatKey] = useState<StatKey>("best");
+  // Stat is always "best" (the Stat selector was removed).
+  const statKey: StatKey = "best";
   const [sweep, setSweep] = useState<SweepParam>("drones");
 
   // Fetch the comparison whenever the resolved scenario set changes (debounced).
@@ -341,7 +404,8 @@ function ObjectivesTab({ selection }: ObjectivesTabProps) {
     return out;
   }, [data]);
 
-  // Line view: one ParameterEffectChart per objective, one series per model.
+  // Line view: one chart per objective; one line per (model × non-swept combo),
+  // mirroring the model page's overlays across the selected models.
   const lineSeriesByObjective = useMemo<Record<string, EffectSeries[]>>(() => {
     if (!data) return {};
     const out: Record<string, EffectSeries[]> = {};
@@ -355,14 +419,33 @@ function ObjectivesTab({ selection }: ObjectivesTabProps) {
         n_visits: s.n_visits,
         value: s.objective_stats[o]?.[statKey] ?? null,
       }));
-      out[o] = buildModelSeries(rows, sweep, polarity);
+      out[o] = buildModelComboSeries(rows, sweep, polarity);
     }
     return out;
   }, [data, statKey, sweep]);
 
+  // Stacked-bar view: one chart per objective, x = parameter combination,
+  // stacked by model.
+  const stackedByObjective = useMemo<Record<string, StackedBarData>>(() => {
+    if (!data) return {};
+    const out: Record<string, StackedBarData> = {};
+    for (const o of data.objectives) {
+      const rows: StackedScenarioRow[] = data.scenarios.map((s) => ({
+        model_key: s.model_key,
+        number_of_drones: s.number_of_drones,
+        comm_range: s.comm_range,
+        comm_range_value: s.comm_range_value,
+        n_visits: s.n_visits,
+        value: s.objective_stats[o]?.[statKey] ?? null,
+      }));
+      out[o] = buildStackedBars(rows, models);
+    }
+    return out;
+  }, [data, statKey, models]);
+
   if (scenarios.length === 0) {
     return (
-      <p className="text-xs font-mono text-muted-foreground border border-dashed border-border rounded px-4 py-3">
+      <p className="text-xs text-muted-foreground border border-dashed border-border rounded px-4 py-3">
         No scenarios selected. Pick models and parameters above.
       </p>
     );
@@ -373,77 +456,75 @@ function ObjectivesTab({ selection }: ObjectivesTabProps) {
       {/* Controls */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <ChartTypeSwitch value={chartType} onChange={setChartType} />
-        {chartType !== "line" ? (
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-mono tracking-widest text-muted-foreground uppercase">
-              Stat
-            </span>
-            <ToggleGroup
-              type="single"
-              value={statKey}
-              onValueChange={(v) => {
-                if (v === "best" || v === "mean" || v === "min" || v === "max")
-                  setStatKey(v);
-              }}
-              className="justify-start gap-2"
-            >
-              {(["best", "mean", "min", "max"] as StatKey[]).map((k) => (
-                <ToggleGroupItem
-                  key={k}
-                  value={k}
-                  className="h-7 px-3 text-xs font-mono tracking-widest uppercase"
-                >
-                  {k}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-          </div>
-        ) : (
+        {chartType === "line" && (
           <SweepParamSelect value={sweep} onChange={setSweep} />
         )}
       </div>
 
-      {overflow && <OverflowNote total={allScenarios.length} />}
+      {overflow && <OverflowNote shown={scenarios.length} total={allScenarios.length} />}
       {error && <OfflinePanel message={error} />}
       {loading && !error && <Skeleton className="h-64 w-full rounded" />}
 
       {!loading && !error && data && (
         <>
           {chartType === "line" ? (
-            models.length < 2 ? (
-              <LineMinModelsHint />
-            ) : (
-              <div className="grid gap-6 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-                {data.objectives.map((o, idx) => {
-                  const series = (lineSeriesByObjective[o] ?? []).filter(
-                    (s) => s.points.length > 0
-                  );
-                  if (series.length === 0) {
-                    return (
-                      <div key={o} className="flex flex-col gap-1">
-                        <p className="text-xs font-mono tracking-widest uppercase text-foreground">
-                          {o}
-                        </p>
-                        <p className="text-xs font-mono text-muted-foreground border border-dashed border-border rounded px-3 py-6 text-center">
-                          No data for the current selection.
-                        </p>
-                      </div>
-                    );
-                  }
+            <div className="grid gap-6 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+              {data.objectives.map((o, idx) => {
+                if (isTbvName(o) && onlyNVisits1(nVisitsSel)) {
+                  return <ChartEmptyNote key={o} title={o} message={TBV_NA_MESSAGE} />;
+                }
+                const series = (lineSeriesByObjective[o] ?? []).filter(
+                  (s) => s.points.length > 0
+                );
+                if (series.length === 0) {
                   return (
-                    <ParameterEffectChart
+                    <ChartEmptyNote
                       key={o}
-                      objective={o}
-                      polarity={data.polarities[o] ?? 1}
-                      sweepLabel={SWEEP_LABELS[sweep]}
-                      series={series}
-                      colorIndex={idx}
-                      heightClass="h-60"
+                      title={o}
+                      message="No data for the current selection."
                     />
                   );
-                })}
-              </div>
-            )
+                }
+                return (
+                  <ParameterEffectChart
+                    key={o}
+                    objective={o}
+                    polarity={data.polarities[o] ?? 1}
+                    sweepLabel={SWEEP_LABELS[sweep]}
+                    series={series}
+                    colorIndex={idx}
+                    heightClass="h-60"
+                  />
+                );
+              })}
+            </div>
+          ) : chartType === "bar" ? (
+            <div className="grid gap-6 grid-cols-1 md:grid-cols-2">
+              {data.objectives.map((o) => {
+                if (isTbvName(o) && onlyNVisits1(nVisitsSel)) {
+                  return <ChartEmptyNote key={o} title={o} message={TBV_NA_MESSAGE} />;
+                }
+                const sb = stackedByObjective[o];
+                if (!sb || sb.models.length === 0 || sb.rows.length === 0) {
+                  return (
+                    <ChartEmptyNote
+                      key={o}
+                      title={o}
+                      message="No data for the current selection."
+                    />
+                  );
+                }
+                return (
+                  <CompareStackedBarChart
+                    key={o}
+                    metric={o}
+                    polarity={data.polarities[o] ?? 1}
+                    rows={sb.rows}
+                    models={sb.models}
+                  />
+                );
+              })}
+            </div>
           ) : (
             <MetricComparisonView
               metrics={metrics}
@@ -454,7 +535,7 @@ function ObjectivesTab({ selection }: ObjectivesTabProps) {
           )}
 
           {data.skipped.length > 0 && (
-            <p className="text-xs font-mono text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Skipped {data.skipped.length} scenario
               {data.skipped.length !== 1 ? "s" : ""} (no loadable data).
             </p>
@@ -485,9 +566,12 @@ interface TimeMetricsTabProps {
 
 function TimeMetricsTab({ selection }: TimeMetricsTabProps) {
   const { scenarios: allScenarios, models } = selection;
-  // Cap the request at the backend limit; degrade gracefully past it.
-  const scenarios = useMemo(() => allScenarios.slice(0, MAX_COMPARE), [allScenarios]);
-  const overflow = allScenarios.length > MAX_COMPARE;
+  // Cap by whole combos; the time tab runs one sensing replay per scenario.
+  const scenarios = useMemo(
+    () => capByCombos(allScenarios, MAX_TIME_SCENARIOS),
+    [allScenarios]
+  );
+  const overflow = allScenarios.length > scenarios.length;
 
   // Sensing config (mirrors MergingTab).
   const [mergeTopology, setMergeTopology] = useState<
@@ -595,29 +679,43 @@ function TimeMetricsTab({ selection }: TimeMetricsTabProps) {
         value: s.metric_values[m] ?? null,
       }));
       // Time metrics are all lower-is-better (polarity 1).
-      out[m] = buildModelSeries(rows, sweep, 1);
+      out[m] = buildModelComboSeries(rows, sweep, 1);
     }
     return out;
   }, [data, sweep]);
+
+  // Stacked-bar view: one chart per metric, x = parameter combination,
+  // stacked by model.
+  const stackedByMetric = useMemo<Record<string, StackedBarData>>(() => {
+    if (!data) return {};
+    const out: Record<string, StackedBarData> = {};
+    for (const m of data.metrics) {
+      const rows: StackedScenarioRow[] = data.scenarios.map((s) => ({
+        model_key: s.model_key,
+        number_of_drones: s.number_of_drones,
+        comm_range: s.comm_range,
+        comm_range_value: s.comm_range_value,
+        n_visits: s.n_visits,
+        value: s.metric_values[m] ?? null,
+      }));
+      out[m] = buildStackedBars(rows, models);
+    }
+    return out;
+  }, [data, models]);
 
   return (
     <div className="flex flex-col gap-6">
       {/* Sensing config + strategy card */}
       <Card>
         <CardHeader>
-          <CardTitle
-            className="text-xs font-semibold tracking-widest uppercase text-primary font-display"
-            style={{ fontFamily: "var(--font-display)" }}
-          >
-            SENSING CONFIG
-          </CardTitle>
+          <CardTitle>Sensing config</CardTitle>
         </CardHeader>
         <CardContent className="grid grid-cols-1 gap-5 md:grid-cols-2">
           {/* Left column: topology + time model + strategy */}
           <div className="flex flex-col gap-5">
             <div className="flex flex-col gap-2">
-              <Label className="text-xs text-muted-foreground tracking-widest uppercase font-mono">
-                MERGE TOPOLOGY
+              <Label className="text-xs text-muted-foreground">
+                Merge topology
               </Label>
               <ToggleGroup
                 type="single"
@@ -632,7 +730,7 @@ function TimeMetricsTab({ selection }: TimeMetricsTabProps) {
                   <ToggleGroupItem
                     key={t}
                     value={t}
-                    className="h-7 text-xs font-mono tracking-widest uppercase"
+                    className="h-7 text-xs capitalize"
                   >
                     {t}
                   </ToggleGroupItem>
@@ -641,8 +739,8 @@ function TimeMetricsTab({ selection }: TimeMetricsTabProps) {
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label className="text-xs text-muted-foreground tracking-widest uppercase font-mono">
-                TIME MODEL
+              <Label className="text-xs text-muted-foreground">
+                Time model
               </Label>
               <ToggleGroup
                 type="single"
@@ -652,35 +750,29 @@ function TimeMetricsTab({ selection }: TimeMetricsTabProps) {
                 }}
                 className="justify-start gap-2"
               >
-                <ToggleGroupItem
-                  value="discrete"
-                  className="h-7 text-xs font-mono tracking-widest uppercase"
-                >
-                  DISCRETE
+                <ToggleGroupItem value="discrete" className="h-7 text-xs">
+                  Discrete
                 </ToggleGroupItem>
-                <ToggleGroupItem
-                  value="realtime"
-                  className="h-7 text-xs font-mono tracking-widest uppercase"
-                >
-                  REALTIME
+                <ToggleGroupItem value="realtime" className="h-7 text-xs">
+                  Realtime
                 </ToggleGroupItem>
               </ToggleGroup>
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label className="text-xs text-muted-foreground tracking-widest uppercase font-mono">
-                STRATEGY
+              <Label className="text-xs text-muted-foreground">
+                Strategy
               </Label>
               <Select
                 value={strategy}
                 onValueChange={(v) => setStrategy(v as Strategy)}
               >
-                <SelectTrigger className="h-7 w-40 text-xs font-mono">
+                <SelectTrigger className="h-7 w-40 text-xs capitalize">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   {STRATEGIES.map((s) => (
-                    <SelectItem key={s} value={s} className="text-xs font-mono">
+                    <SelectItem key={s} value={s} className="text-xs capitalize">
                       {s}
                     </SelectItem>
                   ))}
@@ -688,16 +780,12 @@ function TimeMetricsTab({ selection }: TimeMetricsTabProps) {
               </Select>
               {strategy === "best" && (
                 <Select value={objectiveName} onValueChange={setObjectiveName}>
-                  <SelectTrigger className="h-7 w-full text-xs font-mono">
+                  <SelectTrigger className="h-7 w-full text-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {OBJECTIVE_NAMES.map((o) => (
-                      <SelectItem
-                        key={o}
-                        value={o}
-                        className="text-xs font-mono"
-                      >
+                      <SelectItem key={o} value={o} className="text-xs">
                         {o}
                       </SelectItem>
                     ))}
@@ -710,7 +798,7 @@ function TimeMetricsTab({ selection }: TimeMetricsTabProps) {
           {/* Right column: sliders + targets */}
           <div className="flex flex-col gap-5">
             <SliderField
-              label="DETECTION PROB (p)"
+              label="Detection prob (p)"
               value={detProb}
               onChange={setDetProb}
               min={0.01}
@@ -718,7 +806,7 @@ function TimeMetricsTab({ selection }: TimeMetricsTabProps) {
               step={0.01}
             />
             <SliderField
-              label="FALSE ALARM PROB (q)"
+              label="False alarm prob (q)"
               value={faProb}
               onChange={setFaProb}
               min={0.01}
@@ -726,12 +814,12 @@ function TimeMetricsTab({ selection }: TimeMetricsTabProps) {
               step={0.01}
             />
             {pqInvalid && (
-              <p className="text-xs text-destructive font-mono">
-                ⚠ REQUIRES p &gt; q — adjust sliders
+              <p className="text-xs text-destructive">
+                ⚠ Requires p &gt; q — adjust sliders
               </p>
             )}
             <SliderField
-              label="BELIEF THRESHOLD (B)"
+              label="Belief threshold (B)"
               value={beliefThresh}
               onChange={setBeliefThresh}
               min={0.01}
@@ -739,18 +827,18 @@ function TimeMetricsTab({ selection }: TimeMetricsTabProps) {
               step={0.01}
             />
             <div className="flex flex-col gap-2">
-              <Label className="text-xs text-muted-foreground tracking-widest uppercase font-mono">
-                TARGET CELLS (COMMA-SEPARATED)
+              <Label className="text-xs text-muted-foreground">
+                Target cells (comma-separated)
               </Label>
               <Input
                 value={targetsInput}
                 onChange={(e) => setTargetsInput(e.target.value)}
                 placeholder="e.g. 12,34,56"
-                className="h-7 text-xs font-mono"
+                className="h-7 text-xs"
               />
               {targetList.length === 0 && (
-                <p className="text-xs text-destructive font-mono">
-                  ENTER AT LEAST ONE VALID CELL INDEX
+                <p className="text-xs text-destructive">
+                  Enter at least one valid cell index
                 </p>
               )}
             </div>
@@ -762,16 +850,15 @@ function TimeMetricsTab({ selection }: TimeMetricsTabProps) {
               onClick={runComparison}
               disabled={!canRun}
               size="sm"
-              className="w-full text-xs tracking-widest font-mono font-semibold"
+              className="w-full text-sm font-semibold"
             >
-              {running ? "RUNNING REPLAYS…" : "RUN COMPARISON"}
+              {running ? "Running replays…" : "Run comparison"}
             </Button>
-            <p className="text-xs text-muted-foreground font-mono">
-              RUNS ONE REPLAY PER SCENARIO ({scenarios.length} SELECTED) USING THE
-              {" "}
-              {strategy.toUpperCase()} SOLUTION.
+            <p className="text-xs text-muted-foreground">
+              Runs one replay per scenario ({scenarios.length} selected) using the{" "}
+              {strategy} solution.
             </p>
-            {overflow && <OverflowNote total={allScenarios.length} />}
+            {overflow && <OverflowNote shown={scenarios.length} total={allScenarios.length} />}
           </div>
         </CardContent>
       </Card>
@@ -784,7 +871,7 @@ function TimeMetricsTab({ selection }: TimeMetricsTabProps) {
       )}
 
       {!running && !data && (
-        <p className="text-xs font-mono text-muted-foreground border border-dashed border-border rounded px-4 py-6 text-center">
+        <p className="text-xs text-muted-foreground border border-dashed border-border rounded px-4 py-6 text-center">
           Configure the sensing parameters and run the comparison to see time
           metrics.
         </p>
@@ -800,40 +887,57 @@ function TimeMetricsTab({ selection }: TimeMetricsTabProps) {
           </div>
 
           {chartType === "line" ? (
-            models.length < 2 ? (
-              <LineMinModelsHint />
-            ) : (
-              <div className="grid gap-6 grid-cols-1 md:grid-cols-2">
-                {data.metrics.map((m, idx) => {
-                  const series = (lineSeriesByMetric[m] ?? []).filter(
-                    (s) => s.points.length > 0
-                  );
-                  if (series.length === 0) {
-                    return (
-                      <div key={m} className="flex flex-col gap-1">
-                        <p className="text-xs font-mono tracking-widest uppercase text-foreground">
-                          {m}
-                        </p>
-                        <p className="text-xs font-mono text-muted-foreground border border-dashed border-border rounded px-3 py-6 text-center">
-                          No data for the current selection.
-                        </p>
-                      </div>
-                    );
-                  }
+            <div className="grid gap-6 grid-cols-1 md:grid-cols-2">
+              {data.metrics.map((m, idx) => {
+                const series = (lineSeriesByMetric[m] ?? []).filter(
+                  (s) => s.points.length > 0
+                );
+                if (series.length === 0) {
                   return (
-                    <ParameterEffectChart
+                    <ChartEmptyNote
                       key={m}
-                      objective={m}
-                      polarity={1}
-                      sweepLabel={SWEEP_LABELS[sweep]}
-                      series={series}
-                      colorIndex={idx}
-                      heightClass="h-60"
+                      title={m}
+                      message="No data for the current selection."
                     />
                   );
-                })}
-              </div>
-            )
+                }
+                return (
+                  <ParameterEffectChart
+                    key={m}
+                    objective={m}
+                    polarity={1}
+                    sweepLabel={SWEEP_LABELS[sweep]}
+                    series={series}
+                    colorIndex={idx}
+                    heightClass="h-60"
+                  />
+                );
+              })}
+            </div>
+          ) : chartType === "bar" ? (
+            <div className="grid gap-6 grid-cols-1 md:grid-cols-2">
+              {data.metrics.map((m) => {
+                const sb = stackedByMetric[m];
+                if (!sb || sb.models.length === 0 || sb.rows.length === 0) {
+                  return (
+                    <ChartEmptyNote
+                      key={m}
+                      title={m}
+                      message="No data for the current selection."
+                    />
+                  );
+                }
+                return (
+                  <CompareStackedBarChart
+                    key={m}
+                    metric={m}
+                    polarity={1}
+                    rows={sb.rows}
+                    models={sb.models}
+                  />
+                );
+              })}
+            </div>
           ) : (
             <MetricComparisonView
               metrics={metrics}
@@ -843,7 +947,7 @@ function TimeMetricsTab({ selection }: TimeMetricsTabProps) {
           )}
 
           {data.skipped.length > 0 && (
-            <p className="text-xs font-mono text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Skipped {data.skipped.length} scenario
               {data.skipped.length !== 1 ? "s" : ""} (no loadable data).
             </p>
@@ -900,21 +1004,25 @@ export default function ComparePage() {
       {/* Back link */}
       <Link
         href="/missions"
-        className="inline-flex items-center gap-1 text-xs font-mono tracking-widest text-muted-foreground hover:text-primary transition-colors uppercase"
+        className="animate-hud-rise inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        style={{ animationDelay: "0ms" }}
       >
-        ← MISSIONS
+        ← Missions
       </Link>
 
       {/* Header */}
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-1.5">
         <h1
-          className="text-lg font-semibold tracking-widest uppercase text-primary"
-          style={{ fontFamily: "var(--font-display)" }}
+          className="animate-hud-rise text-2xl font-bold tracking-tight text-foreground"
+          style={{ animationDelay: "60ms" }}
         >
-          MODEL COMPARISON
+          Model Comparison
         </h1>
-        <p className="text-xs tracking-wide text-muted-foreground">
-          COMPARE OPTIMISER MODELS ACROSS OBJECTIVES AND SENSING TIME METRICS
+        <p
+          className="animate-hud-rise text-[15px] leading-relaxed text-muted-foreground"
+          style={{ animationDelay: "120ms" }}
+        >
+          Compare optimiser models across objectives and sensing time-metrics.
         </p>
       </div>
 
@@ -927,18 +1035,12 @@ export default function ComparePage() {
           <ModelScenarioPicker library={library} onChange={onPickerChange} />
 
           <Tabs defaultValue="objectives" className="w-full">
-            <TabsList className="mb-4 font-mono text-xs tracking-widest">
-              <TabsTrigger
-                value="objectives"
-                className="text-xs font-mono tracking-widest uppercase"
-              >
-                OBJECTIVES
+            <TabsList className="mb-4">
+              <TabsTrigger value="objectives" className="text-sm">
+                Objectives
               </TabsTrigger>
-              <TabsTrigger
-                value="time"
-                className="text-xs font-mono tracking-widest uppercase"
-              >
-                TIME METRICS
+              <TabsTrigger value="time" className="text-sm">
+                Time metrics
               </TabsTrigger>
             </TabsList>
 

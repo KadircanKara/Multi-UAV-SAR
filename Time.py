@@ -23,6 +23,16 @@ def isCoordinateDiscrete(x, y, sol: PathSolution, atol=None):
 def max_tbv_as_constraint(sol:PathSolution):
     return sol.max_mean_tbv - 40
 
+def max_mean_tbv_constraint(sol:PathSolution):
+    # User-set ceiling (e.g. from the interactive optimizer) overrides the legacy
+    # hardcoded cap when present on the info object. Feasible iff <= 0, i.e. the
+    # solution's Max Mean TBV does not exceed the threshold. Max Mean TBV is 0 at
+    # n_visits == 1 (undefined there), so the ceiling is then trivially satisfied.
+    thr = getattr(sol.info, "max_mean_tbv_constraint", None)
+    if thr is not None:
+        return sol.max_mean_tbv - thr
+    return sol.max_mean_tbv - 40
+
 def get_max_mean_tbv(sol:PathSolution):
     return sol.max_mean_tbv
 

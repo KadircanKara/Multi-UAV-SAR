@@ -156,7 +156,7 @@ export default function SolutionSelectorPanel({
           <SectionLabel>BEST OBJECTIVE</SectionLabel>
           <div className="flex gap-2">
             <Select value={bestObj} onValueChange={setBestObj}>
-              <SelectTrigger className="h-7 flex-1 text-xs font-mono">
+              <SelectTrigger className="h-7 min-w-0 flex-1 text-xs font-mono">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -189,6 +189,7 @@ export default function SolutionSelectorPanel({
             variant="outline"
             disabled={loading}
             onClick={() => runSelect("balanced")}
+            title="The most even compromise — the front solution closest to the centre of all objectives (each normalised 0–1)."
             className="w-full text-xs tracking-widest font-mono"
           >
             BALANCED
@@ -205,6 +206,7 @@ export default function SolutionSelectorPanel({
             variant="outline"
             disabled={loading}
             onClick={() => runSelect("knee")}
+            title="The knee of the Pareto front — the best bang-for-buck trade-off, where improving any objective further would cost a disproportionate sacrifice in another."
             className="w-full text-xs tracking-widest font-mono"
           >
             KNEE

@@ -250,9 +250,12 @@ class ModelGrid(BaseModel):
 # ---------------------------------------------------------------------------
 
 class ComparisonRequest(BaseModel):
-    """Body for POST /api/comparison — the scenarios to compare."""
+    """Body for POST /api/comparison — the scenarios to compare.
 
-    scenarios: list[str] = Field(..., min_length=1, max_length=24)
+    Objective stats are read from each scenario's (cached) front, so this is much
+    cheaper than the sensing-replay time comparison and allows a larger batch."""
+
+    scenarios: list[str] = Field(..., min_length=1, max_length=48)
 
 
 class ComparisonScenario(BaseModel):
@@ -345,6 +348,9 @@ class OptimizeConfig(BaseModel):
     # not exposed here. mission_time is in seconds; connectivity is a fraction.
     max_mission_time: Optional[float] = Field(default=3600.0)
     min_connectivity: Optional[float] = Field(default=0.5)
+    # Max Mean TBV ceiling (seconds); None = disabled. Only meaningful at
+    # n_visits >= 2 (Max Mean TBV is 0 at n_visits == 1, so the ceiling no-ops).
+    max_mean_tbv: Optional[float] = Field(default=None)
     # Generation strategy. "fixed" runs exactly n_gen generations; "max" treats
     # n_gen as a cap and stops early once the feasible objective optima converge
     # (no objective improves by >= early_stop_threshold for early_stop_patience
@@ -365,6 +371,8 @@ class OptimizeConfig(BaseModel):
             raise ValueError("max_mission_time must be > 0")
         if self.min_connectivity is not None and not (0.0 <= self.min_connectivity <= 1.0):
             raise ValueError("min_connectivity must be between 0 and 1")
+        if self.max_mean_tbv is not None and self.max_mean_tbv <= 0:
+            raise ValueError("max_mean_tbv must be > 0")
         if t == "SOO" and m not in ("GA", "WS"):
             raise ValueError("SOO method must be 'GA' or 'WS'")
         if t == "MOO":

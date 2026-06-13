@@ -106,27 +106,32 @@ type GenStrategy = "fixed" | "max";
 // Early-stop tuning (Max Generations) — defaults match the backend.
 const ES_PATIENCE_DEFAULT = 10; // generations without meaningful improvement → stop
 const ES_THRESH_PCT_DEFAULT = 10; // % improvement that counts as progress
-const GEN_STRATEGY_HELP =
-  "Fixed Generations runs the full number of generations for the most refined, " +
-  "absolute objective-optimal solutions. Max Generations treats it as a cap and " +
-  "stops early once no objective improves by ≥10% for several generations — " +
-  "faster, but you may lose some middle-ground solutions. Choose Fixed when the " +
-  "absolute best objective values matter most.";
 
 // Constraint defaults (the speed-violation constraint is always applied).
 const MMT_DEFAULT = 3600; // max mission time (seconds)
 const MIN_CONN_DEFAULT = 0.5; // min percentage connectivity (fraction)
+const TBV_CEIL_DEFAULT = 40; // max mean TBV ceiling (seconds)
 
-function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+function Toggle({
+  on,
+  onChange,
+  disabled,
+}: {
+  on: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+}) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={on}
-      onClick={() => onChange(!on)}
+      disabled={disabled}
+      onClick={() => !disabled && onChange(!on)}
       className={cn(
         "inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors",
-        on ? "bg-foreground" : "bg-muted"
+        on ? "bg-foreground" : "bg-muted",
+        disabled && "cursor-not-allowed opacity-40"
       )}
     >
       <span
@@ -195,12 +200,14 @@ interface RunParams {
   scenario: ScenarioConfig;
   maxMissionTime: number | null;
   minConnectivity: number | null;
+  maxMeanTbv: number | null;
 }
 
 function constraintsSummary(p: RunParams): string {
   const extra: string[] = [];
   if (p.maxMissionTime != null) extra.push(`max time ${p.maxMissionTime}s`);
   if (p.minConnectivity != null) extra.push(`min conn ${p.minConnectivity}`);
+  if (p.maxMeanTbv != null) extra.push(`max TBV ${p.maxMeanTbv}s`);
   return extra.length ? `speed · ${extra.join(" · ")}` : "speed only";
 }
 
@@ -437,10 +444,12 @@ export default function OptimizePage() {
     useState(ES_THRESH_PCT_DEFAULT);
 
   // Constraints (speed-violation is always applied; these two are configurable)
-  const [mmtEnabled, setMmtEnabled] = useState(true);
+  const [mmtEnabled, setMmtEnabled] = useState(false);
   const [mmtValue, setMmtValue] = useState(MMT_DEFAULT);
-  const [minConnEnabled, setMinConnEnabled] = useState(true);
+  const [minConnEnabled, setMinConnEnabled] = useState(false);
   const [minConnValue, setMinConnValue] = useState(MIN_CONN_DEFAULT);
+  const [tbvCeilEnabled, setTbvCeilEnabled] = useState(false);
+  const [tbvCeilValue, setTbvCeilValue] = useState(TBV_CEIL_DEFAULT);
   const [seed, setSeed] = useState(SEED_DEFAULT);
 
   // Scenario
@@ -609,6 +618,12 @@ export default function OptimizePage() {
   const minConnOk =
     !minConnEnabled ||
     (Number.isFinite(minConnValue) && minConnValue >= 0 && minConnValue <= 1);
+  // Max Mean TBV is 0 (undefined) at n_visits == 1, so the ceiling can't bind
+  // there — lock the toggle off until n_visits ≥ 2.
+  const tbvLocked = scenario != null && scenario.n_visits < 2;
+  const tbvActive = tbvCeilEnabled && !tbvLocked;
+  const tbvCeilOk =
+    !tbvActive || (Number.isFinite(tbvCeilValue) && tbvCeilValue > 0);
 
   const earlyStopOk =
     genStrategy !== "max" ||
@@ -624,6 +639,7 @@ export default function OptimizePage() {
     weightsOk &&
     mmtOk &&
     minConnOk &&
+    tbvCeilOk &&
     earlyStopOk &&
     !running;
 
@@ -640,6 +656,7 @@ export default function OptimizePage() {
       seed,
       max_mission_time: mmtEnabled ? mmtValue : null,
       min_connectivity: minConnEnabled ? minConnValue : null,
+      max_mean_tbv: tbvCeilEnabled && scenario.n_visits >= 2 ? tbvCeilValue : null,
       gen_strategy: genStrategy,
       // Only send the tuning when Max mode is active; otherwise the backend
       // applies its defaults (and a cleared field can't 422 a Fixed run).
@@ -667,21 +684,47 @@ export default function OptimizePage() {
     mmtValue,
     minConnEnabled,
     minConnValue,
+    tbvCeilEnabled,
+    tbvCeilValue,
     genStrategy,
     earlyStopPatience,
     earlyStopThresholdPct,
   ]);
 
+  // Existence depends ONLY on the model identity (type · method · objectives) and
+  // the scenario params — NOT on pop size, generations, seed, constraints, or the
+  // generation strategy. This payload is memoised on just those fields so the
+  // pre-check fires only when something that could change the answer changes.
+  // (Weights don't affect the model key/scenario name, so equal weights are used
+  // for the WS validity gate — tweaking weight values won't re-trigger the check.)
+  const checkConfig: OptimizeConfig | null = useMemo(() => {
+    if (!scenario) return null;
+    return {
+      optimization_type: optType,
+      method,
+      objectives: selected,
+      weights: needsWeights(optType, method) ? equalWeights(selected) : null,
+      pop_size: POP_DEFAULT,
+      n_gen: NGEN_DEFAULT,
+      seed: SEED_DEFAULT,
+      max_mission_time: null,
+      min_connectivity: null,
+      max_mean_tbv: null,
+      gen_strategy: "fixed",
+      scenario: { ...scenario, target_positions: [0] },
+    };
+  }, [scenario, optType, method, selected]);
+
   // ── Debounced duplicate pre-check (guarded against stale responses). ──
   const checkTokenRef = useRef<symbol | null>(null);
   useEffect(() => {
     setDuplicate(null);
-    if (!config || !selectionOk || !weightsOk) return;
+    if (!checkConfig || !selectionOk || !weightsOk) return;
     let cancelled = false;
     const token = Symbol("check");
     checkTokenRef.current = token;
     const handle = setTimeout(() => {
-      checkOptimize(config)
+      checkOptimize(checkConfig)
         .then((res) => {
           if (cancelled || checkTokenRef.current !== token) return;
           if (res.exists) setDuplicate({ scenario_name: res.scenario_name });
@@ -696,7 +739,7 @@ export default function OptimizePage() {
       clearTimeout(handle);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config, selectionOk, weightsOk]);
+  }, [checkConfig, selectionOk, weightsOk]);
 
   // ── Run + poll. ──
   function stopPolling() {
@@ -825,6 +868,7 @@ export default function OptimizePage() {
       scenario: config.scenario,
       maxMissionTime: mmtEnabled ? mmtValue : null,
       minConnectivity: minConnEnabled ? minConnValue : null,
+      maxMeanTbv: tbvActive ? tbvCeilValue : null,
     };
     setRunParams(snapshot);
     try {
@@ -948,28 +992,23 @@ export default function OptimizePage() {
                   }
                 />
               </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Configure below, then run — results render at the bottom.
-              </p>
-            )}
+            ) : duplicate && !running ? (
+              <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-lg border border-chart-1/30 bg-chart-1/5 px-3 py-1.5">
+                <span className="shrink truncate text-sm text-foreground">
+                  A run for this model and parameter combination already exists.
+                </span>
+                <span className="hidden min-w-0 shrink truncate font-mono text-[11px] text-muted-foreground lg:inline">
+                  {duplicate.scenario_name}
+                </span>
+                <Link
+                  href={`/explore/${encodeURIComponent(duplicate.scenario_name)}`}
+                  className="ml-auto shrink-0 whitespace-nowrap text-sm font-medium text-chart-1 hover:underline"
+                >
+                  Open it →
+                </Link>
+              </div>
+            ) : null}
           </div>
-          {duplicate && !running && (
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-chart-1/30 bg-chart-1/5 px-3 py-2">
-              <p className="text-sm text-foreground">
-                A run for this model and parameter combination already exists.
-              </p>
-              <span className="break-all font-mono text-[11px] text-muted-foreground">
-                {duplicate.scenario_name}
-              </span>
-              <Link
-                href={`/explore/${encodeURIComponent(duplicate.scenario_name)}`}
-                className="text-sm font-medium text-chart-1 hover:underline"
-              >
-                Open it →
-              </Link>
-            </div>
-          )}
         </div>
 
         {/* ── Body: live progress while running, else the config grid ── */}
@@ -1037,8 +1076,8 @@ export default function OptimizePage() {
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3 xl:items-start">
-            {/* Optimization (type · method · objectives) — spans columns 2-3 */}
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+            {/* Optimization (type · method · objectives) — row 1, col 1 */}
             <Card className="xl:col-start-1 xl:row-start-1">
               <CardContent className="flex flex-col gap-6 pt-6">
             {/* Optimisation type */}
@@ -1198,12 +1237,15 @@ export default function OptimizePage() {
               </CardContent>
             </Card>
 
-            {/* Algorithm parameters (pop · gen · seed) — row 2, column 1 */}
-            <Card className="xl:col-start-1 xl:row-start-2">
+            {/* Algorithm parameters (pop · gen · seed · generation strategy) — row 2, full width */}
+            <Card className="xl:col-start-1 xl:col-span-3 xl:row-start-2">
               <CardHeader>
                 <CardTitle>Algorithm parameters</CardTitle>
               </CardHeader>
-              <CardContent className="flex flex-col gap-6">
+              <CardContent>
+                <div className="grid gap-x-8 gap-y-6 xl:grid-cols-2">
+                  {/* Left: population · generations · seed */}
+                  <div className="flex flex-col gap-6">
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-3">
                     <Label className="text-sm text-muted-foreground">
@@ -1289,16 +1331,39 @@ export default function OptimizePage() {
                     className="h-8 w-24 text-right tabular-nums"
                   />
                 </div>
-              </CardContent>
-            </Card>
+                  </div>
 
-            {/* Optimizer settings (generation strategy + early-stop) — row 2, cols 2-3 */}
-            <Card className="xl:col-start-2 xl:col-span-2 xl:row-start-2">
-              <CardHeader>
-                <CardTitle>Optimizer settings</CardTitle>
-                <CardDescription>{GEN_STRATEGY_HELP}</CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-4">
+                  {/* Right: generation strategy — merged from the former Optimizer settings card */}
+                  <div className="flex flex-col gap-4 xl:border-l xl:border-border xl:pl-8">
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <SectionLabel>Generation strategy</SectionLabel>
+                        <span className="rounded-full border border-chart-1/40 bg-chart-1/10 px-2 py-0.5 text-[11px] font-medium text-chart-1">
+                          Recommended: Fixed Generations
+                        </span>
+                      </div>
+                      <div className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+                        <p>
+                          <span className="font-medium text-foreground">
+                            Fixed Generations:
+                          </span>{" "}
+                          Runs the full number of generations for the most
+                          refined, absolute objective-optimal solutions.
+                        </p>
+                        <p>
+                          <span className="font-medium text-foreground">
+                            Max Generations:
+                          </span>{" "}
+                          Stops early once no objective improves by a factor for
+                          several generations — faster, but you may lose some
+                          middle-ground solutions.
+                        </p>
+                        <p>
+                          Choose Fixed when the absolute best objective values
+                          matter most.
+                        </p>
+                      </div>
+                    </div>
                 <ToggleGroup
                   type="single"
                   value={genStrategy}
@@ -1376,11 +1441,13 @@ export default function OptimizePage() {
                     </div>
                   </div>
                 )}
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
-            {/* Constraints */}
-            <Card className="xl:col-start-3 xl:row-start-1">
+            {/* Constraints — row 1, col 3 */}
+            <Card className="flex flex-col xl:col-start-3 xl:row-start-1">
               <CardHeader>
                 <CardTitle>Constraints</CardTitle>
                 <CardDescription>
@@ -1388,24 +1455,12 @@ export default function OptimizePage() {
                   constraints usually need more generations to converge.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="flex flex-col gap-4">
+              <CardContent className="flex flex-1 flex-col justify-between gap-4">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex flex-col">
-                    <span className="text-sm text-foreground">Speed feasibility</span>
+                    <span className="text-sm text-foreground">Mission Time Ceiling</span>
                     <span className="text-xs text-muted-foreground">
-                      Always applied — required for drone path interpolation.
-                    </span>
-                  </div>
-                  <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
-                    Required
-                  </span>
-                </div>
-                <Separator />
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex flex-col">
-                    <span className="text-sm text-foreground">Max mission time</span>
-                    <span className="text-xs text-muted-foreground">
-                      Mission time must not exceed this (seconds).
+                      Mission time ≤ this (seconds).
                     </span>
                   </div>
                   <div className="flex items-center gap-3">
@@ -1423,7 +1478,7 @@ export default function OptimizePage() {
                             Number.isFinite(v) && v > 0 ? v : MMT_DEFAULT
                           )
                         }
-                        className="h-9 w-28 tabular-nums"
+                        className="h-9 w-20 text-right tabular-nums"
                       />
                     )}
                     <Toggle on={mmtEnabled} onChange={setMmtEnabled} />
@@ -1431,9 +1486,9 @@ export default function OptimizePage() {
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex flex-col">
-                    <span className="text-sm text-foreground">Min connectivity</span>
+                    <span className="text-sm text-foreground">Connectivity Floor</span>
                     <span className="text-xs text-muted-foreground">
-                      Connectivity must be at least this (0–1).
+                      Connectivity ≥ this (0–1).
                     </span>
                   </div>
                   <div className="flex items-center gap-3">
@@ -1455,17 +1510,51 @@ export default function OptimizePage() {
                               : MIN_CONN_DEFAULT
                           )
                         }
-                        className="h-9 w-28 tabular-nums"
+                        className="h-9 w-20 text-right tabular-nums"
                       />
                     )}
                     <Toggle on={minConnEnabled} onChange={setMinConnEnabled} />
                   </div>
                 </div>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-col">
+                    <span className="text-sm text-foreground">Max Mean TBV Ceiling</span>
+                    <span className="text-xs text-muted-foreground">
+                      {tbvLocked
+                        ? "Needs n_visits ≥ 2 (TBV is 0 at n_visits = 1)."
+                        : "Max Mean TBV ≤ this (seconds)."}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {tbvActive && (
+                      <Input
+                        type="number"
+                        min={1}
+                        value={tbvCeilValue}
+                        onChange={(e) => {
+                          const n = Number(e.target.value);
+                          if (!Number.isNaN(n)) setTbvCeilValue(n);
+                        }}
+                        onBlur={() =>
+                          setTbvCeilValue((v) =>
+                            Number.isFinite(v) && v > 0 ? v : TBV_CEIL_DEFAULT
+                          )
+                        }
+                        className="h-9 w-20 text-right tabular-nums"
+                      />
+                    )}
+                    <Toggle
+                      on={tbvActive}
+                      onChange={setTbvCeilEnabled}
+                      disabled={tbvLocked}
+                    />
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
-            {/* Scenario */}
-            <Card className="xl:col-start-2 xl:row-start-1">
+            {/* Scenario — row 1, col 2 */}
+            <Card className="flex flex-col xl:col-start-2 xl:row-start-1">
               <CardHeader>
                 <CardTitle>Scenario</CardTitle>
                 <CardDescription>
@@ -1475,8 +1564,8 @@ export default function OptimizePage() {
                 </CardDescription>
               </CardHeader>
               {scenario && (
-                <CardContent className="flex flex-col gap-4">
-                  <div className="grid grid-cols-2 gap-4">
+                <CardContent className="flex flex-1 flex-col gap-4">
+                  <div className="grid flex-1 grid-cols-2 content-between gap-4">
                     {/* number_of_drones */}
                     <div className="flex flex-col gap-1.5">
                       <Label className="text-xs text-muted-foreground">
@@ -1573,7 +1662,7 @@ export default function OptimizePage() {
                               );
                           }}
                           placeholder="metres"
-                          className="h-9 tabular-nums"
+                          className="h-9 w-24 tabular-nums"
                         />
                       ) : null}
                       <p className="text-[11px] tabular-nums text-muted-foreground">
@@ -1584,7 +1673,7 @@ export default function OptimizePage() {
                     {/* max_drone_speed */}
                     <div className="flex flex-col gap-1.5">
                       <Label className="text-xs text-muted-foreground">
-                        Max drone speed
+                        Max drone speed (m/s)
                       </Label>
                       <Input
                         type="number"
@@ -1618,7 +1707,7 @@ export default function OptimizePage() {
                     {/* cell_side_length */}
                     <div className="flex flex-col gap-1.5">
                       <Label className="text-xs text-muted-foreground">
-                        Cell side length
+                        Cell side length (m)
                       </Label>
                       <Input
                         type="number"

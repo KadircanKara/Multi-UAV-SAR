@@ -18,9 +18,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { ScenarioSummary } from "@/lib/types";
+import { commCellValue, commLabel } from "@/lib/comm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { cn } from "@/lib/utils";
 
 // ─── Emitted selection shape ──────────────────────────────────────────────────
 
@@ -66,15 +66,17 @@ function droneOptions(scenarios: ScenarioSummary[]): { value: string; label: str
   return vals.map((d) => ({ value: String(d), label: String(d) }));
 }
 
-// Distinct comm-range labels, ordered by their numeric cell value when known
-// (falls back to lexical). Comm range is a string key (e.g. "sqrt(8)").
+// Distinct comm-range options, ordered smallest→largest by cell value and
+// labelled in cell form (e.g. "2 cells · 100 m", "2 diagonal cells · 141 m").
 function commOptions(scenarios: ScenarioSummary[]): { value: string; label: string }[] {
+  const cellSide =
+    scenarios.find((s) => s.cell_side_length != null)?.cell_side_length ?? 50;
   const vals = Array.from(
     new Set(
       scenarios.map((s) => s.comm_range).filter((c): c is string => c != null)
     )
-  ).sort((a, b) => a.localeCompare(b));
-  return vals.map((c) => ({ value: c, label: c }));
+  ).sort((a, b) => commCellValue(a) - commCellValue(b));
+  return vals.map((c) => ({ value: c, label: commLabel(c, cellSide) }));
 }
 
 // Distinct n_visits values (variant === "nvisits"), sorted numerically.
@@ -85,13 +87,41 @@ function nVisitsOptions(scenarios: ScenarioSummary[]): { value: string; label: s
   return vals.map((v) => ({ value: String(v), label: String(v) }));
 }
 
-// Resolve the scenario set for the active selection.
+// Distinct max-drone-speed values (m/s), sorted numerically.
+function speedOptions(scenarios: ScenarioSummary[]): { value: string; label: string }[] {
+  const vals = Array.from(
+    new Set(scenarios.map((s) => s.max_drone_speed).filter((v): v is number => v != null))
+  ).sort((a, b) => a - b);
+  return vals.map((v) => ({ value: String(v), label: `${v} m/s` }));
+}
+
+// Distinct grid sizes (N → an N×N grid), sorted numerically.
+function gridOptions(scenarios: ScenarioSummary[]): { value: string; label: string }[] {
+  const vals = Array.from(
+    new Set(scenarios.map((s) => s.grid_size).filter((v): v is number => v != null))
+  ).sort((a, b) => a - b);
+  return vals.map((v) => ({ value: String(v), label: `${v} × ${v}` }));
+}
+
+// Distinct cell side lengths (m), sorted numerically.
+function cellOptions(scenarios: ScenarioSummary[]): { value: string; label: string }[] {
+  const vals = Array.from(
+    new Set(scenarios.map((s) => s.cell_side_length).filter((v): v is number => v != null))
+  ).sort((a, b) => a - b);
+  return vals.map((v) => ({ value: String(v), label: `${v} m` }));
+}
+
+// Resolve the scenario set for the active selection. The extra params (speed /
+// grid / cell) are lenient: a scenario missing the field isn't filtered out.
 function resolveScenarios(
   library: ScenarioSummary[],
   models: Set<string>,
   drones: Set<string>,
   comm: Set<string>,
-  nvisits: Set<string>
+  nvisits: Set<string>,
+  speed: Set<string>,
+  grid: Set<string>,
+  cell: Set<string>
 ): string[] {
   return library
     .filter((s) => models.has(s.model_key))
@@ -101,6 +131,18 @@ function resolveScenarios(
       const nv = nVisitsOf(s);
       return nv != null && nvisits.has(String(nv));
     })
+    .filter((s) => s.max_drone_speed == null || speed.has(String(s.max_drone_speed)))
+    .filter((s) => s.grid_size == null || grid.has(String(s.grid_size)))
+    .filter((s) => s.cell_side_length == null || cell.has(String(s.cell_side_length)))
+    // Order by parameter combo (drones · comm · n_visits) then model so a
+    // combo-aware cap downstream keeps whole stacks (and smallest combos first).
+    .sort(
+      (a, b) =>
+        (a.number_of_drones ?? 0) - (b.number_of_drones ?? 0) ||
+        commCellValue(a.comm_range ?? "") - commCellValue(b.comm_range ?? "") ||
+        (nVisitsOf(a) ?? 0) - (nVisitsOf(b) ?? 0) ||
+        a.model_key.localeCompare(b.model_key)
+    )
     .map((s) => s.scenario);
 }
 
@@ -111,31 +153,44 @@ interface ChipRowProps {
   options: { value: string; label: string }[];
   value: string[];
   onChange: (values: string[]) => void;
+  /** Single-select (one value); used for speed/grid/cell which are scenario-
+   *  defining params, not comparison dimensions. */
+  single?: boolean;
 }
 
-function ChipRow({ label, options, value, onChange }: ChipRowProps) {
+function ChipRow({ label, options, value, onChange, single }: ChipRowProps) {
   if (options.length === 0) return null;
+  const items = options.map((o) => (
+    <ToggleGroupItem key={o.value} value={o.value} className="h-7 px-2.5 text-xs">
+      {o.label}
+    </ToggleGroupItem>
+  ));
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="w-16 shrink-0 text-xs font-mono tracking-widest text-muted-foreground uppercase">
+      <span className="w-16 shrink-0 text-xs text-muted-foreground">
         {label}
       </span>
-      <ToggleGroup
-        type="multiple"
-        value={value}
-        onValueChange={onChange}
-        className="flex-wrap justify-start gap-1"
-      >
-        {options.map((o) => (
-          <ToggleGroupItem
-            key={o.value}
-            value={o.value}
-            className="h-7 px-2.5 text-xs font-mono"
-          >
-            {o.label}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
+      {single ? (
+        <ToggleGroup
+          type="single"
+          value={value[0] ?? ""}
+          onValueChange={(v: string) => {
+            if (v) onChange([v]); // ignore deselect of the only value
+          }}
+          className="flex-wrap justify-start gap-1"
+        >
+          {items}
+        </ToggleGroup>
+      ) : (
+        <ToggleGroup
+          type="multiple"
+          value={value}
+          onValueChange={(v: string[]) => onChange(v)}
+          className="flex-wrap justify-start gap-1"
+        >
+          {items}
+        </ToggleGroup>
+      )}
     </div>
   );
 }
@@ -150,18 +205,21 @@ export default function ModelScenarioPicker({ library, onChange }: Props) {
   const [selDrones, setSelDrones] = useState<string[]>([]);
   const [selComm, setSelComm] = useState<string[]>([]);
   const [selNVisits, setSelNVisits] = useState<string[]>([]);
+  const [selSpeed, setSelSpeed] = useState<string[]>([]);
+  const [selGrid, setSelGrid] = useState<string[]>([]);
+  const [selCell, setSelCell] = useState<string[]>([]);
   const [seeded, setSeeded] = useState(false);
 
-  // Scenarios belonging to the currently-selected models (drives the param
-  // chip options as the UNION across those models).
-  const modelScenarios = useMemo(() => {
-    const set = new Set(selModels);
-    return library.filter((s) => set.has(s.model_key));
-  }, [library, selModels]);
-
-  const droneOpts = useMemo(() => droneOptions(modelScenarios), [modelScenarios]);
-  const commOpts = useMemo(() => commOptions(modelScenarios), [modelScenarios]);
-  const nVisitsOpts = useMemo(() => nVisitsOptions(modelScenarios), [modelScenarios]);
+  // Param chip options are derived from the FULL library (union across every
+  // model), not just the selected models, so every value (e.g. Comm 4, which
+  // only some models have data for) is always offerable. A combination a given
+  // model lacks simply resolves to no scenario for it.
+  const droneOpts = useMemo(() => droneOptions(library), [library]);
+  const commOpts = useMemo(() => commOptions(library), [library]);
+  const nVisitsOpts = useMemo(() => nVisitsOptions(library), [library]);
+  const speedOpts = useMemo(() => speedOptions(library), [library]);
+  const gridOpts = useMemo(() => gridOptions(library), [library]);
+  const cellOpts = useMemo(() => cellOptions(library), [library]);
 
   // Seed a sensible non-empty default once the library is available: first two
   // models, smallest drones, first comm, n_visits=2 if present else first.
@@ -181,6 +239,14 @@ export default function ModelScenarioPicker({ library, onChange }: Props) {
     setSelDrones(dOpts[0] ? [dOpts[0].value] : []);
     setSelComm(cOpts[0] ? [cOpts[0].value] : []);
     setSelNVisits(nDefault ? [nDefault] : []);
+    // Speed / grid / cell are scenario-defining params (single-select); default
+    // to the first present value each.
+    const spOpts = speedOptions(library);
+    const grOpts = gridOptions(library);
+    const ceOpts = cellOptions(library);
+    setSelSpeed(spOpts[0] ? [spOpts[0].value] : []);
+    setSelGrid(grOpts[0] ? [grOpts[0].value] : []);
+    setSelCell(ceOpts[0] ? [ceOpts[0].value] : []);
     setSeeded(true);
   }, [seeded, allModels, library]);
 
@@ -207,7 +273,23 @@ export default function ModelScenarioPicker({ library, onChange }: Props) {
       if (kept.length > 0) return kept.length === prev.length ? prev : kept;
       return nVisitsOpts[0] ? [nVisitsOpts[0].value] : [];
     });
-  }, [seeded, droneOpts, commOpts, nVisitsOpts]);
+
+    const spSet = new Set(speedOpts.map((o) => o.value));
+    const grSet = new Set(gridOpts.map((o) => o.value));
+    const ceSet = new Set(cellOpts.map((o) => o.value));
+    // Single-select filters: keep the one valid value, else fall back to first.
+    const keepOne = (
+      prev: string[],
+      set: Set<string>,
+      opts: { value: string }[]
+    ): string[] => {
+      if (prev[0] && set.has(prev[0])) return prev.length === 1 ? prev : [prev[0]];
+      return opts[0] ? [opts[0].value] : [];
+    };
+    setSelSpeed((prev) => keepOne(prev, spSet, speedOpts));
+    setSelGrid((prev) => keepOne(prev, grSet, gridOpts));
+    setSelCell((prev) => keepOne(prev, ceSet, cellOpts));
+  }, [seeded, droneOpts, commOpts, nVisitsOpts, speedOpts, gridOpts, cellOpts]);
 
   // Resolve + emit on any change.
   const resolved = useMemo(
@@ -217,9 +299,12 @@ export default function ModelScenarioPicker({ library, onChange }: Props) {
         new Set(selModels),
         new Set(selDrones),
         new Set(selComm),
-        new Set(selNVisits)
+        new Set(selNVisits),
+        new Set(selSpeed),
+        new Set(selGrid),
+        new Set(selCell)
       ),
-    [library, selModels, selDrones, selComm, selNVisits]
+    [library, selModels, selDrones, selComm, selNVisits, selSpeed, selGrid, selCell]
   );
 
   useEffect(() => {
@@ -249,12 +334,7 @@ export default function ModelScenarioPicker({ library, onChange }: Props) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle
-          className="text-xs font-semibold tracking-widest uppercase text-primary font-display"
-          style={{ fontFamily: "var(--font-display)" }}
-        >
-          SELECT MODELS &amp; PARAMETERS
-        </CardTitle>
+        <CardTitle>Select models &amp; parameters</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <ChipRow
@@ -281,14 +361,35 @@ export default function ModelScenarioPicker({ library, onChange }: Props) {
           value={selNVisits}
           onChange={guardDim(setSelNVisits)}
         />
+        <ChipRow
+          single
+          label="Speed"
+          options={speedOpts}
+          value={selSpeed}
+          onChange={setSelSpeed}
+        />
+        <ChipRow
+          single
+          label="Grid"
+          options={gridOpts}
+          value={selGrid}
+          onChange={setSelGrid}
+        />
+        <ChipRow
+          single
+          label="Cell"
+          options={cellOpts}
+          value={selCell}
+          onChange={setSelCell}
+        />
 
         {resolved.length === 0 ? (
-          <p className="text-xs font-mono text-muted-foreground border border-dashed border-border rounded px-4 py-3">
-            No scenarios match this selection. Try different models or parameter
-            values.
+          <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-700 dark:text-amber-400">
+            ⚠ No saved mission matches the selected parameters. This combination
+            may not have been run yet — adjust the models or parameter values.
           </p>
         ) : (
-          <p className="text-xs font-mono text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             <span className="text-foreground tabular-nums">{resolved.length}</span>{" "}
             scenario{resolved.length !== 1 ? "s" : ""} resolved across{" "}
             <span className="text-foreground tabular-nums">{selModels.length}</span>{" "}

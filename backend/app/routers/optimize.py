@@ -41,7 +41,7 @@ def post_optimize_check(body: OptimizeConfig) -> dict:
     return check_config(
         body.optimization_type, body.method, body.objectives,
         body.weights, body.scenario.to_scenario_dict(),
-        body.max_mission_time, body.min_connectivity,
+        body.max_mission_time, body.min_connectivity, body.max_mean_tbv,
     )
 
 
@@ -52,7 +52,7 @@ def post_optimize(body: OptimizeConfig) -> dict:
         return start_run(
             body.optimization_type, body.method, body.objectives, body.weights,
             body.pop_size, body.n_gen, body.seed, body.scenario.to_scenario_dict(),
-            body.max_mission_time, body.min_connectivity,
+            body.max_mission_time, body.min_connectivity, body.max_mean_tbv,
             body.gen_strategy, body.early_stop_patience, body.early_stop_threshold,
         )
     except RunInProgressError as exc:

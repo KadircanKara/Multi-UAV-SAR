@@ -122,6 +122,7 @@ def run_optimization(
     polarities: dict,
     max_mission_time=None,
     min_connectivity=None,
+    max_mean_tbv=None,
     gen_strategy: str = "fixed",
     early_stop_patience: int = 10,
     early_stop_threshold: float = 0.10,
@@ -223,6 +224,8 @@ def run_optimization(
         info.max_mission_time_constraint = float(max_mission_time)
     if min_connectivity is not None:
         info.min_connectivity_constraint = float(min_connectivity)
+    if max_mean_tbv is not None:
+        info.max_mean_tbv_constraint = float(max_mean_tbv)
 
     algorithm = _build_algorithm(alg, pop_size, len(model_dict["F"]), seed, operators)
 

@@ -111,3 +111,77 @@ export function buildModelSeries(
   series.sort((a, b) => a.key.localeCompare(b.key));
   return series;
 }
+
+// The two non-swept parameter coordinates of a row, as a compact descriptor
+// (e.g. sweep=n_visits ⇒ "4d·r2"). Empty string when both are missing.
+function comboParts(row: ModelSeriesRow, sweep: SweepParam): string {
+  const parts: string[] = [];
+  if (sweep !== "drones" && row.number_of_drones != null)
+    parts.push(`${row.number_of_drones}d`);
+  if (sweep !== "comm_range" && row.comm_range != null)
+    parts.push(`r${row.comm_range}`);
+  if (sweep !== "n_visits" && row.n_visits != null)
+    parts.push(`v${row.n_visits}`);
+  return parts.join("·");
+}
+
+/**
+ * Like buildModelSeries, but emits ONE line per (model × non-swept-param combo)
+ * — mirroring the model page's parameter-effect overlays, extended across the
+ * selected models. Sweeping one param keeps the other two as separate lines, so
+ * toggling Drones/Comm/n_visits in the picker adds/removes lines live.
+ */
+export function buildModelComboSeries(
+  rows: ModelSeriesRow[],
+  sweep: SweepParam,
+  polarity: number
+): EffectSeries[] {
+  const byGroup = new Map<
+    string,
+    { label: string; xMap: Map<string, { xNum: number; best: number | null }> }
+  >();
+
+  for (const row of rows) {
+    if (!sweepHasValue(row, sweep)) continue;
+    const parts = comboParts(row, sweep);
+    const groupKey = parts ? `${row.model_key}|${parts}` : row.model_key;
+    let group = byGroup.get(groupKey);
+    if (!group) {
+      group = {
+        label: parts ? `${row.model_key} · ${parts}` : row.model_key,
+        xMap: new Map(),
+      };
+      byGroup.set(groupKey, group);
+    }
+    const xLabel = sweepLabel(row, sweep);
+    const xNum = sweepNum(row, sweep);
+    const prev = group.xMap.get(xLabel);
+    const value = row.value;
+    if (!prev) {
+      group.xMap.set(xLabel, { xNum, best: value ?? null });
+      continue;
+    }
+    if (value == null) continue;
+    if (prev.best == null) {
+      prev.best = value;
+      continue;
+    }
+    prev.best = polarity === -1 ? Math.max(prev.best, value) : Math.min(prev.best, value);
+  }
+
+  const series: EffectSeries[] = [];
+  for (const [key, group] of Array.from(byGroup.entries())) {
+    const points: EffectPoint[] = Array.from(group.xMap.entries())
+      .map(([xLabel, agg]): EffectPoint => ({
+        xLabel,
+        xNum: agg.xNum,
+        best: agg.best,
+        min: null,
+        max: null,
+      }))
+      .sort((a, b) => a.xNum - b.xNum);
+    series.push({ key, label: group.label, points });
+  }
+  series.sort((a, b) => a.label.localeCompare(b.label));
+  return series;
+}
