@@ -171,7 +171,9 @@ def _exists(scenario_name: str) -> bool:
 def read_run_config(scenario_name: str) -> Optional[dict]:
     """Return the persisted RunConfig sidecar for a mission, or None if absent."""
     path = os.path.join(settings.RESULTS_ROOT, "Metadata", f"{scenario_name}.json")
-    if not os.path.isfile(path):
+    # Defence-in-depth: never read outside RESULTS_ROOT (mirrors library_service).
+    root = os.path.abspath(settings.RESULTS_ROOT) + os.sep
+    if not os.path.abspath(path).startswith(root) or not os.path.isfile(path):
         return None
     try:
         with open(path) as fh:
