@@ -9,7 +9,6 @@ import {
   strategyLabel,
   constraintList,
   weightsLabel,
-  sourceLabel,
 } from "@/components/missions/runConfigFields";
 
 interface Row {
@@ -53,7 +52,6 @@ export default function CompareRunDetails({ scenarios }: { scenarios: string[] }
           <thead className="bg-muted/40 text-muted-foreground">
             <tr>
               <th className="px-3 py-2 text-left font-medium">Mission</th>
-              <th className="px-3 py-2 text-left font-medium">Source</th>
               <th className="px-3 py-2 text-right font-medium">Pop</th>
               <th className="px-3 py-2 text-left font-medium">Generations</th>
               <th className="px-3 py-2 text-right font-medium">Seed</th>
@@ -67,7 +65,6 @@ export default function CompareRunDetails({ scenarios }: { scenarios: string[] }
                 <td className="px-3 py-2 font-mono text-[11px]">{scenario}</td>
                 {cfg ? (
                   <>
-                    <td className="px-3 py-2">{sourceLabel(cfg)}</td>
                     <td className="px-3 py-2 text-right">{cfg.pop_size}</td>
                     <td className="px-3 py-2">{strategyLabel(cfg)}</td>
                     <td className="px-3 py-2 text-right">{cfg.seed}</td>
@@ -75,7 +72,7 @@ export default function CompareRunDetails({ scenarios }: { scenarios: string[] }
                     <td className="px-3 py-2">{weightsLabel(cfg) ?? "—"}</td>
                   </>
                 ) : (
-                  <td className="px-3 py-2 text-muted-foreground" colSpan={6}>
+                  <td className="px-3 py-2 text-muted-foreground" colSpan={5}>
                     Not recorded
                   </td>
                 )}

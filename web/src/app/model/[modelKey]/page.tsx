@@ -1093,9 +1093,13 @@ export default function ModelPage() {
             </Card>
 
             {selName ? (
-              <ScenarioExplorer key={selName} scenario={selName} showTitle={false} />
+              <ScenarioExplorer
+                key={selName}
+                scenario={selName}
+                showTitle={false}
+                paretoFooter={<RunDetails scenario={selName} />}
+              />
             ) : null}
-            {selName ? <RunDetails scenario={selName} /> : null}
           </div>
 
           {/* ── Parameter-combination table ───────────────────────────────── */}

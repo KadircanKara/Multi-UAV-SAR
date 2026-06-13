@@ -11,7 +11,7 @@
  * combination fully remounts this subtree (resetting tab + per-tab state).
  */
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { toast } from "sonner";
 import { getFront, compare } from "@/lib/api";
@@ -506,12 +506,16 @@ interface Props {
   showTitle?: boolean;
   /** Notified once the front loads — lets a parent build a back-link, etc. */
   onFrontLoaded?: (front: ParetoFront) => void;
+  /** Optional content rendered inside the Pareto-front card, below the scatter
+   *  (e.g. the model route's read-only run-details). Omitted ⇒ nothing extra. */
+  paretoFooter?: ReactNode;
 }
 
 export default function ScenarioExplorer({
   scenario,
   showTitle = true,
   onFrontLoaded,
+  paretoFooter,
 }: Props) {
   const [front, setFront] = useState<ParetoFront | null>(null);
   const [loading, setLoading] = useState(true);
@@ -649,6 +653,7 @@ export default function ScenarioExplorer({
                   selectedIndex={selectedIndex}
                   onSelectIndex={handleSelectIndex}
                 />
+                {paretoFooter}
               </CardContent>
             </Card>
 
