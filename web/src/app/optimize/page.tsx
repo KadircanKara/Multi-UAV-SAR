@@ -461,6 +461,7 @@ export default function OptimizePage() {
   // Duplicate pre-check
   const [duplicate, setDuplicate] = useState<{
     scenario_name: string;
+    seeded: boolean;
   } | null>(null);
 
   // Run / poll state
@@ -727,7 +728,8 @@ export default function OptimizePage() {
       checkOptimize(checkConfig)
         .then((res) => {
           if (cancelled || checkTokenRef.current !== token) return;
-          if (res.exists) setDuplicate({ scenario_name: res.scenario_name });
+          if (res.exists)
+            setDuplicate({ scenario_name: res.scenario_name, seeded: res.seeded });
           else setDuplicate(null);
         })
         .catch(() => {
@@ -995,7 +997,9 @@ export default function OptimizePage() {
             ) : duplicate && !running ? (
               <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-lg border border-chart-1/30 bg-chart-1/5 px-3 py-1.5">
                 <span className="shrink truncate text-sm text-foreground">
-                  A run for this model and parameter combination already exists.
+                  {duplicate.seeded
+                    ? "A published (seeded) result for this mission already exists."
+                    : "A run for this model and parameter combination already exists."}
                 </span>
                 <span className="hidden min-w-0 shrink truncate font-mono text-[11px] text-muted-foreground lg:inline">
                   {duplicate.scenario_name}
@@ -1788,8 +1792,9 @@ export default function OptimizePage() {
             {overwritePrompt && (
               <div className="flex flex-col gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
                 <p className="text-sm text-foreground">
-                  A run for this model and parameter combination already exists in
-                  the mission browser. Overwrite it?
+                  {duplicate?.seeded
+                    ? "This mission is a published (seeded) result. Overwriting replaces the original published data for this mission. Continue?"
+                    : "A run for this model and parameter combination already exists in the mission browser. Overwrite it?"}
                 </p>
                 <p className="break-all font-mono text-[11px] text-muted-foreground">
                   {result.scenario}
