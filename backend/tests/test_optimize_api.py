@@ -347,11 +347,11 @@ def test_finished_run_recovers_from_disk_after_restart(client):
         models_registry._invalidate_cache()
 
 
-def test_save_cannot_overwrite_seeded_preset_scenario(client):
-    """A run that resolves to a PRESET model key must never overwrite an existing
-    (seeded) library scenario — the seeded pickles are irreplaceable thesis data.
-    Uses a fabricated preset-key scenario (r_9 is never seeded) so the test never
-    touches real seeds, even if the guard is missing."""
+def test_save_overwrites_existing_scenario_and_writes_sidecar(client):
+    """A finished run whose scenario already exists overwrites it on overwrite=True
+    (seeded missions included) and writes the RunConfig sidecar. A fabricated
+    preset-key scenario (r_9 is never seeded) keeps the test off real seed data."""
+    import json
     import os
     import shutil
     from concurrent.futures import Future
@@ -359,26 +359,28 @@ def test_save_cannot_overwrite_seeded_preset_scenario(client):
     import pandas as pd
     from app import optimizer_service, settings
 
-    # r_9 is not a seeded comm range; resolve_model_key -> preset "TC_MOO_NSGA2".
     scenario = "MOO_NSGA2_TC_g_8_a_50_n_4_v_2.5_r_9_nvisits_2"
     obj_dir = os.path.join(settings.RESULTS_ROOT, "Objectives")
     sol_dir = os.path.join(settings.RESULTS_ROOT, "Solutions")
-    os.makedirs(obj_dir, exist_ok=True)
-    os.makedirs(sol_dir, exist_ok=True)
-    seed_obj = os.path.join(obj_dir, f"{scenario}-ObjectiveValues.pkl")
-    seed_sol = os.path.join(sol_dir, f"{scenario}-SolutionObjects.pkl")
-    sentinel = pd.DataFrame({"Mission Time": [1.0], "Percentage Connectivity": [-0.5]})
-    pd.to_pickle(sentinel, seed_obj)
-    pd.to_pickle(["SEED_SENTINEL"], seed_sol)
+    meta_dir = os.path.join(settings.RESULTS_ROOT, "Metadata")
+    for d in (obj_dir, sol_dir):
+        os.makedirs(d, exist_ok=True)
+    existing_obj = os.path.join(obj_dir, f"{scenario}-ObjectiveValues.pkl")
+    existing_sol = os.path.join(sol_dir, f"{scenario}-SolutionObjects.pkl")
+    meta_dst = os.path.join(meta_dir, f"{scenario}.json")
+    pd.to_pickle(pd.DataFrame({"Mission Time": [1.0]}), existing_obj)
+    pd.to_pickle(["OLD"], existing_sol)
 
-    run_id = "preset_overwrite_test"
+    run_id = "overwrite_test1"
     run_dir = os.path.join(settings.RESULTS_ROOT, ".runs", run_id)
     os.makedirs(run_dir, exist_ok=True)
     pd.to_pickle(
         pd.DataFrame({"Mission Time": [9.0, 8.0], "Percentage Connectivity": [-0.1, -0.2]}),
         os.path.join(run_dir, "Objectives.pkl"),
     )
-    pd.to_pickle(["RUN_A", "RUN_B"], os.path.join(run_dir, "Solutions.pkl"))
+    pd.to_pickle(["NEW_A", "NEW_B"], os.path.join(run_dir, "Solutions.pkl"))
+    with open(os.path.join(run_dir, "config.json"), "w") as fh:
+        json.dump({"schema_version": 1, "source": "optimizer", "pop_size": 42}, fh)
 
     fut: Future = Future()
     fut.set_result({"n_solutions": 2, "solutions": []})
@@ -388,17 +390,31 @@ def test_save_cannot_overwrite_seeded_preset_scenario(client):
         "model_dict": {"Type": "MOO", "Exp": "TC", "Alg": "NSGA2",
                        "F": ["Mission Time", "Percentage Connectivity"], "G": [], "H": []},
     }
+    reg_path = os.path.join(settings.RESULTS_ROOT, "custom_models.json")
+    reg_backup = open(reg_path, "rb").read() if os.path.isfile(reg_path) else None
     try:
-        resp = client.post(f"/api/optimize/{run_id}/save", json={"overwrite": True})
-        assert resp.status_code == 409, resp.text
-        # The seeded pickle is untouched.
-        assert pd.read_pickle(seed_sol) == ["SEED_SENTINEL"]
+        # Without overwrite → 409 (scenario exists).
+        no = client.post(f"/api/optimize/{run_id}/save", json={"overwrite": False})
+        assert no.status_code == 409, no.text
+        # With overwrite → 200, pkls replaced, sidecar written.
+        ok = client.post(f"/api/optimize/{run_id}/save", json={"overwrite": True})
+        assert ok.status_code == 200, ok.text
+        assert pd.read_pickle(existing_sol) == ["NEW_A", "NEW_B"]
+        assert os.path.isfile(meta_dst), "RunConfig sidecar must be written on save"
+        assert json.load(open(meta_dst))["pop_size"] == 42
     finally:
         optimizer_service._jobs.pop(run_id, None)
         shutil.rmtree(run_dir, ignore_errors=True)
-        for p in (seed_obj, seed_sol):
+        for p in (existing_obj, existing_sol, meta_dst):
             if os.path.isfile(p):
                 os.remove(p)
+        if reg_backup is not None:
+            with open(reg_path, "wb") as fh:
+                fh.write(reg_backup)
+        elif os.path.isfile(reg_path):
+            os.remove(reg_path)
+        from app import models_registry
+        models_registry._invalidate_cache()
 
 
 def test_save_run_makes_it_browsable(client):

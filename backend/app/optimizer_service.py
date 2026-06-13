@@ -66,9 +66,6 @@ class EmptyRunError(Exception):
     """The run found no feasible solutions, so there is nothing to save."""
 
 
-class SeededScenarioError(Exception):
-    """Refusing to overwrite an existing preset/seeded library scenario."""
-
 
 # ─── Model synthesis ──────────────────────────────────────────────────────────
 
@@ -188,6 +185,7 @@ def check_config(
         "scenario_name": scenario_name,
         "model_key": model_key,
         "exists": _exists(scenario_name),
+        "seeded": model_key in AVAILABLE_MODELS and _exists(scenario_name),
     }
 
 
@@ -315,6 +313,7 @@ def start_run(
     return {
         "run_id": run_id, "scenario_name": scenario_name,
         "model_key": model_key, "exists": _exists(scenario_name),
+        "seeded": model_key in AVAILABLE_MODELS and _exists(scenario_name),
     }
 
 
@@ -403,13 +402,8 @@ def save_run(run_id: str, overwrite: bool) -> dict:
     if n_solutions < 1:
         raise EmptyRunError("Run found no feasible solutions; nothing to save.")
 
-    if _exists(scenario_name):
-        # Seeded thesis scenarios live under PRESET model keys and are
-        # irreplaceable — never let a web run overwrite them, even on overwrite.
-        if job["model_key"] in AVAILABLE_MODELS:
-            raise SeededScenarioError(scenario_name)
-        if not overwrite:
-            raise AlreadyExistsError(scenario_name)
+    if _exists(scenario_name) and not overwrite:
+        raise AlreadyExistsError(scenario_name)
 
     obj_dst = os.path.join(settings.RESULTS_ROOT, "Objectives", f"{scenario_name}-ObjectiveValues.pkl")
     sol_dst = os.path.join(settings.RESULTS_ROOT, "Solutions", f"{scenario_name}-SolutionObjects.pkl")
@@ -417,6 +411,13 @@ def save_run(run_id: str, overwrite: bool) -> dict:
     os.makedirs(os.path.dirname(sol_dst), exist_ok=True)
     shutil.copyfile(os.path.join(job["run_dir"], "Objectives.pkl"), obj_dst)
     shutil.copyfile(os.path.join(job["run_dir"], "Solutions.pkl"), sol_dst)
+
+    # Copy the RunConfig sidecar (present for worker-produced runs) into the library.
+    cfg_src = os.path.join(job["run_dir"], "config.json")
+    if os.path.isfile(cfg_src):
+        meta_dst = os.path.join(settings.RESULTS_ROOT, "Metadata", f"{scenario_name}.json")
+        os.makedirs(os.path.dirname(meta_dst), exist_ok=True)
+        shutil.copyfile(cfg_src, meta_dst)
 
     # Register custom (non-preset) models so the library/selector can resolve them.
     from app import models_registry

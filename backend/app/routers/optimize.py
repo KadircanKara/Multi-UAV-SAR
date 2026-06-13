@@ -29,7 +29,6 @@ from app.optimizer_service import (
     RunNotReadyError,
     AlreadyExistsError,
     EmptyRunError,
-    SeededScenarioError,
 )
 
 router = APIRouter()
@@ -91,14 +90,6 @@ def post_optimize_save(run_id: str, body: OptimizeSaveRequest) -> dict:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except EmptyRunError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SeededScenarioError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"{exc} is a published library result and cannot be overwritten. "
-                "This configuration already exists in the mission browser."
-            ),
-        ) from exc
     except AlreadyExistsError as exc:
         raise HTTPException(
             status_code=409,

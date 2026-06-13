@@ -412,12 +412,14 @@ class OptimizeStartResponse(BaseModel):
     scenario_name: str
     model_key: str
     exists: bool
+    seeded: bool = False
 
 
 class OptimizeCheckResponse(BaseModel):
     scenario_name: str
     model_key: str
     exists: bool
+    seeded: bool = False
 
 
 class OptimizeFrontSolution(BaseModel):
