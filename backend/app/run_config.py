@@ -59,7 +59,7 @@ def build_run_config(
         "optimization_type": optimization_type,
         "method": method,
         "objectives": list(objectives),
-        "weights": dict(weights) if weights else None,
+        "weights": dict(weights) if weights is not None else None,
         "pop_size": int(pop_size),
         "n_gen": int(n_gen),
         "seed": int(seed),
@@ -74,6 +74,7 @@ def build_run_config(
         },
         "scenario": {
             "number_of_drones": scenario.get("number_of_drones"),
+            # optimizer sends comm_cell_range; seed/legacy dicts may use comm_range
             "comm_range": scenario.get("comm_cell_range", scenario.get("comm_range")),
             "n_visits": scenario.get("n_visits"),
             "max_drone_speed": scenario.get("max_drone_speed"),
@@ -91,7 +92,8 @@ def build_run_config(
 
 
 def seed_config_for(scenario_name: str, n_solutions: int = 0) -> Optional[dict]:
-    """RunConfig for a seeded mission, or None if the name matches no preset model.
+    """RunConfig for a seeded mission, or None if the name matches no preset model
+    or does not match the expected scenario-filename pattern.
 
     Matches the preset whose '{Type}_{Alg}_{Exp}_' prefixes the scenario name, reads
     the constraints the run used straight off that model's G/H (at the engine-default
