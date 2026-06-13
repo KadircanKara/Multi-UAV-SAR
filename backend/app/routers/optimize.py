@@ -1,8 +1,8 @@
 """
 Optimizer endpoints — configure + run an optimization (background + poll).
 
-  POST /api/optimize/check  — config → {scenario_name, model_key, exists}
-  POST /api/optimize        — start a run → {run_id, scenario_name, model_key, exists}
+  POST /api/optimize/check  — config → {scenario_name, model_key, exists, seeded}
+  POST /api/optimize        — start a run → {run_id, scenario_name, model_key, exists, seeded}
   GET  /api/optimize/{id}   — poll: running (gen X/Y) | done (front) | failed
 """
 import app.rootpath  # must come before any root-module import

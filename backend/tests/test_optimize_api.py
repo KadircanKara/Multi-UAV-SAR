@@ -401,7 +401,8 @@ def test_save_overwrites_existing_scenario_and_writes_sidecar(client):
         assert ok.status_code == 200, ok.text
         assert pd.read_pickle(existing_sol) == ["NEW_A", "NEW_B"]
         assert os.path.isfile(meta_dst), "RunConfig sidecar must be written on save"
-        assert json.load(open(meta_dst))["pop_size"] == 42
+        with open(meta_dst) as fh:
+            assert json.load(fh)["pop_size"] == 42
     finally:
         optimizer_service._jobs.pop(run_id, None)
         shutil.rmtree(run_dir, ignore_errors=True)

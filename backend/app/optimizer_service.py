@@ -66,7 +66,6 @@ class EmptyRunError(Exception):
     """The run found no feasible solutions, so there is nothing to save."""
 
 
-
 # ─── Model synthesis ──────────────────────────────────────────────────────────
 
 def _derive_type_alg(optimization_type: str, method: str) -> tuple[str, str]:
@@ -278,7 +277,7 @@ def start_run(
     early_stop_patience: int = 10, early_stop_threshold: float = 0.10,
 ) -> dict:
     """Submit a run to the worker process; returns {run_id, scenario_name,
-    model_key, exists}. Raises RunInProgressError if one is already running."""
+    model_key, exists, seeded}. Raises RunInProgressError if one is already running."""
     from app.optimizer_worker import run_optimization
 
     model_key, model_dict = resolve_model(
