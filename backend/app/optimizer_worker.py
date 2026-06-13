@@ -279,6 +279,31 @@ def run_optimization(
             "stopped_at_gen": stopped_at_gen,
         }, fh)
 
+    from app.run_config import build_run_config
+
+    run_config = build_run_config(
+        model_dict=model_dict,
+        objectives=objectives,
+        weights=model_dict.get("Weights"),
+        pop_size=pop_size,
+        n_gen=n_gen,
+        seed=seed,
+        gen_strategy=gen_strategy,
+        early_stop_patience=early_stop_patience,
+        early_stop_threshold=early_stop_threshold,
+        max_mission_time=max_mission_time,
+        min_connectivity=min_connectivity,
+        max_mean_tbv=max_mean_tbv,
+        scenario=scenario_dict,
+        n_solutions=len(sols),
+        cancelled=cancelled,
+        early_stopped=early_stopped,
+        stopped_at_gen=stopped_at_gen,
+        source="optimizer",
+    )
+    with open(os.path.join(run_dir, "config.json"), "w") as fh:
+        json.dump(run_config, fh)
+
     front = {
         "scenario": scenario_name,
         "model_key": model_key,
