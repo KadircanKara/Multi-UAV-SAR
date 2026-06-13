@@ -17,6 +17,7 @@ import { useParams } from "next/navigation";
 import { getModelGrid } from "@/lib/api";
 import type { ModelGrid, ModelGridScenario } from "@/lib/types";
 import ScenarioExplorer from "@/components/explore/ScenarioExplorer";
+import RunDetails from "@/components/missions/RunDetails";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1094,6 +1095,7 @@ export default function ModelPage() {
             {selName ? (
               <ScenarioExplorer key={selName} scenario={selName} showTitle={false} />
             ) : null}
+            {selName ? <RunDetails scenario={selName} /> : null}
           </div>
 
           {/* ── Parameter-combination table ───────────────────────────────── */}
