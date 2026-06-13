@@ -168,6 +168,18 @@ def _exists(scenario_name: str) -> bool:
     return os.path.isfile(obj) and os.path.isfile(sol)
 
 
+def read_run_config(scenario_name: str) -> Optional[dict]:
+    """Return the persisted RunConfig sidecar for a mission, or None if absent."""
+    path = os.path.join(settings.RESULTS_ROOT, "Metadata", f"{scenario_name}.json")
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path) as fh:
+            return json.load(fh)
+    except Exception:
+        return None
+
+
 def check_config(
     optimization_type: str, method: str, objectives: list[str],
     weights: Optional[dict], scenario_dict: dict,

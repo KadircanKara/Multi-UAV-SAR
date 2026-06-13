@@ -7,6 +7,7 @@ import app.rootpath  # must come before any root-module import
 from fastapi import APIRouter, HTTPException
 
 from app.library_service import get_scenario, list_scenarios
+from app.optimizer_service import read_run_config
 from app.schemas import ScenarioDetail, ScenarioSummary
 
 router = APIRouter()
@@ -28,3 +29,13 @@ def get_library_scenario(scenario: str) -> dict:
             detail=f"Scenario {scenario!r} not found in Results/",
         )
     return detail
+
+
+@router.get("/api/library/{scenario}/config")
+def get_library_scenario_config(scenario: str) -> dict:
+    """Read-only optimizer run-config for a mission, or {recorded: false} if none.
+
+    Returned verbatim (the sidecar's own shape) — the frontend types it as RunConfig;
+    no strict response_model so the nested record isn't duplicated as a Pydantic tree."""
+    cfg = read_run_config(scenario)
+    return cfg if cfg is not None else {"recorded": False}
