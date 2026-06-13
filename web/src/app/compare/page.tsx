@@ -34,6 +34,7 @@ import type {
 import ModelScenarioPicker, {
   type PickerSelection,
 } from "@/components/compare/ModelScenarioPicker";
+import CompareRunDetails from "@/components/compare/CompareRunDetails";
 import MetricComparisonView, {
   type CompareMetric,
   type CompareEntity,
@@ -1052,6 +1053,8 @@ export default function ComparePage() {
               <TimeMetricsTab selection={selection} />
             </TabsContent>
           </Tabs>
+
+          <CompareRunDetails scenarios={selection.scenarios} />
         </>
       )}
     </div>
