@@ -29,6 +29,7 @@ import type {
   OptimizeStatus,
   OptimizeStopResponse,
   OptimizeSaveResponse,
+  MissionConfigResponse,
 } from "@/lib/types";
 
 const BASE =
@@ -95,6 +96,15 @@ export function getModelGrid(modelKey: string): Promise<ModelGrid> {
 export function getScenarioDetail(scenario: string): Promise<ScenarioDetail> {
   return request<ScenarioDetail>(
     `/api/library/${encodeURIComponent(scenario)}`
+  );
+}
+
+/** GET /api/library/{scenario}/config — persisted optimizer run-config. */
+export function getMissionConfig(
+  scenario: string
+): Promise<MissionConfigResponse> {
+  return request<MissionConfigResponse>(
+    `/api/library/${encodeURIComponent(scenario)}/config`
   );
 }
 

@@ -159,12 +159,14 @@ export interface OptimizeStartResponse {
   scenario_name: string;
   model_key: string;
   exists: boolean;
+  seeded: boolean;
 }
 
 export interface OptimizeCheckResponse {
   scenario_name: string;
   model_key: string;
   exists: boolean;
+  seeded: boolean;
 }
 
 export interface OptimizeStatus {
@@ -331,3 +333,49 @@ export interface PlaybackPayload {
   /** [step] count of known targets */
   targets_known: number[];
 }
+
+// ─── Mission run-config (persisted optimizer configuration) ──────────────────
+
+export interface RunConfigConstraints {
+  speed_feasibility: boolean;
+  max_mission_time: number | null;
+  min_connectivity: number | null;
+  max_mean_tbv: number | null;
+}
+
+export interface RunConfigScenario {
+  number_of_drones: number | null;
+  comm_range: number | string | null;
+  n_visits: number | null;
+  max_drone_speed: number | null;
+  grid_size: number | null;
+  cell_side_length: number | null;
+}
+
+export interface RunConfigOutcome {
+  n_solutions: number;
+  cancelled: boolean;
+  early_stopped: boolean;
+  stopped_at_gen: number | null;
+}
+
+export interface RunConfig {
+  schema_version: number;
+  optimization_type: string;
+  method: string;
+  objectives: string[];
+  weights: Record<string, number> | null;
+  pop_size: number;
+  n_gen: number;
+  seed: number;
+  gen_strategy: string;
+  early_stop_patience: number | null;
+  early_stop_threshold: number | null;
+  constraints: RunConfigConstraints;
+  scenario: RunConfigScenario;
+  outcome: RunConfigOutcome;
+  source: string;
+}
+
+/** GET /api/library/{scenario}/config — the RunConfig, or a not-recorded marker. */
+export type MissionConfigResponse = RunConfig | { recorded: false };
