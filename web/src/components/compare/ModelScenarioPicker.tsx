@@ -16,8 +16,9 @@
  * ≥2-models guard).
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ScenarioSummary } from "@/lib/types";
+import type { SweepParam } from "@/components/compare/buildModelSeries";
 import { commCellValue, commLabel } from "@/lib/comm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -40,6 +41,12 @@ export interface PickerSelection {
 interface Props {
   library: ScenarioSummary[];
   onChange: (sel: PickerSelection) => void;
+  /** When true (line chart active), the non-sweep parameter rows become single-
+   *  select to keep the line plot legible — only the sweep dimension and the
+   *  models stay multi-select. */
+  lineMode?: boolean;
+  /** The active sweep dimension (line-view x-axis); stays multi-select. */
+  sweepParam?: SweepParam;
 }
 
 // ─── Pure helpers (module scope) ──────────────────────────────────────────────
@@ -197,8 +204,19 @@ function ChipRow({ label, options, value, onChange, single }: ChipRowProps) {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function ModelScenarioPicker({ library, onChange }: Props) {
+export default function ModelScenarioPicker({
+  library,
+  onChange,
+  lineMode = false,
+  sweepParam = "drones",
+}: Props) {
   const allModels = useMemo(() => distinctModels(library), [library]);
+
+  // Which parameter rows are single-select right now: in line mode every
+  // comparison dimension except the sweep one collapses to a single value.
+  const dronesSingle = lineMode && sweepParam !== "drones";
+  const commSingle = lineMode && sweepParam !== "comm_range";
+  const nVisitsSingle = lineMode && sweepParam !== "n_visits";
 
   // Selection state (string keys throughout).
   const [selModels, setSelModels] = useState<string[]>([]);
@@ -291,6 +309,32 @@ export default function ModelScenarioPicker({ library, onChange }: Props) {
     setSelCell((prev) => keepOne(prev, ceSet, cellOpts));
   }, [seeded, droneOpts, commOpts, nVisitsOpts, speedOpts, gridOpts, cellOpts]);
 
+  // When a comparison dimension becomes single-select (entering line mode or
+  // switching the sweep dimension), drop any extra values it carried over from
+  // bar mode so the single-select row shows a consistent lone value.
+  useEffect(() => {
+    if (dronesSingle) setSelDrones((p) => (p.length > 1 ? [p[0]!] : p));
+    if (commSingle) setSelComm((p) => (p.length > 1 ? [p[0]!] : p));
+    if (nVisitsSingle) setSelNVisits((p) => (p.length > 1 ? [p[0]!] : p));
+  }, [dronesSingle, commSingle, nVisitsSingle]);
+
+  // Whenever the sweep dimension (re)activates — entering line mode OR switching
+  // the sweep parameter — default it to ALL available values, so the line plot's
+  // x-axis always sweeps the full range (matching the model page). The ref resets
+  // on leaving line mode, so re-entering re-selects all.
+  const prevSweepRef = useRef<SweepParam | null>(null);
+  useEffect(() => {
+    if (!lineMode) {
+      prevSweepRef.current = null;
+      return;
+    }
+    if (prevSweepRef.current === sweepParam) return;
+    prevSweepRef.current = sweepParam;
+    if (sweepParam === "drones") setSelDrones(droneOpts.map((o) => o.value));
+    else if (sweepParam === "comm_range") setSelComm(commOpts.map((o) => o.value));
+    else setSelNVisits(nVisitsOpts.map((o) => o.value));
+  }, [lineMode, sweepParam, droneOpts, commOpts, nVisitsOpts]);
+
   // Resolve + emit on any change.
   const resolved = useMemo(
     () =>
@@ -348,18 +392,21 @@ export default function ModelScenarioPicker({ library, onChange }: Props) {
           options={droneOpts}
           value={selDrones}
           onChange={guardDim(setSelDrones)}
+          single={dronesSingle}
         />
         <ChipRow
           label="Comm"
           options={commOpts}
           value={selComm}
           onChange={guardDim(setSelComm)}
+          single={commSingle}
         />
         <ChipRow
           label="n_visits"
           options={nVisitsOpts}
           value={selNVisits}
           onChange={guardDim(setSelNVisits)}
+          single={nVisitsSingle}
         />
         <ChipRow
           single

@@ -618,9 +618,11 @@ export default function ModelPage() {
               first.number_of_drones != null ? [String(first.number_of_drones)] : []
             );
             setSeriesComm(first.comm_range != null ? [first.comm_range] : []);
-            // Max Mean TBV is undefined at n_visits=1. For TBV models, default to
-            // SWEEPING n_visits (so the TBV plot shows the 2→3 trend) and seed the
-            // n_visits overlay with the smallest value > 1 for non-TBV-sweeps.
+            // The swept dimension always defaults to Drones. Max Mean TBV is
+            // undefined at n_visits=1, so for TBV models seed the n_visits overlay
+            // with the smallest value > 1 — that keeps the TBV plot populated even
+            // though the x-axis sweeps Drones; other models seed it from the first
+            // scenario.
             const hasTbv = data.objectives.some((o) => o.includes("TBV"));
             const nVisitsAboveOne = Array.from(
               new Set(
@@ -629,17 +631,17 @@ export default function ModelPage() {
                   .filter((v): v is number => v != null && v > 1)
               )
             ).sort((a, b) => a - b);
-            const decidedSweep: SweepParam =
-              hasTbv && nVisitsAboveOne.length > 0 ? "n_visits" : "drones";
-            if (decidedSweep === "n_visits") {
-              setSeriesNVisits([String(nVisitsAboveOne[0])]);
-              setSweep("n_visits");
-            } else {
-              setSeriesNVisits(first.n_visits != null ? [String(first.n_visits)] : []);
-            }
-            // Default the x-axis to ALL values of the swept dimension.
+            setSeriesNVisits(
+              hasTbv && nVisitsAboveOne.length > 0
+                ? [String(nVisitsAboveOne[0])]
+                : first.n_visits != null
+                ? [String(first.n_visits)]
+                : []
+            );
+            setSweep("drones");
+            // Default the x-axis to ALL Drone values.
             setSweepValueSel(
-              availableDimValues(data, decidedSweep).map((o) => o.value)
+              availableDimValues(data, "drones").map((o) => o.value)
             );
             // Seed the scenario-parameter filters to all present values.
             const sp = new Set<number>();

@@ -253,9 +253,10 @@ class ComparisonRequest(BaseModel):
     """Body for POST /api/comparison — the scenarios to compare.
 
     Objective stats are read from each scenario's (cached) front, so this is much
-    cheaper than the sensing-replay time comparison and allows a larger batch."""
+    cheaper than the sensing-replay time comparison and allows a larger batch.
+    Caps the chart at 36 bars × up to 10 stacked models (mirrors the web client)."""
 
-    scenarios: list[str] = Field(..., min_length=1, max_length=48)
+    scenarios: list[str] = Field(..., min_length=1, max_length=360)
 
 
 class ComparisonScenario(BaseModel):
@@ -289,9 +290,12 @@ class ComparisonResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class TimeComparisonRequest(BaseModel):
-    """Body for POST /api/comparison/time — scenarios + shared sensing config."""
+    """Body for POST /api/comparison/time — scenarios + shared sensing config.
 
-    scenarios: list[str] = Field(..., min_length=1, max_length=24)
+    One sensing replay runs per scenario, so the ceiling is tighter than the
+    objective comparison: 36 bars × up to 4 stacked models (mirrors the web client)."""
+
+    scenarios: list[str] = Field(..., min_length=1, max_length=144)
     config: SensingConfigModel
     strategy: str = "balanced"
     objective_name: Optional[str] = None

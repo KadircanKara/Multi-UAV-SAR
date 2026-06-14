@@ -87,6 +87,16 @@ export default function CompareStackedBarChart({
   const colorFor = (i: number) => palette[i] ?? colors.series[0]!;
   const betterHint = polarity === -1 ? "higher is better" : "lower is better";
 
+  // X-axis labels steepen and shrink as bars pack in, so the full-width
+  // (one-per-row) layout stays legible up to ~36 combos. At ~1168px wide that's
+  // a ~32px pitch per bar; a -60° label footprint (~24px) clears it, where the
+  // shallow -25° default (~54px) would overlap. Below ~16 bars the chart may be
+  // two-per-row (~530px), where the shallow angle reads best.
+  const n = rows.length;
+  const xAngle = n > 24 ? -60 : n > 16 ? -45 : -25;
+  const xFontSize = n > 24 ? 8 : 9;
+  const xHeight = n > 24 ? 62 : n > 16 ? 54 : 44;
+
   return (
     <div className="flex flex-col gap-1">
       <p className="text-xs font-medium text-foreground">
@@ -122,12 +132,12 @@ export default function CompareStackedBarChart({
             <XAxis
               dataKey="comboLabel"
               type="category"
-              height={44}
+              height={xHeight}
               tickMargin={8}
               interval={0}
-              angle={-25}
+              angle={xAngle}
               textAnchor="end"
-              tick={{ fontSize: 9, fill: colors.axis }}
+              tick={{ fontSize: xFontSize, fill: colors.axis }}
               tickLine={false}
               axisLine={{ stroke: colors.grid }}
             />
@@ -151,6 +161,7 @@ export default function CompareStackedBarChart({
                 name={m}
                 stackId="stack"
                 fill={colorFor(i)}
+                maxBarSize={48}
                 isAnimationActive={false}
               />
             ))}

@@ -94,11 +94,28 @@ const SWEEP_LABELS: Record<SweepParam, string> = {
   n_visits: "n_visits",
 };
 
-// Max model-scenario results per comparison (each is one bar segment). Objectives
-// read cached fronts, so a larger batch is cheap; the time tab runs a sensing
-// replay per scenario, so it stays smaller. Both match their backend max_length.
-const MAX_OBJ_SCENARIOS = 48;
-const MAX_TIME_SCENARIOS = 24;
+// Comparison batches are capped by BARS (parameter combinations on the x-axis),
+// not raw scenarios — models stack within a bar, so the bar count is what the user
+// reads. Both tabs cap at 36 bars. A scenario ceiling still bounds the total
+// model×combo payload sent to the backend (and matches its max_length): objectives
+// read cached fronts (cheap, generous ceiling); the time tab runs one sensing
+// replay per scenario, so its ceiling is tighter.
+const MAX_COMPARE_BARS = 36;
+const MAX_OBJ_SCENARIOS = 360; // 36 bars × up to 10 stacked models
+const MAX_TIME_SCENARIOS = 144; // 36 bars × up to 4 models (one replay per scenario)
+
+// Bars on a stacked-bar chart = parameter combinations on the x-axis (models are
+// stacked within each bar). At two charts per row each plot is ~530px wide, which
+// stays legible to ~12 rotated combo labels; beyond that the bar charts go to one
+// per row so each plot doubles in width. Every chart in a tab shares the same
+// combos, so this is a single per-tab decision.
+const BARS_PER_ROW_BREAKPOINT = 12;
+
+function barGridClass(comboCount: number): string {
+  return comboCount > BARS_PER_ROW_BREAKPOINT
+    ? "grid gap-6 grid-cols-1"
+    : "grid gap-6 grid-cols-1 md:grid-cols-2";
+}
 
 // Parameter-combination key (drones · comm · n_visits) parsed from a scenario name
 // "..._n_{drones}_v_{speed}_r_{comm}_nvisits_{nv}" — one bar on the x-axis.
@@ -107,9 +124,22 @@ function comboKeyFromName(scenario: string): string {
   return m ? `${m[1]}|${m[2]}|${m[3]}` : scenario;
 }
 
-// Cap the batch by WHOLE parameter combos (all their models), so every shown bar
-// is a complete stack rather than a partial one cut off by a flat slice.
-function capByCombos(scenarios: string[], maxScenarios: number): string[] {
+// Distinct parameter combos (= bars) among a scenario set.
+function countCombos(scenarios: string[]): number {
+  const seen = new Set<string>();
+  for (const s of scenarios) seen.add(comboKeyFromName(s));
+  return seen.size;
+}
+
+// Cap the batch by WHOLE parameter combos (all their models = a complete stack):
+// keep at most `maxBars` combos, and never exceed `maxScenarios` total model×combo
+// rows (the backend's max_length). The first combo is always kept even if it alone
+// would exceed the scenario ceiling.
+function capToCombos(
+  scenarios: string[],
+  maxBars: number,
+  maxScenarios: number
+): string[] {
   const groups = new Map<string, string[]>();
   for (const s of scenarios) {
     const k = comboKeyFromName(s);
@@ -118,9 +148,12 @@ function capByCombos(scenarios: string[], maxScenarios: number): string[] {
     else groups.set(k, [s]);
   }
   const out: string[] = [];
+  let bars = 0;
   for (const g of Array.from(groups.values())) {
+    if (bars >= maxBars) break;
     if (out.length > 0 && out.length + g.length > maxScenarios) break;
     out.push(...g);
+    bars++;
   }
   return out;
 }
@@ -128,7 +161,7 @@ function capByCombos(scenarios: string[], maxScenarios: number): string[] {
 function OverflowNote({ shown, total }: { shown: number; total: number }) {
   return (
     <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-      Showing {shown} of {total} selected model-scenario results — narrow the
+      Showing {shown} of {total} parameter combinations (bars) — narrow the
       parameter selection (fewer values) to include them all.
     </p>
   );
@@ -318,26 +351,38 @@ function SliderField({
 
 interface ObjectivesTabProps {
   selection: PickerSelection;
+  // Chart type + sweep param are owned by the page (shared across tabs) so the
+  // parameter picker can react to line mode.
+  chartType: ChartType;
+  onChartTypeChange: (v: ChartType) => void;
+  sweep: SweepParam;
+  onSweepChange: (v: SweepParam) => void;
 }
 
-function ObjectivesTab({ selection }: ObjectivesTabProps) {
+function ObjectivesTab({
+  selection,
+  chartType,
+  onChartTypeChange,
+  sweep,
+  onSweepChange,
+}: ObjectivesTabProps) {
   const { scenarios: allScenarios, models } = selection;
   const nVisitsSel = selection.sweepable.n_visits;
   // Cap by whole combos so bars stay complete; objectives read cached fronts.
   const scenarios = useMemo(
-    () => capByCombos(allScenarios, MAX_OBJ_SCENARIOS),
+    () => capToCombos(allScenarios, MAX_COMPARE_BARS, MAX_OBJ_SCENARIOS),
     [allScenarios]
   );
-  const overflow = allScenarios.length > scenarios.length;
+  const shownCombos = countCombos(scenarios);
+  const totalCombos = countCombos(allScenarios);
+  const overflow = totalCombos > shownCombos;
 
   const [data, setData] = useState<ComparisonResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [chartType, setChartType] = useState<ChartType>("bar");
   // Stat is always "best" (the Stat selector was removed).
   const statKey: StatKey = "best";
-  const [sweep, setSweep] = useState<SweepParam>("drones");
 
   // Fetch the comparison whenever the resolved scenario set changes (debounced).
   const scenarioKey = useMemo(() => [...scenarios].sort().join("|"), [scenarios]);
@@ -444,6 +489,12 @@ function ObjectivesTab({ selection }: ObjectivesTabProps) {
     return out;
   }, [data, statKey, models]);
 
+  // Combo count = bars per chart (uniform across objectives — same scenarios).
+  const comboCount = useMemo(
+    () => Math.max(0, ...Object.values(stackedByObjective).map((sb) => sb.rows.length)),
+    [stackedByObjective]
+  );
+
   if (scenarios.length === 0) {
     return (
       <p className="text-xs text-muted-foreground border border-dashed border-border rounded px-4 py-3">
@@ -456,13 +507,13 @@ function ObjectivesTab({ selection }: ObjectivesTabProps) {
     <div className="flex flex-col gap-5">
       {/* Controls */}
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <ChartTypeSwitch value={chartType} onChange={setChartType} />
+        <ChartTypeSwitch value={chartType} onChange={onChartTypeChange} />
         {chartType === "line" && (
-          <SweepParamSelect value={sweep} onChange={setSweep} />
+          <SweepParamSelect value={sweep} onChange={onSweepChange} />
         )}
       </div>
 
-      {overflow && <OverflowNote shown={scenarios.length} total={allScenarios.length} />}
+      {overflow && <OverflowNote shown={shownCombos} total={totalCombos} />}
       {error && <OfflinePanel message={error} />}
       {loading && !error && <Skeleton className="h-64 w-full rounded" />}
 
@@ -500,7 +551,7 @@ function ObjectivesTab({ selection }: ObjectivesTabProps) {
               })}
             </div>
           ) : chartType === "bar" ? (
-            <div className="grid gap-6 grid-cols-1 md:grid-cols-2">
+            <div className={barGridClass(comboCount)}>
               {data.objectives.map((o) => {
                 if (isTbvName(o) && onlyNVisits1(nVisitsSel)) {
                   return <ChartEmptyNote key={o} title={o} message={TBV_NA_MESSAGE} />;
@@ -563,16 +614,29 @@ const OBJECTIVE_NAMES = [
 
 interface TimeMetricsTabProps {
   selection: PickerSelection;
+  // Chart type + sweep param are owned by the page (shared across tabs).
+  chartType: ChartType;
+  onChartTypeChange: (v: ChartType) => void;
+  sweep: SweepParam;
+  onSweepChange: (v: SweepParam) => void;
 }
 
-function TimeMetricsTab({ selection }: TimeMetricsTabProps) {
+function TimeMetricsTab({
+  selection,
+  chartType,
+  onChartTypeChange,
+  sweep,
+  onSweepChange,
+}: TimeMetricsTabProps) {
   const { scenarios: allScenarios, models } = selection;
   // Cap by whole combos; the time tab runs one sensing replay per scenario.
   const scenarios = useMemo(
-    () => capByCombos(allScenarios, MAX_TIME_SCENARIOS),
+    () => capToCombos(allScenarios, MAX_COMPARE_BARS, MAX_TIME_SCENARIOS),
     [allScenarios]
   );
-  const overflow = allScenarios.length > scenarios.length;
+  const shownCombos = countCombos(scenarios);
+  const totalCombos = countCombos(allScenarios);
+  const overflow = totalCombos > shownCombos;
 
   // Sensing config (mirrors MergingTab).
   const [mergeTopology, setMergeTopology] = useState<
@@ -593,8 +657,6 @@ function TimeMetricsTab({ selection }: TimeMetricsTabProps) {
   // Results + view state.
   const [data, setData] = useState<TimeComparisonResponse | null>(null);
   const [running, setRunning] = useState(false);
-  const [chartType, setChartType] = useState<ChartType>("bar");
-  const [sweep, setSweep] = useState<SweepParam>("drones");
 
   const pqInvalid = detProb <= faProb;
   const targetList = useMemo(
@@ -703,6 +765,12 @@ function TimeMetricsTab({ selection }: TimeMetricsTabProps) {
     }
     return out;
   }, [data, models]);
+
+  // Combo count = bars per chart (uniform across metrics — same scenarios).
+  const comboCount = useMemo(
+    () => Math.max(0, ...Object.values(stackedByMetric).map((sb) => sb.rows.length)),
+    [stackedByMetric]
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -859,7 +927,7 @@ function TimeMetricsTab({ selection }: TimeMetricsTabProps) {
               Runs one replay per scenario ({scenarios.length} selected) using the{" "}
               {strategy} solution.
             </p>
-            {overflow && <OverflowNote shown={scenarios.length} total={allScenarios.length} />}
+            {overflow && <OverflowNote shown={shownCombos} total={totalCombos} />}
           </div>
         </CardContent>
       </Card>
@@ -881,9 +949,9 @@ function TimeMetricsTab({ selection }: TimeMetricsTabProps) {
       {!running && data && (
         <div className="flex flex-col gap-5">
           <div className="flex flex-wrap items-center justify-between gap-4">
-            <ChartTypeSwitch value={chartType} onChange={setChartType} />
+            <ChartTypeSwitch value={chartType} onChange={onChartTypeChange} />
             {chartType === "line" && (
-              <SweepParamSelect value={sweep} onChange={setSweep} />
+              <SweepParamSelect value={sweep} onChange={onSweepChange} />
             )}
           </div>
 
@@ -916,7 +984,7 @@ function TimeMetricsTab({ selection }: TimeMetricsTabProps) {
               })}
             </div>
           ) : chartType === "bar" ? (
-            <div className="grid gap-6 grid-cols-1 md:grid-cols-2">
+            <div className={barGridClass(comboCount)}>
               {data.metrics.map((m) => {
                 const sb = stackedByMetric[m];
                 if (!sb || sb.models.length === 0 || sb.rows.length === 0) {
@@ -978,6 +1046,12 @@ export default function ComparePage() {
     setSelection(sel);
   }, []);
 
+  // Chart type + sweep param live here (shared across both tabs) so the parameter
+  // picker can react to line mode: in line mode the non-sweep params go single-
+  // select to keep the line plot legible.
+  const [chartType, setChartType] = useState<ChartType>("bar");
+  const [sweep, setSweep] = useState<SweepParam>("drones");
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -1033,7 +1107,12 @@ export default function ComparePage() {
         <OfflinePanel message={error} />
       ) : (
         <>
-          <ModelScenarioPicker library={library} onChange={onPickerChange} />
+          <ModelScenarioPicker
+            library={library}
+            onChange={onPickerChange}
+            lineMode={chartType === "line"}
+            sweepParam={sweep}
+          />
 
           <Tabs defaultValue="objectives" className="w-full">
             <TabsList className="mb-4">
@@ -1046,11 +1125,23 @@ export default function ComparePage() {
             </TabsList>
 
             <TabsContent value="objectives">
-              <ObjectivesTab selection={selection} />
+              <ObjectivesTab
+                selection={selection}
+                chartType={chartType}
+                onChartTypeChange={setChartType}
+                sweep={sweep}
+                onSweepChange={setSweep}
+              />
             </TabsContent>
 
             <TabsContent value="time">
-              <TimeMetricsTab selection={selection} />
+              <TimeMetricsTab
+                selection={selection}
+                chartType={chartType}
+                onChartTypeChange={setChartType}
+                sweep={sweep}
+                onSweepChange={setSweep}
+              />
             </TabsContent>
           </Tabs>
 

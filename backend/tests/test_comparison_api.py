@@ -107,7 +107,7 @@ def test_empty_scenarios_returns_422(client):
 
 
 def test_too_many_scenarios_returns_422(client):
-    resp = _compare(client, [f"x_{i}" for i in range(49)])  # max_length = 48
+    resp = _compare(client, [f"x_{i}" for i in range(361)])  # max_length = 360
     assert resp.status_code == 422
 
 
