@@ -1,6 +1,10 @@
 # Internal planning/design docs — kept locally, not versioned (purged from history)
 docs/
 
+# Agent tooling — kept locally, not versioned
+.agents/skills/
+skills-lock.json
+
 # Byte-compiled / caches
 __pycache__/
 *.py[cod]
