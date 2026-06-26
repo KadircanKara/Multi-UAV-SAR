@@ -103,7 +103,7 @@ CONN = {
     'Exp': 'CONN',
     'Alg': "GA",
     'F': ['Percentage Connectivity'],
-    'G': [],
+    'G': ['Max Mission Time'],
     'H': ['Path Speed Violations as Constraint']
 }
 
