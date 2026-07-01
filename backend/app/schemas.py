@@ -408,7 +408,33 @@ class OptimizeConfig(BaseModel):
                 raise ValueError(f"weights must sum to 1 (got {total:.4f})")
         if t == "MOO" and len(self.objectives) < 2:
             raise ValueError("MOO requires at least two objectives")
+        self._enforce_deploy_caps()
         return self
+
+    def _enforce_deploy_caps(self) -> None:
+        """Reject runs whose size exceeds the deploy caps (read at request time
+        so environment overrides take effect). These bound the cost of any single
+        run on a public deployment; see settings.py."""
+        from app import settings
+
+        if self.scenario.number_of_drones > settings.MAX_DRONES:
+            raise ValueError(
+                f"number_of_drones {self.scenario.number_of_drones} exceeds the "
+                f"cap of {settings.MAX_DRONES}"
+            )
+        if self.scenario.grid_size > settings.MAX_GRID_SIZE:
+            raise ValueError(
+                f"grid_size {self.scenario.grid_size} exceeds the cap of "
+                f"{settings.MAX_GRID_SIZE}"
+            )
+        if self.pop_size > settings.MAX_POP_SIZE:
+            raise ValueError(
+                f"pop_size {self.pop_size} exceeds the cap of {settings.MAX_POP_SIZE}"
+            )
+        if self.n_gen > settings.MAX_N_GEN:
+            raise ValueError(
+                f"n_gen {self.n_gen} exceeds the cap of {settings.MAX_N_GEN}"
+            )
 
 
 class OptimizeStartResponse(BaseModel):

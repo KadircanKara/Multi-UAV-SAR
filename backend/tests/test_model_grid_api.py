@@ -27,28 +27,31 @@ def test_valid_model_no_seeded_scenarios_404(client):
 
 
 # ---------------------------------------------------------------------------
-# Happy-path: TC_MOO_NSGA2
+# Happy-path: TCD_MOO_NSGA2
 # ---------------------------------------------------------------------------
 
-def test_tc_moo_nsga2_grid_status(client):
-    resp = _get_grid(client, "TC_MOO_NSGA2")
+def test_tcd_moo_nsga2_grid_status(client):
+    resp = _get_grid(client, "TCD_MOO_NSGA2")
     assert resp.status_code == 200
 
 
-def test_tc_moo_nsga2_grid_top_level_fields(client):
-    data = _get_grid(client, "TC_MOO_NSGA2").json()
-    assert data["model_key"] == "TC_MOO_NSGA2"
+def test_tcd_moo_nsga2_grid_top_level_fields(client):
+    data = _get_grid(client, "TCD_MOO_NSGA2").json()
+    assert data["model_key"] == "TCD_MOO_NSGA2"
     assert data["type"] == "MOO"
     assert data["algorithm"] == "NSGA2"
-    assert data["objectives"] == ["Mission Time", "Percentage Connectivity"]
+    assert data["objectives"] == [
+        "Mission Time", "Percentage Connectivity",
+        "Mean Disconnected Time", "Max Disconnected Time",
+    ]
     assert data["polarities"]["Percentage Connectivity"] == -1
     assert data["polarities"]["Mission Time"] == 1
     assert isinstance(data["scenarios"], list)
     assert len(data["scenarios"]) > 0
 
 
-def test_tc_moo_nsga2_scenario_row_schema(client):
-    data = _get_grid(client, "TC_MOO_NSGA2").json()
+def test_tcd_moo_nsga2_scenario_row_schema(client):
+    data = _get_grid(client, "TCD_MOO_NSGA2").json()
     for row in data["scenarios"]:
         assert "scenario" in row
         assert "number_of_drones" in row
@@ -67,16 +70,18 @@ def test_tc_moo_nsga2_scenario_row_schema(client):
             assert "best" in stat
 
 
-def test_tc_moo_nsga2_scenario_row_values(client):
-    data = _get_grid(client, "TC_MOO_NSGA2").json()
+def test_tcd_moo_nsga2_scenario_row_values(client):
+    data = _get_grid(client, "TCD_MOO_NSGA2").json()
     for row in data["scenarios"]:
         assert row["number_of_drones"] in {4, 8, 12, 16}
         crv = row["comm_range_value"]
         assert crv is not None
-        # comm_range_value should be approximately 2.0 or sqrt(8) ≈ 2.828
-        assert abs(crv - 2.0) < 0.01 or abs(crv - math.sqrt(8)) < 0.01, (
-            f"Unexpected comm_range_value {crv}"
-        )
+        # comm_range_value should be one of the swept ranges: 2.0, sqrt(8) ≈ 2.828, or 4.0
+        assert (
+            abs(crv - 2.0) < 0.01
+            or abs(crv - math.sqrt(8)) < 0.01
+            or abs(crv - 4.0) < 0.01
+        ), f"Unexpected comm_range_value {crv}"
         assert row["n_visits"] in {1, 2, 3}
         # objective stats for Mission Time must be numeric
         mt_stat = row["objective_stats"]["Mission Time"]
@@ -88,12 +93,12 @@ def test_tc_moo_nsga2_scenario_row_values(client):
         assert 0 < conn_stat["best"] <= 1.0
 
 
-def test_tc_moo_nsga2_polarity_aware_best(client):
+def test_tcd_moo_nsga2_polarity_aware_best(client):
     """
     For Mission Time (polarity +1 = minimize):  best == min.
     For Percentage Connectivity (polarity -1 = maximize): best == max.
     """
-    data = _get_grid(client, "TC_MOO_NSGA2").json()
+    data = _get_grid(client, "TCD_MOO_NSGA2").json()
     for row in data["scenarios"]:
         mt_stat = row["objective_stats"]["Mission Time"]
         assert mt_stat["best"] == mt_stat["min"], (
@@ -105,9 +110,9 @@ def test_tc_moo_nsga2_polarity_aware_best(client):
         )
 
 
-def test_tc_moo_nsga2_sorted(client):
+def test_tcd_moo_nsga2_sorted(client):
     """Scenarios must be sorted by (number_of_drones, comm_range_value, n_visits)."""
-    data = _get_grid(client, "TC_MOO_NSGA2").json()
+    data = _get_grid(client, "TCD_MOO_NSGA2").json()
     scenarios = data["scenarios"]
     keys = [
         (
@@ -130,7 +135,7 @@ def test_more_drones_better_or_equal_mission_time(client):
     the best Mission Time should be non-increasing as drones go 4→8→12→16.
     Combos that are absent (no seeded data) are skipped gracefully.
     """
-    data = _get_grid(client, "TC_MOO_NSGA2").json()
+    data = _get_grid(client, "TCD_MOO_NSGA2").json()
 
     # Collect best Mission Time per drone count for r≈2.0, n_visits=2
     drone_to_best: dict[int, float] = {}
@@ -170,10 +175,10 @@ def test_grid_is_cheap(client):
     We verify structurally: the route only calls model_grid(), which scans
     Objectives/ and checks Solutions/ existence but never reads Solutions.
     As a runtime proxy, the endpoint should complete in well under 5 seconds
-    for TC_MOO_NSGA2 (23 scenarios × small pkl).
+    for TCD_MOO_NSGA2 (36 scenarios × small pkl).
     """
     start = time.monotonic()
-    resp = _get_grid(client, "TC_MOO_NSGA2")
+    resp = _get_grid(client, "TCD_MOO_NSGA2")
     elapsed = time.monotonic() - start
     assert resp.status_code == 200
     assert elapsed < 5.0, f"Grid endpoint took {elapsed:.2f}s — suspiciously slow"

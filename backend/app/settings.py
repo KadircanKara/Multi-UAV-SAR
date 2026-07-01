@@ -14,6 +14,27 @@ CORS_ORIGINS: list[str] = [
     "http://127.0.0.1:3000",
 ]
 
-# Caps for live optimiser runs (not used in Task 0.2, but defined here)
-MAX_POP_SIZE: int = 60
-MAX_N_GEN: int = 50
+
+def _int_env(name: str, default: int) -> int:
+    """Read an int from the environment, falling back to a default."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return int(raw)
+
+
+# ── Deploy-safety: per-run parameter caps ───────────────────────────────────
+# Ceilings on a single optimizer run. The run cost scales with all four, so
+# these bound how expensive any one request can be. Defaults are the project's
+# real maximums (nothing that runs today is affected); tighten them via env for
+# a public deploy, e.g. SAR_MAX_DRONES=8 SAR_MAX_N_GEN=200 SAR_MAX_POP_SIZE=100.
+MAX_DRONES: int = _int_env("SAR_MAX_DRONES", 16)
+MAX_GRID_SIZE: int = _int_env("SAR_MAX_GRID_SIZE", 8)
+MAX_POP_SIZE: int = _int_env("SAR_MAX_POP_SIZE", 500)
+MAX_N_GEN: int = _int_env("SAR_MAX_N_GEN", 1000)
+
+# ── Deploy-safety: rate limit ───────────────────────────────────────────────
+# Per-IP throttle on POST /api/optimize (the compute trigger). slowapi syntax,
+# e.g. "10/minute", "100/hour". Override for a public deploy via
+# SAR_OPTIMIZE_RATE_LIMIT.
+OPTIMIZE_RATE_LIMIT: str = os.environ.get("SAR_OPTIMIZE_RATE_LIMIT", "30/minute")

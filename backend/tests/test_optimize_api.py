@@ -29,12 +29,15 @@ def _runnable(**over):
 # ─── check / model synthesis ──────────────────────────────────────────────────
 
 def test_check_preset_combo_resolves_and_exists(client):
-    # MOO NSGA2 over {Mission Time, %Connectivity} == preset TC_MOO_NSGA2 (seeded).
-    resp = client.post("/api/optimize/check", json=_cfg(scenario={"number_of_drones": 4, "n_visits": 1}))
+    # MOO NSGA2 over TCD's objective set == preset TCD_MOO_NSGA2 (seeded on EC2).
+    resp = client.post("/api/optimize/check", json=_cfg(
+        objectives=["Mission Time", "Percentage Connectivity",
+                    "Mean Disconnected Time", "Max Disconnected Time"],
+        scenario={"number_of_drones": 4, "n_visits": 1}))
     assert resp.status_code == 200
     d = resp.json()
-    assert d["model_key"] == "TC_MOO_NSGA2"
-    assert d["scenario_name"].startswith("MOO_NSGA2_TC_")
+    assert d["model_key"] == "TCD_MOO_NSGA2"
+    assert d["scenario_name"].startswith("MOO_NSGA2_TCD_")
     assert d["exists"] is True
 
 

@@ -75,8 +75,8 @@ def test_unoptimized_objective_is_still_computed(client):
 # ---------------------------------------------------------------------------
 
 def test_tbv_is_null_at_n_visits_1(client):
-    sc = _scenario_with(client, "TC_MOO_NSGA2", 1)
-    assert sc, "expected a seeded TC n_visits=1 scenario"
+    sc = _scenario_with(client, "TCD_MOO_NSGA2", 1)
+    assert sc, "expected a seeded TCD n_visits=1 scenario"
     data = _compare(client, [sc]).json()
     s = data["scenarios"][0]
     assert s["n_visits"] == 1
@@ -90,7 +90,7 @@ def test_tbv_is_null_at_n_visits_1(client):
 # ---------------------------------------------------------------------------
 
 def test_unknown_scenario_is_skipped_not_fatal(client):
-    good = _scenario_with(client, "TC_MOO_NSGA2", 2)
+    good = _scenario_with(client, "TCD_MOO_NSGA2", 2)
     data = _compare(client, [good, "totally_bogus_scenario"]).json()
     assert [s["scenario"] for s in data["scenarios"]] == [good]
     assert data["skipped"] == ["totally_bogus_scenario"]
@@ -112,7 +112,7 @@ def test_too_many_scenarios_returns_422(client):
 
 
 def test_duplicates_collapsed(client):
-    sc = _scenario_with(client, "TC_MOO_NSGA2", 2)
+    sc = _scenario_with(client, "TCD_MOO_NSGA2", 2)
     data = _compare(client, [sc, sc]).json()
     assert len(data["scenarios"]) == 1
 
@@ -175,7 +175,7 @@ def test_compare_time_best_without_objective_is_422(client):
 def test_compare_time_best_skips_model_without_that_objective(client):
     """'best' on an objective a given scenario's model did not optimize must skip
     that scenario, not fail the whole multi-scenario comparison."""
-    tc = _scenario_with(client, "TC_MOO_NSGA2", 2)      # does NOT optimize TBV
+    tc = _scenario_with(client, "TCD_MOO_NSGA2", 2)     # does NOT optimize TBV
     tcdt = _scenario_with(client, "TCDT_MOO_NSGA2", 2)  # optimizes Max Mean TBV
     assert tc and tcdt
     resp = _compare_time(

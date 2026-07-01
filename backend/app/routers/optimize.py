@@ -7,8 +7,10 @@ Optimizer endpoints — configure + run an optimization (background + poll).
 """
 import app.rootpath  # must come before any root-module import
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
+from app import settings
+from app.ratelimit import limiter
 from app.schemas import (
     OptimizeConfig,
     OptimizeStartResponse,
@@ -45,8 +47,10 @@ def post_optimize_check(body: OptimizeConfig) -> dict:
 
 
 @router.post("/api/optimize", response_model=OptimizeStartResponse)
-def post_optimize(body: OptimizeConfig) -> dict:
-    """Start a run in the worker process. 409 if a run is already in flight."""
+@limiter.limit(lambda: settings.OPTIMIZE_RATE_LIMIT)
+def post_optimize(request: Request, body: OptimizeConfig) -> dict:
+    """Start a run in the worker process. 409 if a run is already in flight.
+    Per-IP rate limited (settings.OPTIMIZE_RATE_LIMIT) → 429 when exceeded."""
     try:
         return start_run(
             body.optimization_type, body.method, body.objectives, body.weights,

@@ -9,8 +9,11 @@ import app.rootpath  # side-effect: inserts repo root into sys.path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app import settings
+from app.ratelimit import limiter
 from app.routers import (
     fronts, library, models, scenarios, replay, playback, comparison, optimize,
 )
@@ -19,6 +22,10 @@ app = FastAPI(
     title="Multi-UAV-SAR API",
     default_response_class=ORJSONResponse,
 )
+# Per-IP rate limiting. Routes opt in via @limiter.limit(...); the expensive
+# optimizer-start endpoint is throttled in routers/optimize.py.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
