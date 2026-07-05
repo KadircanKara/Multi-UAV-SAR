@@ -37,6 +37,9 @@ __all__ = [
     "build_front",
     "get_capabilities",
     "select",
+    "build_front_from_selector",
+    "capabilities_from_selector",
+    "select_from_selector",
 ]
 
 
@@ -169,6 +172,95 @@ def _objectives_rows(selector: SolutionSelector) -> list[dict]:
     return rows
 
 
+def build_front_from_selector(sel: SolutionSelector) -> dict:
+    """
+    Return full Pareto-front payload including capabilities for an
+    already-constructed SolutionSelector (seeded or reconstructed).
+
+    ``scenario`` and ``model_key`` are best-effort here (a bare selector has
+    no scenario name and its model dict may not carry ``model_key``);
+    scenario-based callers (``build_front``) overwrite both with the
+    authoritative values after delegating here.
+    """
+    objectives = list(sel.F.columns)
+    polarities = get_polarities(sel.model)
+    return {
+        "scenario": getattr(sel, "scenario", ""),
+        "model_key": sel.model.get("model_key", ""),
+        "objectives": objectives,
+        "polarities": polarities,
+        "result_kind": sel.result_kind,
+        "n_solutions": int(len(sel.solutions)),
+        "solutions": _objectives_rows(sel),
+        "capabilities": capabilities_from_selector(sel),
+    }
+
+
+def capabilities_from_selector(sel: SolutionSelector) -> dict:
+    return sel.capabilities()
+
+
+def select_from_selector(
+    sel: SolutionSelector,
+    strategy: str,
+    objective_name: Optional[str] = None,
+    weights: Optional[dict[str, float]] = None,
+    index: Optional[int] = None,
+) -> dict:
+    """
+    Dispatch a selection strategy against an already-constructed
+    SolutionSelector and return the result dict.
+
+    Raises:
+        StrategyUnavailableError — invalid strategy, wrong result_kind,
+            missing required argument (→ 422).
+    """
+    if strategy == "best":
+        if not objective_name:
+            raise StrategyUnavailableError(
+                "strategy='best' requires objective_name"
+            )
+        idx, _sol, label = sel.best(objective_name)
+    elif strategy == "balanced":
+        idx, _sol, label = sel.balanced()
+    elif strategy == "knee":
+        idx, _sol, label = sel.knee()
+    elif strategy == "by_weights":
+        if not weights:
+            raise StrategyUnavailableError(
+                "strategy='by_weights' requires weights dict"
+            )
+        idx, _sol, label = sel.by_weights(weights)
+    elif strategy == "by_index":
+        if index is None:
+            raise StrategyUnavailableError(
+                "strategy='by_index' requires index"
+            )
+        idx, _sol, label = sel.by_index(index)
+    elif strategy == "the_solution":
+        idx, _sol, label = sel.the_solution()
+    else:
+        raise StrategyUnavailableError(
+            f"Unknown strategy {strategy!r}. Valid: best, balanced, knee, "
+            f"by_weights, by_index, the_solution"
+        )
+
+    # Build absolute objectives for the selected row
+    row = sel.F.iloc[idx]
+    objectives_abs = {col: _float(abs(row[col])) for col in sel.F.columns}
+
+    detail = {
+        "index": int(idx),
+        "label": str(label),
+        "objectives_abs": objectives_abs,
+    }
+    return {
+        "index": int(idx),
+        "label": str(label),
+        "detail": detail,
+    }
+
+
 def build_front(scenario: str, model_key: Optional[str] = None) -> dict:
     """
     Return full Pareto-front payload including capabilities.
@@ -177,19 +269,10 @@ def build_front(scenario: str, model_key: Optional[str] = None) -> dict:
     """
     selector = get_selector(scenario, model_key)
     resolved = _resolve_model_key(scenario, model_key)
-    model = models_registry.get_model(resolved)
-    objectives = list(selector.F.columns)
-    polarities = get_polarities(model)
-    return {
-        "scenario": scenario,
-        "model_key": resolved,
-        "objectives": objectives,
-        "polarities": polarities,
-        "result_kind": selector.result_kind,
-        "n_solutions": int(len(selector.solutions)),
-        "solutions": _objectives_rows(selector),
-        "capabilities": selector.capabilities(),
-    }
+    out = build_front_from_selector(selector)
+    out["scenario"] = scenario
+    out["model_key"] = resolved
+    return out
 
 
 def get_capabilities(scenario: str, model_key: Optional[str] = None) -> dict:
@@ -198,8 +281,7 @@ def get_capabilities(scenario: str, model_key: Optional[str] = None) -> dict:
 
     Raises _SelectorNotFound on bad scenario / missing pickles (→ 404).
     """
-    selector = get_selector(scenario, model_key)
-    return selector.capabilities()
+    return capabilities_from_selector(get_selector(scenario, model_key))
 
 
 def select(
@@ -219,49 +301,4 @@ def select(
             missing required argument (→ 422).
     """
     selector = get_selector(scenario, model_key)
-    resolved = _resolve_model_key(scenario, model_key)
-
-    if strategy == "best":
-        if not objective_name:
-            raise StrategyUnavailableError(
-                "strategy='best' requires objective_name"
-            )
-        idx, _sol, label = selector.best(objective_name)
-    elif strategy == "balanced":
-        idx, _sol, label = selector.balanced()
-    elif strategy == "knee":
-        idx, _sol, label = selector.knee()
-    elif strategy == "by_weights":
-        if not weights:
-            raise StrategyUnavailableError(
-                "strategy='by_weights' requires weights dict"
-            )
-        idx, _sol, label = selector.by_weights(weights)
-    elif strategy == "by_index":
-        if index is None:
-            raise StrategyUnavailableError(
-                "strategy='by_index' requires index"
-            )
-        idx, _sol, label = selector.by_index(index)
-    elif strategy == "the_solution":
-        idx, _sol, label = selector.the_solution()
-    else:
-        raise StrategyUnavailableError(
-            f"Unknown strategy {strategy!r}. Valid: best, balanced, knee, "
-            f"by_weights, by_index, the_solution"
-        )
-
-    # Build absolute objectives for the selected row
-    row = selector.F.iloc[idx]
-    objectives_abs = {col: _float(abs(row[col])) for col in selector.F.columns}
-
-    detail = {
-        "index": int(idx),
-        "label": str(label),
-        "objectives_abs": objectives_abs,
-    }
-    return {
-        "index": int(idx),
-        "label": str(label),
-        "detail": detail,
-    }
+    return select_from_selector(selector, strategy, objective_name, weights, index)

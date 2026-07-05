@@ -16,6 +16,7 @@ from app import settings
 from app.ratelimit import limiter
 from app.routers import (
     fronts, library, models, scenarios, replay, playback, comparison, optimize,
+    playground,
 )
 
 app = FastAPI(
@@ -43,6 +44,7 @@ app.include_router(replay.router)
 app.include_router(playback.router)
 app.include_router(comparison.router)
 app.include_router(optimize.router)
+app.include_router(playground.router)
 
 
 @app.on_event("shutdown")

@@ -33,6 +33,10 @@ class SolutionSelector:
                     "MOO front collapsed to a single non-dominated solution — "
                     "treating as 'single'. This is a convergence signal worth checking.")
 
+    @property
+    def n_solutions(self):
+        return len(self.solutions)
+
     @classmethod
     def from_scenario(cls, scenario: str, model: dict):
         obj_path = f"{objective_values_filepath}{scenario}-ObjectiveValues.pkl"

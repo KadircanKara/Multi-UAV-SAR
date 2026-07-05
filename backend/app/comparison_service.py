@@ -38,6 +38,14 @@ from PathOptimizationModel import (
 from PathFuncDict import model_metric_info, objective_values
 from SensingReplay import METRIC_COLUMNS
 
+# Only for TYPE_CHECKING-style hints in signatures; playground_reconstruct is
+# imported lazily inside _label_and_params_for_result to avoid a hard
+# import-time dependency from comparison_service on the playground module.
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.playground_schema import PlaygroundResult
+
 
 # Canonical objective set + polarities (authoritative from PathFuncDict).
 #   +1 → minimize (lower is better);  -1 → maximize (higher is better).
@@ -58,6 +66,64 @@ def _optimized_objective_names(model: dict) -> list[str]:
         except Exception:
             return list(model.get("F", []))
     return list(model.get("F", []))
+
+
+def stats_from_objective_dicts(
+    obj_dicts: list[dict[str, Optional[float]]],
+    model: dict,
+    n_visits: Optional[int],
+) -> dict[str, Optional[dict]]:
+    """Aggregate a list of per-solution objective dicts into one scenario's
+    ``objective_stats`` block.
+
+    Each dict in *obj_dicts* holds the 5 canonical objectives, RAW/unsigned
+    (the shape ``PathFuncDict.objective_values()`` returns). For every
+    objective this computes min/max/mean across the list and ``best`` honours
+    the objective's polarity (max for maximize / -1, min for minimize / +1).
+    ``Max Mean TBV`` is forced to ``None`` when *n_visits* == 1 (undefined
+    when every cell is visited exactly once), and an objective with no finite
+    values anywhere in *obj_dicts* also reports ``None``.
+
+    *model* is accepted (currently unused in the aggregation itself — polarity
+    is read from the global, model-independent ``_POLARITY`` table) so this
+    helper's signature stays stable if a future caller needs to special-case
+    a model's own objective set.
+
+    Shared by the seeded path (``_scenario_stats``, dicts built via
+    ``objective_values(sol)``) and the playground path
+    (``compare_objectives_from_results``, dicts read straight from the
+    uploaded/stored ``PlaygroundResult.solutions[i].objectives``).
+    """
+    del model  # unused today; kept for signature symmetry — see docstring.
+
+    per_obj: dict[str, list[float]] = {obj: [] for obj in ALL_OBJECTIVES}
+    for vals in obj_dicts:
+        for obj in ALL_OBJECTIVES:
+            v = vals.get(obj)
+            if v is not None and math.isfinite(v):
+                per_obj[obj].append(v)
+
+    objective_stats: dict[str, Optional[dict]] = {}
+    for obj in ALL_OBJECTIVES:
+        # TBV is meaningless at n_visits == 1 — surface as "no data".
+        if obj == _TBV_OBJECTIVE and n_visits == 1:
+            objective_stats[obj] = None
+            continue
+        vals = per_obj[obj]
+        if not vals:
+            objective_stats[obj] = None
+            continue
+        pol = _POLARITY.get(obj, 1)
+        mn, mx = min(vals), max(vals)
+        me = sum(vals) / len(vals)
+        best = mx if pol == -1 else mn
+        objective_stats[obj] = {
+            "min": _safe_float(mn),
+            "max": _safe_float(mx),
+            "mean": _safe_float(me),
+            "best": _safe_float(best),
+        }
+    return objective_stats
 
 
 def _scenario_stats(scenario: str) -> Optional[dict]:
@@ -84,35 +150,10 @@ def _scenario_stats(scenario: str) -> Optional[dict]:
         params.get("variant_value") if params.get("variant") == "nvisits" else None
     )
 
-    # Collect each objective's values across every solution in the front.
-    per_obj: dict[str, list[float]] = {obj: [] for obj in ALL_OBJECTIVES}
-    for sol in selector.solutions:
-        vals = objective_values(sol)
-        for obj in ALL_OBJECTIVES:
-            v = vals.get(obj)
-            if v is not None and math.isfinite(v):
-                per_obj[obj].append(v)
-
-    objective_stats: dict[str, Optional[dict]] = {}
-    for obj in ALL_OBJECTIVES:
-        # TBV is meaningless at n_visits == 1 — surface as "no data".
-        if obj == _TBV_OBJECTIVE and n_visits == 1:
-            objective_stats[obj] = None
-            continue
-        vals = per_obj[obj]
-        if not vals:
-            objective_stats[obj] = None
-            continue
-        pol = _POLARITY.get(obj, 1)
-        mn, mx = min(vals), max(vals)
-        me = sum(vals) / len(vals)
-        best = mx if pol == -1 else mn
-        objective_stats[obj] = {
-            "min": _safe_float(mn),
-            "max": _safe_float(mx),
-            "mean": _safe_float(me),
-            "best": _safe_float(best),
-        }
+    # Collect each objective's values across every solution in the front, then
+    # hand off to the shared aggregator.
+    obj_dicts = [objective_values(sol) for sol in selector.solutions]
+    objective_stats = stats_from_objective_dicts(obj_dicts, model, n_visits)
 
     comm_range_raw = params.get("comm_range")
     comm_range_value: Optional[float] = None
@@ -166,6 +207,86 @@ def compare_objectives(scenarios: list[str]) -> dict:
         "polarities": {o: _POLARITY.get(o, 1) for o in ALL_OBJECTIVES},
         "scenarios": results,
         "skipped": skipped,
+    }
+
+
+def _label_and_params_for_result(result: "PlaygroundResult") -> tuple[str, dict]:
+    """Derive a stable scenario label + structured params for one uploaded
+    result.
+
+    Reuses ``PathInfo.__str__`` (the same canonical-name format seeded
+    scenarios are stored under, e.g. ``MOO_NSGA2_TCDT_g_8_..._nvisits_2``) via
+    ``playground_reconstruct.reconstruct_info``, then feeds that label through
+    the same regex parser (``parse_scenario_params``) the seeded path uses —
+    so a playground row's metadata (comm_range formatting, number_of_drones,
+    n_visits, ...) has exactly the same shape as a seeded row's. Building a
+    PathInfo is cheap (no path/connectivity computation, unlike
+    ``reconstruct_solution(..., full=True)``).
+    """
+    from app.playground_reconstruct import reconstruct_info
+
+    info = reconstruct_info(result.scenario.to_scenario_dict(), result.model)
+    label = str(info)
+    return label, parse_scenario_params(label)
+
+
+def compare_objectives_from_results(results: "list[PlaygroundResult]") -> dict:
+    """Cross-model comparison for uploaded Playground results.
+
+    Unlike ``compare_objectives`` (which loads seeded selectors off disk and
+    fills any missing objective via ``objective_values()``), this reads the
+    objective values already STORED in each uploaded solution
+    (``PlaygroundResult.solutions[i].objectives``) — the exact values the run
+    was exported with. Reconstructed playground solutions are "light" (no
+    cached path/connectivity/TBV attributes — see
+    ``playground_reconstruct.reconstruct_solution``), so calling
+    ``objective_values()`` on them would both be slow (full recompute) and
+    could diverge from the values the file was actually exported with. No
+    selector reconstruction is needed for this endpoint at all.
+
+    Every uploaded result is already schema-validated (no disk / name lookup
+    that can fail), so ``skipped`` is always empty here — it stays in the
+    response purely to keep the shape identical to ``compare_objectives``.
+    """
+    scenario_rows: list[dict] = []
+    for result in results:
+        label, params = _label_and_params_for_result(result)
+        n_visits = (
+            params.get("variant_value") if params.get("variant") == "nvisits" else None
+        )
+
+        obj_dicts = [sol.objectives for sol in result.solutions]
+        objective_stats = stats_from_objective_dicts(obj_dicts, result.model, n_visits)
+
+        comm_range_raw = params.get("comm_range")
+        comm_range_value: Optional[float] = None
+        if comm_range_raw is not None:
+            try:
+                comm_range_value = _parse_comm_range_value(comm_range_raw)
+            except (ValueError, TypeError):
+                comm_range_value = None
+
+        model_key = result.model.get("model_key") or result.model.get("Exp", "")
+
+        scenario_rows.append({
+            "scenario": label,
+            "model_key": model_key,
+            "type": result.model.get("Type", ""),
+            "algorithm": result.model.get("Alg", ""),
+            "optimized_objectives": _optimized_objective_names(result.model),
+            "number_of_drones": params.get("number_of_drones"),
+            "comm_range": comm_range_raw,
+            "comm_range_value": comm_range_value,
+            "n_visits": n_visits,
+            "n_solutions": int(len(result.solutions)),
+            "objective_stats": objective_stats,
+        })
+
+    return {
+        "objectives": ALL_OBJECTIVES,
+        "polarities": {o: _POLARITY.get(o, 1) for o in ALL_OBJECTIVES},
+        "scenarios": scenario_rows,
+        "skipped": [],
     }
 
 

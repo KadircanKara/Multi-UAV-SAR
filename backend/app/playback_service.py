@@ -1,9 +1,10 @@
 """
 Playback service: builds the per-step animation payload for the browser canvas.
 
-Reuses prepare_replay (Task 1.2 refactor) to get the live ReplayResult, then
-extracts continuous trajectories, sparse connectivity edges, per-cell belief
-heat, and targets-known curve — all aligned to a single step axis.
+Reuses prepare_replay_for_solution (Task 5 refactor) to get the live
+ReplayResult, then extracts continuous trajectories, sparse connectivity
+edges, per-cell belief heat, and targets-known curve — all aligned to a
+single step axis.
 
 Import-safety: Time.get_real_paths, Time.get_real_connectivity_matrix,
 SensingReplay._targets_known_curve, numpy are safe.
@@ -17,6 +18,18 @@ Mode branching (discrete vs realtime):
   (same waypoint granularity). This ensures trajectory, connectivity, belief,
   and targets_known are all at the same waypoint granularity so the min()
   alignment truncation does not silently discard 94% of the flight.
+
+NOTE on build_playback (scenario-based): it fetches the RAW solution via
+replay_service._solution_at (not via prepare_replay) and delegates to
+build_playback_for_solution, which runs prepare_replay_for_solution exactly
+once. replay()/the sensing pipeline mutates its returned solution copy
+in-place (e.g. an early-returning drone's future real_time_path_matrix
+columns are overwritten with its return-to-base path); feeding an
+already-replayed solution into a second replay call measurably changes the
+computed metrics (verified: effective_mission_time differed by ~17 time
+units between a clean run and a run seeded from a once-replayed solution).
+So the solution must be replayed exactly once per request — never round
+tripped through prepare_replay first.
 """
 from __future__ import annotations
 
@@ -29,7 +42,7 @@ import numpy as np
 from Time import get_real_paths, get_real_connectivity_matrix
 from SensingReplay import _targets_known_curve
 
-from app.replay_service import prepare_replay
+from app.replay_service import _solution_at, prepare_replay_for_solution
 
 
 # ---------------------------------------------------------------------------
@@ -72,40 +85,38 @@ def _sparse_connectivity(conn_matrix: np.ndarray) -> list[list[list[int]]]:
 
 
 # ---------------------------------------------------------------------------
-# Main service function
+# Solution-accepting core
 # ---------------------------------------------------------------------------
 
-def build_playback(
-    scenario: str,
-    model_key: Optional[str],
-    index: int,
+def build_playback_for_solution(
+    solution,
     cfg_dict: dict,
     stride: int = 1,
 ) -> dict:
     """
-    Build the animation playback payload for one solution.
+    Build the animation playback payload for an already-obtained solution.
 
     Returns a JSON-safe dict with trajectories, connectivity edges, belief heat,
     and targets-known curve — all truncated to a single aligned step axis.
 
+    Note: does NOT echo scenario/model_key/index (the caller doesn't have a
+    scenario identity when replaying a reconstructed/uploaded solution); the
+    scenario-based build_playback wrapper adds those keys after delegating here.
+
     Parameters
     ----------
-    scenario   : Scenario identifier (path-safe; selector_service validates).
-    model_key  : Optional model override (None → auto-detect).
-    index      : Solution index within the Pareto front.
+    solution   : An already-obtained PathSolution (seeded or reconstructed).
     cfg_dict   : SensingConfig override dict (merge_topology, time_model, p, q, B, targets).
     stride     : Downsample every stride-th step (≥1).  Bounds payload size.
 
     Raises
     ------
-    _SelectorNotFound        → 404
-    StrategyUnavailableError → 422
-    ValueError               → 422  (bad config, degenerate replay, bad stride)
+    ValueError — bad config, degenerate replay, bad stride (→ 422).
     """
     stride = max(1, int(stride))  # clamp
 
-    # 1. Run the replay (reuses Task 1.2 prepare_replay).
-    r = prepare_replay(scenario, model_key, index, cfg_dict)
+    # 1. Run the replay (reuses Task 5 prepare_replay_for_solution).
+    r = prepare_replay_for_solution(solution, cfg_dict)
     sol = r.solution
     info = sol.info
 
@@ -228,9 +239,6 @@ def build_playback(
 
     return {
         # Echo / identity
-        "scenario": scenario,
-        "model_key": model_key,
-        "index": int(index),
         "time_model": r.config.time_model,
         "merge_topology": r.config.merge_topology,
         # Grid / node metadata
@@ -250,3 +258,44 @@ def build_playback(
         "belief": belief_payload,
         "targets_known": targets_known_payload,
     }
+
+
+# ---------------------------------------------------------------------------
+# Public service function (scenario-based; thin wrapper over the core)
+# ---------------------------------------------------------------------------
+
+def build_playback(
+    scenario: str,
+    model_key: Optional[str],
+    index: int,
+    cfg_dict: dict,
+    stride: int = 1,
+) -> dict:
+    """
+    Build the animation playback payload for one solution.
+
+    Fetches the raw solution via the same seam replay_service uses
+    (_solution_at) and delegates to build_playback_for_solution, which runs
+    the replay exactly once — see module docstring for why this must not go
+    through prepare_replay first (double-replay corrupts the metrics).
+
+    Parameters
+    ----------
+    scenario   : Scenario identifier (path-safe; selector_service validates).
+    model_key  : Optional model override (None → auto-detect).
+    index      : Solution index within the Pareto front.
+    cfg_dict   : SensingConfig override dict (merge_topology, time_model, p, q, B, targets).
+    stride     : Downsample every stride-th step (≥1).  Bounds payload size.
+
+    Raises
+    ------
+    _SelectorNotFound        → 404
+    StrategyUnavailableError → 422
+    ValueError               → 422  (bad config, degenerate replay, bad stride)
+    """
+    solution, _sel = _solution_at(scenario, model_key, index)
+    payload = build_playback_for_solution(solution, cfg_dict, stride)
+    payload["scenario"] = scenario
+    payload["model_key"] = model_key
+    payload["index"] = int(index)
+    return payload

@@ -50,8 +50,90 @@ def _build_config(solution, cfg_dict: dict) -> SensingConfig:
     return SensingConfig.from_info(solution.info, **cfg_dict)
 
 
+def _assemble_compare_result(results: list) -> dict:
+    """
+    Shared table/rows assembly for run_compare and run_compare_for_solution.
+
+    Returns::
+
+        {
+            "table": [
+                {"label": <str>, "Effective Mission Time": <float|None>, ...},
+                ...
+            ],
+            "rows": [<each replay's to_dict()>, ...]
+        }
+    """
+    replay_dicts = [r.to_dict() for r in results]
+
+    # Build table from the already-serialized dicts (inf already → None).
+    table = []
+    for rd in replay_dicts:
+        row: dict = {"label": rd["label"]}
+        for display_col, attr_key in METRIC_COLUMNS.items():
+            row[display_col] = rd[attr_key]
+        table.append(row)
+
+    return {"table": table, "rows": replay_dicts}
+
+
 # ---------------------------------------------------------------------------
-# Public service functions
+# Solution-accepting cores
+#
+# These operate on an already-obtained `solution` object (either fetched via
+# _solution_at from a seeded scenario, or reconstructed from uploaded
+# playground JSON). The scenario-based functions below are thin wrappers that
+# fetch the solution then delegate here.
+# ---------------------------------------------------------------------------
+
+def prepare_replay_for_solution(solution, cfg_dict: dict, label: Optional[str] = None):
+    """
+    Run a single sensing replay for an already-obtained solution and return
+    the live ReplayResult object.
+
+    Raises:
+        ValueError — bad sensing config (p<=q, grid bounds, …) (→ 422).
+    """
+    config = _build_config(solution, cfg_dict)
+    return replay(solution, config, label=label)
+
+
+def run_replay_for_solution(solution, cfg_dict: dict, label: Optional[str] = None) -> dict:
+    """Run a single sensing replay for an already-obtained solution and return its to_dict() payload."""
+    return prepare_replay_for_solution(solution, cfg_dict, label=label).to_dict()
+
+
+def run_compare_for_solution(
+    solution,
+    cfg_dicts: list[dict],
+    labels: Optional[list[str]] = None,
+) -> dict:
+    """
+    Run a replay per config for an already-obtained solution and return a
+    comparison payload (see _assemble_compare_result).
+
+    Raises:
+        ValueError — empty cfg_dicts, or bad sensing config (→ 422).
+    """
+    if not cfg_dicts:
+        raise ValueError("configs must not be empty")
+
+    # Build configs once up front so _dedupe_labels can inspect merge_topology
+    # (mirrors run_compare's dedup behavior exactly). SensingConfig.from_info
+    # is pure/side-effect-free, so rebuilding it inside prepare_replay_for_solution
+    # below is redundant but harmless.
+    configs = [_build_config(solution, cd) for cd in cfg_dicts]
+    deduped_labels = _dedupe_labels(configs, labels)
+
+    results = [
+        prepare_replay_for_solution(solution, cd, label=lbl)
+        for cd, lbl in zip(cfg_dicts, deduped_labels)
+    ]
+    return _assemble_compare_result(results)
+
+
+# ---------------------------------------------------------------------------
+# Public service functions (scenario-based; thin wrappers over the cores)
 # ---------------------------------------------------------------------------
 
 def prepare_replay(
@@ -73,8 +155,7 @@ def prepare_replay(
         ValueError             — bad sensing config (p<=q, grid bounds, …) (→ 422).
     """
     solution, _sel = _solution_at(scenario, model_key, index)
-    config = _build_config(solution, cfg_dict)
-    return replay(solution, config, label=label)
+    return prepare_replay_for_solution(solution, cfg_dict, label=label)
 
 
 def run_replay(
@@ -125,21 +206,4 @@ def run_compare(
         raise ValueError("configs must not be empty")
 
     solution, _sel = _solution_at(scenario, model_key, index)
-
-    configs = [_build_config(solution, cd) for cd in cfg_dicts]
-    deduped_labels = _dedupe_labels(configs, labels)
-
-    replay_dicts = []
-    for config, lbl in zip(configs, deduped_labels):
-        r = replay(solution, config, label=lbl)
-        replay_dicts.append(r.to_dict())
-
-    # Build table from the already-serialized dicts (inf already → None).
-    table = []
-    for rd in replay_dicts:
-        row: dict = {"label": rd["label"]}
-        for display_col, attr_key in METRIC_COLUMNS.items():
-            row[display_col] = rd[attr_key]
-        table.append(row)
-
-    return {"table": table, "rows": replay_dicts}
+    return run_compare_for_solution(solution, cfg_dicts, labels=labels)
