@@ -38,3 +38,10 @@ MAX_N_GEN: int = _int_env("SAR_MAX_N_GEN", 1000)
 # e.g. "10/minute", "100/hour". Override for a public deploy via
 # SAR_OPTIMIZE_RATE_LIMIT.
 OPTIMIZE_RATE_LIMIT: str = os.environ.get("SAR_OPTIMIZE_RATE_LIMIT", "30/minute")
+
+# ── Deploy-safety: request body size cap ────────────────────────────────────
+# Upper bound on request body size (bytes), enforced via the Content-Length
+# header by a middleware in main.py. Guards against a schema-valid worst-case
+# Playground upload (2000 solutions x 100k-int paths) ballooning into
+# gigabytes of memory. Override via SAR_MAX_UPLOAD_BYTES.
+MAX_UPLOAD_BYTES: int = _int_env("SAR_MAX_UPLOAD_BYTES", 25 * 1024 * 1024)

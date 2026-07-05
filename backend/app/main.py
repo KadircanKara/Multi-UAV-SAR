@@ -6,9 +6,9 @@ are importable everywhere before the routers are loaded.
 """
 import app.rootpath  # side-effect: inserts repo root into sys.path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import ORJSONResponse
+from fastapi.responses import JSONResponse, ORJSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
@@ -35,6 +35,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def limit_upload_size(request: Request, call_next):
+    """Reject oversized request bodies before the route runs, based on the
+    Content-Length header. Requests without a Content-Length header (e.g.
+    chunked transfer-encoding) pass through unchecked here; body size for
+    those is bounded only by whatever the route itself enforces.
+    """
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            length = int(content_length)
+        except ValueError:
+            length = None
+        if length is not None and length > settings.MAX_UPLOAD_BYTES:
+            return JSONResponse(
+                status_code=413, content={"detail": "request body too large"}
+            )
+    return await call_next(request)
 
 app.include_router(models.router)
 app.include_router(scenarios.router)

@@ -45,6 +45,24 @@ def test_playground_comparison_reports_all_objectives(client):
             "Max Disconnected Time", "Mean Disconnected Time", "Max Mean TBV"}
         assert s["objective_stats"]["Mission Time"]["best"] is not None
 
+def test_playground_malformed_model_missing_F_is_422(client):
+    bad = _payload()
+    del bad["model"]["F"]
+    r = client.post("/api/playground/front", json={"result": bad})
+    assert r.status_code == 422
+
+def test_playground_frow_length_mismatch_is_422(client):
+    bad = _payload()
+    bad["solutions"][0]["f_row"].append(0.0)
+    r = client.post("/api/playground/front", json={"result": bad})
+    assert r.status_code == 422
+
+def test_playground_oversized_body_is_413(client, monkeypatch):
+    from app import settings
+    monkeypatch.setattr(settings, "MAX_UPLOAD_BYTES", 10, raising=False)
+    r = client.post("/api/playground/front", json={"result": _payload()})
+    assert r.status_code == 413
+
 def test_playground_front_is_rate_limited(client, monkeypatch):
     from app import settings
     monkeypatch.setattr(settings, "OPTIMIZE_RATE_LIMIT", "1/minute", raising=False)
