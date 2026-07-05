@@ -38,3 +38,7 @@ Figures/**
 
 # Large binary results that may slip in
 *.pkl
+
+# Local data backups / script outputs (never commit)
+Results_BACKUP/
+backend/scripts/verify_results/
