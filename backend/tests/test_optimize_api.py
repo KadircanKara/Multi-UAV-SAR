@@ -26,6 +26,27 @@ def _runnable(**over):
     return body
 
 
+# ─── purge stale runs ─────────────────────────────────────────────────────────
+
+def test_purge_stale_runs_removes_old_only(tmp_path, monkeypatch):
+    import os, time
+    from app import optimizer_service, settings
+    runs = os.path.join(settings.RESULTS_ROOT, ".runs")
+    os.makedirs(runs, exist_ok=True)
+    old = os.path.join(runs, "aaaaaaaaaaaa"); os.makedirs(old, exist_ok=True)
+    new = os.path.join(runs, "bbbbbbbbbbbb"); os.makedirs(new, exist_ok=True)
+    old_mtime = time.time() - settings.RUN_TTL_HOURS * 3600 - 60
+    os.utime(old, (old_mtime, old_mtime))
+    try:
+        purged = optimizer_service._purge_stale_runs()
+        assert "aaaaaaaaaaaa" in purged and not os.path.isdir(old)
+        assert "bbbbbbbbbbbb" not in purged and os.path.isdir(new)
+    finally:
+        import shutil
+        for d in (old, new):
+            shutil.rmtree(d, ignore_errors=True)
+
+
 # ─── check / model synthesis ──────────────────────────────────────────────────
 
 def test_check_preset_combo_resolves_and_exists(client):

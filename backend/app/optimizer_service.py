@@ -281,6 +281,30 @@ def _disk_job(run_id: str) -> Optional[dict]:
     }
 
 
+def _purge_stale_runs(now: Optional[float] = None) -> list[str]:
+    """Remove temp .runs/<id> dirs older than settings.RUN_TTL_HOURS. Best-effort:
+    never raises (a sweep failure must not block a new run)."""
+    import shutil
+    import time as _time
+    now = now if now is not None else _time.time()
+    root = os.path.join(settings.RESULTS_ROOT, ".runs")
+    cutoff = now - settings.RUN_TTL_HOURS * 3600
+    purged: list[str] = []
+    try:
+        entries = os.listdir(root)
+    except OSError:
+        return purged
+    for name in entries:
+        d = os.path.join(root, name)
+        try:
+            if os.path.isdir(d) and os.path.getmtime(d) < cutoff:
+                shutil.rmtree(d, ignore_errors=True)
+                purged.append(name)
+        except OSError:
+            continue
+    return purged
+
+
 def serialize_finished_run(run_id: str) -> dict:
     """Serialize a finished run's on-disk artifacts to the Playground JSON schema.
     Reuses playground_export.serialize_run; embeds the full resolved model_key."""
@@ -335,6 +359,7 @@ def start_run(
     alg = model_dict["Alg"]
 
     with _lock:
+        _purge_stale_runs()
         if any(not j["future"].done() for j in _jobs.values()):
             raise RunInProgressError("A run is already in progress.")
         run_id = uuid.uuid4().hex[:12]
