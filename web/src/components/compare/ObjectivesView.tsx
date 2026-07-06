@@ -53,12 +53,12 @@ import {
 
 // ─── Dynamic (SSR-off) chart imports — mirrors the model/compare pages ────────
 
-const ParameterEffectChart = dynamic<ParameterEffectChartProps>(
+export const ParameterEffectChart = dynamic<ParameterEffectChartProps>(
   () => import("@/components/viz/ParameterEffectChart"),
   { ssr: false, loading: () => <ChartSkeleton /> }
 );
 
-const CompareStackedBarChart = dynamic<CompareStackedBarChartProps>(
+export const CompareStackedBarChart = dynamic<CompareStackedBarChartProps>(
   () => import("@/components/viz/CompareStackedBarChart"),
   { ssr: false, loading: () => <ChartSkeleton /> }
 );
@@ -68,7 +68,7 @@ const CompareStackedBarChart = dynamic<CompareStackedBarChartProps>(
 export type ChartType = "bar" | "line" | "radar" | "table";
 type StatKey = "best" | "mean" | "min" | "max";
 
-const SWEEP_LABELS: Record<SweepParam, string> = {
+export const SWEEP_LABELS: Record<SweepParam, string> = {
   drones: "Number of Drones",
   comm_range: "Comm Range",
   n_visits: "n_visits",
@@ -79,18 +79,18 @@ const SWEEP_LABELS: Record<SweepParam, string> = {
 // page's Time Metrics tab.
 const BARS_PER_ROW_BREAKPOINT = 12;
 
-function barGridClass(comboCount: number): string {
+export function barGridClass(comboCount: number): string {
   return comboCount > BARS_PER_ROW_BREAKPOINT
     ? "grid gap-6 grid-cols-1"
     : "grid gap-6 grid-cols-1 md:grid-cols-2";
 }
 
-function ChartSkeleton() {
+export function ChartSkeleton() {
   return <Skeleton className="h-48 w-full rounded" />;
 }
 
 // Compact entity label: `${model_key} · ${drones}d · r${comm} · v${nvisits}`.
-function entityLabel(s: {
+export function entityLabel(s: {
   model_key: string;
   number_of_drones: number | null;
   comm_range: string | null;
@@ -103,7 +103,7 @@ function entityLabel(s: {
   return parts.join(" · ");
 }
 
-function ChartTypeSwitch({
+export function ChartTypeSwitch({
   value,
   onChange,
 }: {
@@ -136,7 +136,7 @@ function ChartTypeSwitch({
   );
 }
 
-function SweepParamSelect({
+export function SweepParamSelect({
   value,
   onChange,
 }: {
@@ -173,7 +173,7 @@ const TBV_NA_MESSAGE =
   "visits. Increase n_visits to compare it.";
 
 // A titled placeholder shown in a chart slot (no data, or metric not applicable).
-function ChartEmptyNote({ title, message }: { title: string; message: string }) {
+export function ChartEmptyNote({ title, message }: { title: string; message: string }) {
   return (
     <div className="flex flex-col gap-1">
       <p className="text-xs font-medium text-foreground">{title}</p>

@@ -23,7 +23,6 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import dynamic from "next/dynamic";
 import Link from "next/link";
 import { toast } from "sonner";
 import { getLibrary, compareObjectives, compareTimeMetrics } from "@/lib/api";
@@ -37,7 +36,18 @@ import ModelScenarioPicker, {
   type PickerSelection,
 } from "@/components/compare/ModelScenarioPicker";
 import CompareRunDetails from "@/components/compare/CompareRunDetails";
-import { ObjectivesView } from "@/components/compare/ObjectivesView";
+import {
+  ObjectivesView,
+  ParameterEffectChart,
+  CompareStackedBarChart,
+  SWEEP_LABELS,
+  barGridClass,
+  entityLabel,
+  ChartTypeSwitch,
+  SweepParamSelect,
+  ChartEmptyNote,
+  type ChartType,
+} from "@/components/compare/ObjectivesView";
 import MetricComparisonView, {
   type CompareMetric,
   type CompareEntity,
@@ -52,11 +62,7 @@ import {
   type StackedScenarioRow,
   type StackedBarData,
 } from "@/components/compare/buildStackedBars";
-import type { CompareStackedBarChartProps } from "@/components/viz/CompareStackedBarChart";
-import type {
-  ParameterEffectChartProps,
-  EffectSeries,
-} from "@/components/viz/ParameterEffectChart";
+import type { EffectSeries } from "@/components/viz/ParameterEffectChart";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -74,27 +80,7 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
 
-// ─── Dynamic (SSR-off) chart import — mirrors the model page ──────────────────
-
-const ParameterEffectChart = dynamic<ParameterEffectChartProps>(
-  () => import("@/components/viz/ParameterEffectChart"),
-  { ssr: false, loading: () => <ChartSkeleton /> }
-);
-
-const CompareStackedBarChart = dynamic<CompareStackedBarChartProps>(
-  () => import("@/components/viz/CompareStackedBarChart"),
-  { ssr: false, loading: () => <ChartSkeleton /> }
-);
-
 // ─── Constants ────────────────────────────────────────────────────────────────
-
-type ChartType = "bar" | "line" | "radar" | "table";
-
-const SWEEP_LABELS: Record<SweepParam, string> = {
-  drones: "Number of Drones",
-  comm_range: "Comm Range",
-  n_visits: "n_visits",
-};
 
 // Comparison batches are capped by BARS (parameter combinations on the x-axis),
 // not raw scenarios — models stack within a bar, so the bar count is what the user
@@ -105,19 +91,6 @@ const SWEEP_LABELS: Record<SweepParam, string> = {
 const MAX_COMPARE_BARS = 36;
 const MAX_OBJ_SCENARIOS = 360; // 36 bars × up to 10 stacked models
 const MAX_TIME_SCENARIOS = 144; // 36 bars × up to 4 models (one replay per scenario)
-
-// Bars on a stacked-bar chart = parameter combinations on the x-axis (models are
-// stacked within each bar). At two charts per row each plot is ~530px wide, which
-// stays legible to ~12 rotated combo labels; beyond that the bar charts go to one
-// per row so each plot doubles in width. Every chart in a tab shares the same
-// combos, so this is a single per-tab decision.
-const BARS_PER_ROW_BREAKPOINT = 12;
-
-function barGridClass(comboCount: number): string {
-  return comboCount > BARS_PER_ROW_BREAKPOINT
-    ? "grid gap-6 grid-cols-1"
-    : "grid gap-6 grid-cols-1 md:grid-cols-2";
-}
 
 // Parameter-combination key (drones · comm · n_visits) parsed from a scenario name
 // "..._n_{drones}_v_{speed}_r_{comm}_nvisits_{nv}" — one bar on the x-axis.
@@ -171,10 +144,6 @@ function OverflowNote({ shown, total }: { shown: number; total: number }) {
 
 // ─── Small utility components (module scope) ──────────────────────────────────
 
-function ChartSkeleton() {
-  return <Skeleton className="h-48 w-full rounded" />;
-}
-
 function PageSkeleton() {
   return (
     <div className="flex flex-col gap-4">
@@ -200,100 +169,6 @@ function OfflinePanel({ message }: { message: string }) {
           {message}
         </p>
       )}
-    </div>
-  );
-}
-
-// Compact entity label: `${model_key} · ${drones}d · r${comm} · v${nvisits}`.
-function entityLabel(s: {
-  model_key: string;
-  number_of_drones: number | null;
-  comm_range: string | null;
-  n_visits: number | null;
-}): string {
-  const parts = [s.model_key];
-  if (s.number_of_drones != null) parts.push(`${s.number_of_drones}d`);
-  if (s.comm_range != null) parts.push(`r${s.comm_range}`);
-  if (s.n_visits != null) parts.push(`v${s.n_visits}`);
-  return parts.join(" · ");
-}
-
-// ─── Chart-type switcher (module scope) ───────────────────────────────────────
-
-function ChartTypeSwitch({
-  value,
-  onChange,
-}: {
-  value: ChartType;
-  onChange: (v: ChartType) => void;
-}) {
-  return (
-    <ToggleGroup
-      type="single"
-      value={value}
-      onValueChange={(v) => {
-        if (v === "bar" || v === "line" || v === "radar" || v === "table")
-          onChange(v);
-      }}
-      className="justify-start gap-2"
-    >
-      <ToggleGroupItem value="bar" className="h-7 px-3 text-xs">
-        Bar
-      </ToggleGroupItem>
-      <ToggleGroupItem value="line" className="h-7 px-3 text-xs">
-        Line
-      </ToggleGroupItem>
-      <ToggleGroupItem value="radar" className="h-7 px-3 text-xs">
-        Radar
-      </ToggleGroupItem>
-      <ToggleGroupItem value="table" className="h-7 px-3 text-xs">
-        Table
-      </ToggleGroupItem>
-    </ToggleGroup>
-  );
-}
-
-// Sweep-parameter Select for the line view (module scope).
-function SweepParamSelect({
-  value,
-  onChange,
-}: {
-  value: SweepParam;
-  onChange: (v: SweepParam) => void;
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="text-xs text-muted-foreground">
-        Sweep parameter
-      </span>
-      <Select value={value} onValueChange={(v) => onChange(v as SweepParam)}>
-        <SelectTrigger className="h-7 w-40 text-xs">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="drones" className="text-xs">
-            Drones
-          </SelectItem>
-          <SelectItem value="comm_range" className="text-xs">
-            Comm Range
-          </SelectItem>
-          <SelectItem value="n_visits" className="text-xs">
-            n_visits
-          </SelectItem>
-        </SelectContent>
-      </Select>
-    </div>
-  );
-}
-
-// A titled placeholder shown in a chart slot (no data, or metric not applicable).
-function ChartEmptyNote({ title, message }: { title: string; message: string }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <p className="text-xs font-medium text-foreground">{title}</p>
-      <p className="text-xs text-muted-foreground border border-dashed border-border rounded px-3 py-6 text-center">
-        {message}
-      </p>
     </div>
   );
 }
