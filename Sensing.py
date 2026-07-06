@@ -6,7 +6,6 @@ import pandas as pd
 from Connectivity import get_connected_node_ids, connected_components, PathSolution
 # from PathOptimizationModel import *
 # from Distance import interpolate_between_cities
-import itertools
 from copy import deepcopy
 
 from Time import get_real_connectivity_matrix, get_real_paths, isCoordinateDiscrete, intp_between_coords

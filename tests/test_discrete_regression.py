@@ -2,8 +2,9 @@ import numpy as np
 from Sensing import sensing_and_discrete_info_sharing
 from SensingReplay import SensingConfig
 
-# Frozen 2026-06-07 from the pre-refactor discrete pipeline (Task 4 Step 1).
-# If a behavior-preserving refactor changes ANY of these, the refactor is wrong.
+# Frozen 2026-07-06 from the evidence-fusion discrete pipeline (union-of-events
+# merging, odds-form belief fold). If a behavior-preserving refactor changes
+# ANY of these, the refactor is wrong.
 SNAPSHOT = {
     "detection time": 632.5483399593904,
     "inform time": 532.5483399593904,
