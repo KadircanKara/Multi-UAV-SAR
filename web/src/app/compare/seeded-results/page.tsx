@@ -799,9 +799,9 @@ export default function ComparePage() {
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6">
-      {/* Back link */}
+      {/* Back link — goes to the mission browser for a "back to browsing" feel */}
       <Link
-        href="/missions"
+        href="/missions/seeded-results"
         className="animate-hud-rise inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
         style={{ animationDelay: "0ms" }}
       >

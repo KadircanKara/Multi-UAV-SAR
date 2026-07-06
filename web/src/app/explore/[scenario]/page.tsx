@@ -29,9 +29,9 @@ export default function ExplorePage() {
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6">
-      {/* Back link — goes to the model page once the front is loaded, else missions */}
+      {/* Back link — goes to the model page once the front is loaded, else the mission browser */}
       <Link
-        href={modelKey ? "/model/" + encodeURIComponent(modelKey) : "/missions"}
+        href={modelKey ? "/model/" + encodeURIComponent(modelKey) : "/missions/seeded-results"}
         className="inline-flex items-center gap-1 text-xs font-mono tracking-widest text-muted-foreground hover:text-primary transition-colors uppercase"
       >
         ← {modelKey ?? "MISSIONS"}
