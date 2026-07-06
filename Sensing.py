@@ -1,4 +1,4 @@
-from math import atan, atan2
+from math import atan, atan2, ceil
 import numpy as np
 import pandas as pd
 # from PathInfo import *
@@ -82,6 +82,30 @@ def _fused_belief(observations, p, q, prior=0.5):
     if np.isinf(odds):
         return 1.0
     return odds / (1.0 + odds)
+
+
+def _matrix_column_arrival_steps(path_matrix, D, speed):
+    """Realtime step at which each path-matrix column's positions are reached.
+
+    Mirrors get_real_paths: leg j (col j -> j+1) spans dt = ceil(max-over-drones
+    dist / speed) endpoint-inclusive realtime columns, so its arrival lands dt-1
+    steps after the leg's start offset. dt=0 legs (every drone repeats its cell
+    — e.g. the consecutive re-visit columns nvisits>1 matrices encode) add NO
+    realtime columns; their arrival collapses onto the previous arrival step so
+    the visits still sense (RT-1 fix)."""
+    n_rows, n_cols = path_matrix.shape
+    arrivals = [0]
+    offset = 0
+    for j in range(n_cols - 1):
+        max_dist = max(D[path_matrix[r, j], path_matrix[r, j + 1]]
+                       for r in range(1, n_rows))
+        dt = ceil(max_dist / speed)
+        if dt == 0:
+            arrivals.append(arrivals[-1])
+        else:
+            arrivals.append(offset + dt - 1)
+            offset += dt
+    return arrivals
 
 
 def _compute_occupancy_status(search_map, B, p, q, number_of_nodes, number_of_cells):
@@ -175,7 +199,10 @@ def merge_maps(conn_comp, search_map, merge_topology="onboard"):
 
 def sensing_and_realtime_info_sharing(sol: PathSolution, config):
     """Realtime sensing + merging: continuous positions, per-second connectivity,
-    mid-flight merging. Sensing fires only on NEW grid arrivals (seam-deduped).
+    mid-flight merging. Sensing is driven by discrete path-matrix arrivals mapped
+    onto realtime steps (_matrix_column_arrival_steps): one sensing event per
+    (drone, matrix column), exactly like the discrete pipeline, so zero-distance
+    repeat-visit legs still sense even though they add no realtime columns (RT-1).
     Returns the same 7-key metrics dict as the discrete pipeline (contract AD1).
     Beliefs are fused from the union of unique sensing events (see
     _fused_belief); merging shares events, not posteriors.
@@ -185,13 +212,23 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
     B, p, q = config.belief_threshold, config.detection_prob, config.false_alarm_prob
     x = deepcopy(sol)
     info = x.info
-    drone_path_matrix = x.real_time_path_matrix[1:, :]
+    # sensing source; a copy so early-return mirror rewrites cannot alter
+    # positions/n_obs of columns that are still to be sensed
+    drone_path_matrix = x.real_time_path_matrix[1:, :].copy()
     realtime_x, realtime_y = get_real_paths(x)
 
     number_of_nodes, timesteps = realtime_x.shape
     number_of_drones = number_of_nodes - 1
 
     connectivity_matrix = get_real_connectivity_matrix(realtime_x, realtime_y, sol)
+
+    # matrix column -> realtime arrival step; group columns per step (dt=0 runs
+    # make several columns share one step)
+    col_arrivals = _matrix_column_arrival_steps(
+        x.real_time_path_matrix, info.D, info.max_drone_speed)
+    cols_at_step = {}
+    for col, s in enumerate(col_arrivals):
+        cols_at_step.setdefault(s, []).append(col)
 
     search_map = _init_search_map(info.number_of_nodes, info.number_of_cells)
     cell_occupancy_probabilities = [[] for _ in range(info.number_of_cells)]
@@ -212,49 +249,37 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
     cell_0_x, cell_0_y = sol.get_coords(0)
     cell_bs_x, cell_bs_y = sol.get_coords(-1)
 
-    for step in range(timesteps):
+    step = 0
+    while step < timesteps:
 
-        # --- locate drones; detect grid alignment -------------------------------
-        all_on_grid = True
+        # --- locate drones (continuous positions; used for merging cadence,
+        # early return and the home check) ---------------------------------------
         drone_on_grid = [False] * number_of_drones
         for drone in range(number_of_drones):
             pos_x = realtime_x[drone + 1, step]
             pos_y = realtime_y[drone + 1, step]
             drone_positions[drone] = sol.get_city((pos_x, pos_y))
-            on_grid = isCoordinateDiscrete(pos_x, pos_y, sol)
-            drone_on_grid[drone] = on_grid
-            if not on_grid:
-                all_on_grid = False
-
-        # Seam dedup (AD2): get_real_paths uses endpoint-inclusive linspace, so the
-        # last column of leg i duplicates the first column of leg i+1. A column only
-        # counts as a NEW grid arrival if any coordinate changed since the previous
-        # column; duplicates still merge/track time but never sense twice.
-        is_new_grid_arrival = all_on_grid and (
-            step == 0
-            or not (np.array_equal(realtime_x[:, step], realtime_x[:, step - 1])
-                    and np.array_equal(realtime_y[:, step], realtime_y[:, step - 1])))
-        if is_new_grid_arrival:
-            discrete_step += 1
+            drone_on_grid[drone] = isCoordinateDiscrete(pos_x, pos_y, sol)
 
         adj_mat = connectivity_matrix[step]
         conn_comp = connected_components(adj_mat)
 
-        # --- sensing: only on new grid arrivals ---------------------------------
-        if is_new_grid_arrival:
+        # --- sensing: one event per (drone, matrix column) arrival (RT-1) -------
+        for col in cols_at_step.get(step, ()):
+            discrete_step = col
             for drone in range(number_of_drones):
-                pos = drone_positions[drone]
+                if not drone_search_status[drone]:
+                    continue   # early-returned: row rewritten, search is over
+                pos = drone_path_matrix[drone, col]
                 if pos == -1:
                     continue
                 node_obs = search_map[drone + 1, pos]
                 positive = pos in target_locations
                 odds = _fused_odds(node_obs, p, q) * _likelihood_ratio(positive, p, q)
                 new_prob = 1.0 if np.isinf(odds) else odds / (1.0 + odds)
-                # n_obs counted from discrete-path arrivals, matching the discrete
-                # pipeline's bookkeeping for the same physical visit (AD2).
-                n_obs = len(np.where(drone_path_matrix[drone, :discrete_step + 1] == pos)[0])
+                n_obs = len(np.where(drone_path_matrix[drone, :col + 1] == pos)[0])
                 node_obs.append({"drone": drone + 1, "n_obs": n_obs,
-                                 "timestep": discrete_step, "prob": new_prob,
+                                 "timestep": col, "prob": new_prob,
                                  "positive": positive})
 
         # --- merging: EVERY second, including mid-flight (AD5) ------------------
@@ -290,8 +315,7 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
                     drone_search_status[m] = False
                     drone_x_pos = realtime_x[m + 1, step]
                     drone_y_pos = realtime_y[m + 1, step]
-                    # continuous return: current pos -> cell 0 -> BS, explicit length
-                    # reconciliation instead of the old swallowed try/except
+                    # continuous return: current pos -> cell 0 -> BS
                     ret_x1, ret_y1 = intp_between_coords(drone_x_pos, drone_y_pos,
                                                          cell_0_x, cell_0_y,
                                                          info.max_drone_speed)
@@ -300,20 +324,36 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
                                                          info.max_drone_speed)
                     ret_x = np.hstack((ret_x1, ret_x2))
                     ret_y = np.hstack((ret_y1, ret_y2))
+                    # intp_between_coords EXCLUDES its endpoint, so ret never
+                    # contains the exact BS point — only the BS pad below does.
+                    # Grow the horizon when the route (+ >= 1 exact-BS column)
+                    # does not fit; the old truncation branch stranded the drone
+                    # ~2 m off-grid so the all-home break never fired and
+                    # mission time was inf (RT-2). Grown columns repeat each
+                    # row's final position, which is the BS for every drone by
+                    # construction of the original trajectory and of prior
+                    # early-return pads.
                     remaining = timesteps - step
-                    if len(ret_x) >= remaining:
-                        ret_x, ret_y = ret_x[:remaining], ret_y[:remaining]
-                    else:
-                        pad = remaining - len(ret_x)
-                        ret_x = np.hstack((ret_x, np.full(pad, cell_bs_x)))
-                        ret_y = np.hstack((ret_y, np.full(pad, cell_bs_y)))
+                    needed = len(ret_x) + 1
+                    if needed > remaining:
+                        grow = needed - remaining
+                        realtime_x = np.hstack(
+                            (realtime_x, np.repeat(realtime_x[:, -1:], grow, axis=1)))
+                        realtime_y = np.hstack(
+                            (realtime_y, np.repeat(realtime_y[:, -1:], grow, axis=1)))
+                        timesteps += grow
+                        connectivity_matrix = get_real_connectivity_matrix(
+                            realtime_x, realtime_y, sol)
+                        remaining = timesteps - step
+                    pad = remaining - len(ret_x)
+                    ret_x = np.hstack((ret_x, np.full(pad, cell_bs_x)))
+                    ret_y = np.hstack((ret_y, np.full(pad, cell_bs_y)))
                     realtime_x[m + 1, step:] = ret_x
                     realtime_y[m + 1, step:] = ret_y
                     # Mirror into the DISCRETE path matrix so PathAnimation (which
                     # re-derives trajectories from it via get_real_paths) shows the
-                    # early return (AD3). Adapted from the discrete pipeline's recipe,
-                    # but indexed by discrete waypoint (leg), NOT the realtime step —
-                    # realtime has ~dt× more columns; using step here would corrupt the mirror.
+                    # early return (AD3). Indexed by discrete waypoint (leg), NOT
+                    # the realtime step.
                     leg = max(discrete_step, 0)
                     current_cell = drone_positions[m] if drone_positions[m] != -1 else 0  # step-0 fallback; trigger can't actually fire there
                     path_to_0 = interpolate_between_cities(x, current_cell, 0)
@@ -332,12 +372,8 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
 
         # --- mission end: every drone home (defect A2 fix: ndarray, not list) ----
         # A drone counts as "home" only when it is at the BS (get_city == -1) AND
-        # settled on-grid there. In the realtime pipeline get_city also returns -1
-        # for a drone that is merely MID-FLIGHT (off-grid), so the bare
-        # `positions == -1` test the discrete pipeline can safely use (its -1 only
-        # ever means BS in the discrete matrix) would fire spuriously on step 1
-        # when every drone has just left the BS. Requiring on-grid settling
-        # restores the intended "all drones back at base" semantics.
+        # settled on-grid there; get_city also returns -1 mid-flight (off-grid),
+        # so the on-grid conjunct prevents a spurious step-1 fire.
         positions_now = np.array(list(drone_positions.values()))
         drones_home = (positions_now == -1) & np.array(drone_on_grid, dtype=bool)
         if step > 0 and np.sum(drones_home) == number_of_drones:
@@ -348,6 +384,8 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
                 cell_occupancy_probabilities = [col_probs[:step + 1]
                                                 for col_probs in cell_occupancy_probabilities]
             break
+
+        step += 1
 
     # stash the exact realtime trajectory (incl. truncation) on the solution copy
     x.real_time_x_matrix = realtime_x

@@ -65,3 +65,48 @@ def test_same_drone_repeat_visits_still_detect():
     r = replay(sol, _cfg("onboard"))
     assert np.isfinite(r.detection_time)
     assert np.isfinite(r.inform_time)
+
+
+def _cfg_rt(topo):
+    return SensingConfig(merge_topology=topo, time_model="realtime",
+                         target_locations=[12])
+
+
+def test_realtime_detects_consecutive_repeat_visits():
+    """RT-1 regression: nvisits_3 matrices encode re-visits as consecutive
+    same-cell columns; those legs have distance 0 for every drone, so they add
+    zero realtime columns. Matrix-column-driven sensing must still fire an
+    event per visited matrix column instead of silently dropping them.
+
+    Cell 12 is visited 3x consecutively by one drone, but the belief crosses
+    B=0.9 after the 2nd event (odds 3.5^2 -> 0.9245), which correctly triggers
+    early return before the 3rd visit — exact parity with the (untouched)
+    discrete pipeline, verified independently below to match this value."""
+    sol = _solution(3, np.repeat(np.arange(64), 3), [0, 48, 96, 144])
+    r = replay(sol, _cfg_rt("onboard"))
+    assert np.isfinite(r.detection_time)
+    from Sensing import _fused_belief
+    beliefs = [_fused_belief(r.search_map[row, 12], 0.7, 0.2)
+               for row in range(r.search_map.shape[0])]
+    assert max(beliefs) == pytest.approx(0.9245283018867925)
+    # parity check: the discrete pipeline (frozen, ground truth) must agree
+    discrete_cfg = SensingConfig(merge_topology="onboard", time_model="discrete",
+                                 target_locations=[12])
+    r_discrete = replay(sol, discrete_cfg)
+    discrete_beliefs = [_fused_belief(r_discrete.search_map[row, 12], 0.7, 0.2)
+                        for row in range(r_discrete.search_map.shape[0])]
+    assert max(discrete_beliefs) == pytest.approx(max(beliefs))
+
+
+def test_realtime_split_visits_detect_with_merging(split_visits_solution):
+    """Cross-drone fusion must work through the realtime pipeline too."""
+    r = replay(split_visits_solution, _cfg_rt("onboard"))
+    assert np.isfinite(r.detection_time)
+
+
+def test_realtime_mission_time_finite_after_early_return(split_visits_solution):
+    """RT-2 regression: early return must never strand a drone off-grid;
+    the all-home break must fire and mission time stay finite."""
+    r = replay(split_visits_solution, _cfg_rt("onboard"))
+    assert np.isfinite(r.effective_mission_time)
+    assert r.effective_mission_time > 0
