@@ -27,7 +27,8 @@ def _scenario_dict(info) -> dict:
     }
 
 
-def serialize_run(solutions, F_df: pd.DataFrame, model: dict, run_config: dict) -> dict:
+def serialize_run(solutions, F_df: pd.DataFrame, model: dict, run_config: dict,
+                  model_key: str | None = None) -> dict:
     info = solutions[0].info
     from app.selector_service import get_polarities
 
@@ -44,7 +45,7 @@ def serialize_run(solutions, F_df: pd.DataFrame, model: dict, run_config: dict) 
         "schema_version": 1,
         "scenario": _scenario_dict(info),
         "model": {k: model[k] for k in ("Type", "Alg", "Exp", "F", "G", "H") if k in model}
-        | {"model_key": model.get("model_key", f"{model.get('Exp','')}")},
+        | {"model_key": model_key or model.get("model_key") or model.get("Exp", "")},
         "polarities": get_polarities(model),
         "run_config": run_config,
         "solutions": sols_json,

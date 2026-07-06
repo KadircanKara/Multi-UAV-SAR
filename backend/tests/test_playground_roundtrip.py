@@ -133,3 +133,10 @@ def test_replay_for_reconstructed_solution():
     assert set(["effective_mission_time", "detection_time", "inform_time",
                 "time_at_least_one_drone_knows_all",
                 "cell_occupancy_probabilities"]).issubset(out.keys())
+
+
+def test_serialize_run_uses_explicit_model_key():
+    from app.playground_export import serialize_run
+    _sc, sel = _seeded_selector()  # sel.model is an AVAILABLE_MODELS dict (no "model_key")
+    payload = serialize_run(sel.solutions, sel.F, sel.model, {}, model_key="TCD_MOO_NSGA2")
+    assert payload["model"]["model_key"] == "TCD_MOO_NSGA2"
