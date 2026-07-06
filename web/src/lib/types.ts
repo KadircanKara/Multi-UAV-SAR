@@ -379,3 +379,22 @@ export interface RunConfig {
 
 /** GET /api/library/{scenario}/config — the RunConfig, or a not-recorded marker. */
 export type MissionConfigResponse = RunConfig | { recorded: false };
+
+// ─── Playground (uploaded/exported run JSON, no server-side scenario) ────────
+
+export interface PlaygroundSolution {
+  index: number;
+  objectives: Record<string, number | null>;
+  f_row: number[];
+  path: number[];
+  start_points: number[];
+}
+
+export interface PlaygroundResult {
+  schema_version: number;
+  scenario: Record<string, number | number[] | string>;
+  model: Record<string, unknown> & { F: string[]; Type: string; Alg: string; Exp: string; model_key?: string };
+  polarities: Record<string, number>;
+  run_config: Record<string, unknown>;
+  solutions: PlaygroundSolution[];
+}

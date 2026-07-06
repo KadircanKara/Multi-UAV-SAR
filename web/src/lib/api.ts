@@ -30,6 +30,7 @@ import type {
   OptimizeStopResponse,
   OptimizeSaveResponse,
   MissionConfigResponse,
+  PlaygroundResult,
 } from "@/lib/types";
 
 const BASE =
@@ -251,4 +252,76 @@ export function saveOptimizeRun(
     `/api/optimize/${encodeURIComponent(runId)}/save`,
     { method: "POST", body: JSON.stringify({ overwrite }) }
   );
+}
+
+// ─── Playground (stateless analysis of an uploaded/exported run JSON) ────────
+// These mirror their seeded siblings above but POST the whole PlaygroundResult
+// instead of addressing a scenario by name. Playground has no scenario, so
+// `model_key` is never sent — only the fields the backend's `_SelectReq` /
+// `_ReplayReq` / `_CompareReq` / `_PlaybackReq` models accept are forwarded.
+
+/** POST /api/playground/front — Pareto front for an uploaded result. */
+export function playgroundFront(result: PlaygroundResult): Promise<ParetoFront> {
+  return request<ParetoFront>("/api/playground/front", {
+    method: "POST",
+    body: JSON.stringify({ result }),
+  });
+}
+
+/** POST /api/playground/select — select a solution from an uploaded result. */
+export function playgroundSelect(
+  result: PlaygroundResult,
+  body: SelectRequest
+): Promise<SelectResponse> {
+  const { strategy, objective_name, weights, index } = body;
+  return request<SelectResponse>("/api/playground/select", {
+    method: "POST",
+    body: JSON.stringify({ result, strategy, objective_name, weights, index }),
+  });
+}
+
+/** POST /api/playground/replay — run a sensing replay for an uploaded result. */
+export function playgroundReplay(
+  result: PlaygroundResult,
+  body: ReplayRequest
+): Promise<ReplayResponse> {
+  const { index, config, label } = body;
+  return request<ReplayResponse>("/api/playground/replay", {
+    method: "POST",
+    body: JSON.stringify({ result, index, config, label }),
+  });
+}
+
+/** POST /api/playground/compare — compare sensing configs for an uploaded result. */
+export function playgroundCompare(
+  result: PlaygroundResult,
+  body: CompareRequest
+): Promise<CompareResponse> {
+  const { index, configs, labels } = body;
+  return request<CompareResponse>("/api/playground/compare", {
+    method: "POST",
+    body: JSON.stringify({ result, index, configs, labels }),
+  });
+}
+
+/** POST /api/playground/playback — step-wise playback for an uploaded result. */
+export function playgroundPlayback(
+  result: PlaygroundResult,
+  body: PlaybackRequest
+): Promise<PlaybackResponse> {
+  const { index, config, stride } = body;
+  return request<PlaybackResponse>("/api/playground/playback", {
+    method: "POST",
+    body: JSON.stringify({ result, index, config, stride }),
+  });
+}
+
+/** POST /api/playground/comparison — cross-model objective comparison across uploaded results. */
+export function playgroundComparison(
+  results: PlaygroundResult[]
+): Promise<ComparisonResponse> {
+  return request<ComparisonResponse>("/api/playground/comparison", {
+    method: "POST",
+    body: JSON.stringify({ results }),
+  });
 }
