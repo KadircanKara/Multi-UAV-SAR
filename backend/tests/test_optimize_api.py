@@ -230,7 +230,7 @@ def test_run_to_completion_returns_front(client):
     assert front["n_solutions"] >= 0 and "solutions" in front
 
 
-def test_save_empty_run_is_rejected(client):
+def test_save_empty_run_is_rejected(client, monkeypatch):
     """A run that found 0 feasible solutions must not be persisted — an empty
     front in the library breaks selection/replay endpoints with 500s."""
     import os
@@ -268,6 +268,7 @@ def test_save_empty_run_is_rejected(client):
     reg_path = os.path.join(settings.RESULTS_ROOT, "custom_models.json")
     reg_backup = open(reg_path, "rb").read() if os.path.isfile(reg_path) else None
     try:
+        monkeypatch.setattr("app.settings.ALLOW_LIBRARY_SAVE", True)
         resp = client.post(f"/api/optimize/{run_id}/save", json={"overwrite": True})
         assert resp.status_code == 422, resp.text
         assert not os.path.isfile(obj), "empty run must not be written to the library"
@@ -286,7 +287,7 @@ def test_save_empty_run_is_rejected(client):
         models_registry._invalidate_cache()
 
 
-def test_finished_run_recovers_from_disk_after_restart(client):
+def test_finished_run_recovers_from_disk_after_restart(client, monkeypatch):
     """A finished run whose in-memory _jobs entry was lost (backend restart) is
     still pollable and saveable from its on-disk run dir."""
     import json
@@ -332,6 +333,7 @@ def test_finished_run_recovers_from_disk_after_restart(client):
         assert s.status_code == 200, s.text
         assert s.json()["state"] == "done"
 
+        monkeypatch.setattr("app.settings.ALLOW_LIBRARY_SAVE", True)
         save = client.post(f"/api/optimize/{run_id}/save", json={"overwrite": True})
         assert save.status_code == 200, save.text
         assert os.path.isfile(obj_lib)
@@ -350,7 +352,7 @@ def test_finished_run_recovers_from_disk_after_restart(client):
         models_registry._invalidate_cache()
 
 
-def test_save_overwrites_existing_scenario_and_writes_sidecar(client):
+def test_save_overwrites_existing_scenario_and_writes_sidecar(client, monkeypatch):
     """A finished run whose scenario already exists overwrites it on overwrite=True
     (seeded missions included) and writes the RunConfig sidecar. A fabricated
     preset-key scenario (r_9 is never seeded) keeps the test off real seed data."""
@@ -396,6 +398,7 @@ def test_save_overwrites_existing_scenario_and_writes_sidecar(client):
     reg_path = os.path.join(settings.RESULTS_ROOT, "custom_models.json")
     reg_backup = open(reg_path, "rb").read() if os.path.isfile(reg_path) else None
     try:
+        monkeypatch.setattr("app.settings.ALLOW_LIBRARY_SAVE", True)
         # Without overwrite → 409 (scenario exists).
         no = client.post(f"/api/optimize/{run_id}/save", json={"overwrite": False})
         assert no.status_code == 409, no.text
@@ -448,7 +451,7 @@ def test_serialize_finished_run_roundtrips(client):
     assert sel.n_solutions == len(result.solutions)
 
 
-def test_save_run_makes_it_browsable(client):
+def test_save_run_makes_it_browsable(client, monkeypatch):
     import os
     from app import settings
 
@@ -477,6 +480,7 @@ def test_save_run_makes_it_browsable(client):
     obj_pkl = os.path.join(settings.RESULTS_ROOT, "Objectives", f"{scenario}-ObjectiveValues.pkl")
     sol_pkl = os.path.join(settings.RESULTS_ROOT, "Solutions", f"{scenario}-SolutionObjects.pkl")
     try:
+        monkeypatch.setattr("app.settings.ALLOW_LIBRARY_SAVE", True)
         save = client.post(f"/api/optimize/{run_id}/save", json={"overwrite": True})
         if front_meta["n_solutions"] == 0:
             # A run with no feasible solutions must be refused (empty library
@@ -495,6 +499,12 @@ def test_save_run_makes_it_browsable(client):
         for p in (obj_pkl, sol_pkl):
             if os.path.isfile(p):
                 os.remove(p)
+
+
+def test_save_disabled_by_default_is_403(client):
+    # No ALLOW_LIBRARY_SAVE → memoryless: saving to the library is refused.
+    resp = client.post("/api/optimize/whatever/save", json={"overwrite": False})
+    assert resp.status_code == 403
 
 
 # ─── export endpoint ──────────────────────────────────────────────────────────

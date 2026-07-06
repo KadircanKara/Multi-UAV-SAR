@@ -88,7 +88,14 @@ def post_optimize_stop(run_id: str) -> dict:
 @router.post("/api/optimize/{run_id}/save", response_model=OptimizeSaveResponse)
 def post_optimize_save(run_id: str, body: OptimizeSaveRequest) -> dict:
     """Persist a finished run into the library. 409 if the scenario already
-    exists and overwrite was not requested (frontend then confirms overwrite)."""
+    exists and overwrite was not requested (frontend then confirms overwrite).
+    403 if library save is disabled (memoryless mode, the default)."""
+    if not settings.ALLOW_LIBRARY_SAVE:
+        raise HTTPException(
+            status_code=403,
+            detail="Library save is disabled (memoryless mode). Download the run "
+                   "as JSON via /api/optimize/{run_id}/export instead.",
+        )
     try:
         return save_run(run_id, body.overwrite)
     except RunNotFoundError as exc:
