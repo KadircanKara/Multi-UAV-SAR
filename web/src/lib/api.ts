@@ -254,6 +254,12 @@ export function saveOptimizeRun(
   );
 }
 
+/** GET /api/optimize/{run_id}/export — download a finished run as JSON
+ *  (the `/optimize` page is memoryless: this is the only way to keep a run). */
+export function optimizeExportUrl(runId: string): string {
+  return `${BASE}/api/optimize/${encodeURIComponent(runId)}/export`;
+}
+
 // ─── Playground (stateless analysis of an uploaded/exported run JSON) ────────
 // These mirror their seeded siblings above but POST the whole PlaygroundResult
 // instead of addressing a scenario by name. Playground has no scenario, so

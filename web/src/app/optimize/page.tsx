@@ -19,7 +19,7 @@ import {
   startOptimize,
   getOptimizeStatus,
   stopOptimize,
-  saveOptimizeRun,
+  optimizeExportUrl,
   getDefaultScenario,
 } from "@/lib/api";
 import type {
@@ -480,11 +480,9 @@ export default function OptimizePage() {
   // Snapshot of the params the current run was launched with (shown while solving).
   const [runParams, setRunParams] = useState<RunParams | null>(null);
 
-  // Save-to-library state
+  // Run identity (used for the post-run Download JSON action — runs are not
+  // persisted server-side; this is memoryless by design).
   const [runId, setRunId] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [savedScenario, setSavedScenario] = useState<string | null>(null);
-  const [overwritePrompt, setOverwritePrompt] = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
@@ -825,32 +823,10 @@ export default function OptimizePage() {
     }, 1000);
   }
 
-  async function handleSave(overwrite: boolean) {
-    if (!runId) return;
-    setSaving(true);
-    setOverwritePrompt(false);
-    try {
-      const res = await saveOptimizeRun(runId, overwrite);
-      setSavedScenario(res.scenario_name);
-      toast.success("Saved to the mission browser");
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("409") && !overwrite) {
-        setOverwritePrompt(true); // already exists — ask to overwrite
-      } else {
-        toast.error("Failed to save", { description: msg });
-      }
-    } finally {
-      setSaving(false);
-    }
-  }
-
   async function handleRun() {
     if (!config || !isValid) return;
     setResult(null);
     setRunId(null);
-    setSavedScenario(null);
-    setOverwritePrompt(false);
     setStopping(false);
     setProgressHistory([]);
     setLiveFront(null);
@@ -1773,42 +1749,22 @@ export default function OptimizePage() {
                   </p>
                 )}
               </div>
-              {/* Save to library */}
-              {savedScenario ? (
-                <Link
-                  href={`/explore/${encodeURIComponent(savedScenario)}`}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent"
-                >
-                  Open in mission browser →
-                </Link>
-              ) : runId && result.n_solutions > 0 ? (
-                <Button size="sm" onClick={() => handleSave(false)} disabled={saving}>
-                  {saving ? "Saving…" : "Save to library"}
-                </Button>
-              ) : null}
-            </div>
-
-            {/* Overwrite confirmation (the exact scenario already exists) */}
-            {overwritePrompt && (
-              <div className="flex flex-col gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-                <p className="text-sm text-foreground">
-                  {duplicate?.seeded
-                    ? "This mission is a published (seeded) result. Overwriting replaces the original published data for this mission. Continue?"
-                    : "A run for this model and parameter combination already exists in the mission browser. Overwrite it?"}
-                </p>
-                <p className="break-all font-mono text-[11px] text-muted-foreground">
-                  {result.scenario}
-                </p>
-                <div className="flex items-center gap-2 self-end">
-                  <Button size="sm" variant="ghost" onClick={() => setOverwritePrompt(false)}>
-                    Cancel
-                  </Button>
-                  <Button size="sm" onClick={() => handleSave(true)} disabled={saving}>
-                    {saving ? "Overwriting…" : "Overwrite"}
-                  </Button>
+              {/* Download result (runs are not saved server-side) */}
+              {runId && result.n_solutions > 0 && (
+                <div className="flex flex-col items-end gap-1.5">
+                  <a
+                    href={optimizeExportUrl(runId)}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-secondary px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+                  >
+                    Download result (JSON)
+                  </a>
+                  <p className="max-w-xs text-right text-xs text-muted-foreground">
+                    Runs are not saved. Download the JSON and upload it in the
+                    Playground to explore or compare it.
+                  </p>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
             {result.n_solutions === 0 ? (
               <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-4">
