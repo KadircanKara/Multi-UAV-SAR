@@ -25,11 +25,11 @@ def main() -> int:
 
     try:
         sel = get_selector(args.scenario)
+        model_key = resolve_model_key(args.scenario)
     except Exception as exc:  # missing scenario / unresolved model
         print(f"error: cannot load scenario {args.scenario!r}: {exc}", file=sys.stderr)
         return 2
 
-    model_key = resolve_model_key(args.scenario)
     payload = serialize_run(sel.solutions, sel.F, sel.model, {}, model_key=model_key)
     with open(args.out, "w") as fh:
         json.dump(payload, fh)
