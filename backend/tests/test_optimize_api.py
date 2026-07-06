@@ -421,6 +421,33 @@ def test_save_overwrites_existing_scenario_and_writes_sidecar(client):
         models_registry._invalidate_cache()
 
 
+def test_serialize_finished_run_roundtrips(client):
+    import time
+    from app import optimizer_service
+    from app.playground_schema import PlaygroundResult
+    from app.playground_reconstruct import reconstruct_selector
+
+    start = client.post("/api/optimize", json=_runnable(
+        optimization_type="MOO", method="NSGA2",
+        objectives=["Mission Time", "Mean Disconnected Time"],
+        pop_size=100, n_gen=100))
+    run_id = start.json()["run_id"]
+    for _ in range(180):
+        if client.get(f"/api/optimize/{run_id}").json()["state"] != "running":
+            break
+        time.sleep(1)
+    s = client.get(f"/api/optimize/{run_id}").json()
+    if s.get("front", {}).get("n_solutions", 0) == 0:
+        import pytest
+        pytest.skip("tiny run found no feasible solutions this seed")
+
+    payload = optimizer_service.serialize_finished_run(run_id)
+    result = PlaygroundResult.model_validate(payload)         # validates against schema
+    assert result.model["model_key"].endswith("_MOO_NSGA2")   # full resolved key, not bare Exp
+    sel = reconstruct_selector(result)                        # round-trips
+    assert sel.n_solutions == len(result.solutions)
+
+
 def test_save_run_makes_it_browsable(client):
     import os
     from app import settings

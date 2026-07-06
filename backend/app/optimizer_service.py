@@ -281,6 +281,39 @@ def _disk_job(run_id: str) -> Optional[dict]:
     }
 
 
+def serialize_finished_run(run_id: str) -> dict:
+    """Serialize a finished run's on-disk artifacts to the Playground JSON schema.
+    Reuses playground_export.serialize_run; embeds the full resolved model_key."""
+    import numpy as np
+    import pandas as pd
+    from app.playground_export import serialize_run
+
+    job = _jobs.get(run_id) or _disk_job(run_id)
+    if job is None:
+        raise RunNotFoundError(f"Unknown run_id {run_id!r}")
+    fut = job.get("future")
+    if fut is not None and (not fut.done() or fut.exception() is not None):
+        raise RunNotReadyError("Run has not finished successfully.")
+
+    run_dir = job["run_dir"]
+    F_df = pd.read_pickle(os.path.join(run_dir, "Objectives.pkl"))
+    if int(F_df.shape[0]) < 1:
+        raise EmptyRunError("Run found no feasible solutions; nothing to export.")
+    raw_solutions = pd.read_pickle(os.path.join(run_dir, "Solutions.pkl"))
+    # Normalise rows: SolutionObjects rows can be 1-element numpy arrays
+    # (mirrors selector_service._load_selector).
+    solutions = [s[0] if isinstance(s, np.ndarray) else s for s in list(raw_solutions)]
+
+    run_config = {}
+    cfg_path = os.path.join(run_dir, "config.json")
+    if os.path.isfile(cfg_path):
+        with open(cfg_path) as fh:
+            run_config = json.load(fh)
+
+    return serialize_run(solutions, F_df, job["model_dict"], run_config,
+                          model_key=job["model_key"])
+
+
 def start_run(
     optimization_type: str, method: str, objectives: list[str],
     weights: Optional[dict], pop_size: int, n_gen: int, seed: int,

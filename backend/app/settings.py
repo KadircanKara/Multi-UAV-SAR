@@ -45,3 +45,10 @@ OPTIMIZE_RATE_LIMIT: str = os.environ.get("SAR_OPTIMIZE_RATE_LIMIT", "30/minute"
 # Playground upload (2000 solutions x 100k-int paths) ballooning into
 # gigabytes of memory. Override via SAR_MAX_UPLOAD_BYTES.
 MAX_UPLOAD_BYTES: int = _int_env("SAR_MAX_UPLOAD_BYTES", 25 * 1024 * 1024)
+
+# ── Memoryless optimizer ────────────────────────────────────────────────────
+# When False (default), the deployed optimizer never persists a run to the
+# library — users download the run as JSON and re-upload to the Playground.
+ALLOW_LIBRARY_SAVE: bool = _int_env("SAR_ALLOW_LIBRARY_SAVE", 0) == 1
+# Temp per-run dirs under RESULTS_ROOT/.runs are swept once they exceed this age.
+RUN_TTL_HOURS: int = _int_env("SAR_RUN_TTL_HOURS", 24)
