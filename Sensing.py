@@ -58,18 +58,48 @@ def _init_search_map(number_of_nodes, number_of_cells):
     return search_map
 
 
-def _compute_occupancy_status(search_map, B, number_of_nodes, number_of_cells):
-    """Occupancy flags (any historical prob > B) + per-cell max of LATEST probs."""
+def _likelihood_ratio(positive, p, q):
+    """Likelihood ratio of one sensing event: P(obs|target)/P(obs|no target)."""
+    return (p / q) if positive else ((1.0 - p) / (1.0 - q))
+
+
+def _fused_odds(observations, p, q, prior=0.5):
+    """Posterior odds from the prior + every sensing EVENT in the list.
+    Entries with timestep < 0 are the prior sentinel and contribute nothing.
+    Order-independent (odds-form product of independent measurements).
+    May overflow to inf for very long positive chains — callers treat inf as
+    certainty."""
+    odds = prior / (1.0 - prior)
+    for obs in observations:
+        if obs["timestep"] < 0:
+            continue
+        odds *= _likelihood_ratio(obs["positive"], p, q)
+    return odds
+
+
+def _fused_belief(observations, p, q, prior=0.5):
+    """Posterior probability from _fused_odds; inf odds → 1.0."""
+    odds = _fused_odds(observations, p, q, prior)
+    if np.isinf(odds):
+        return 1.0
+    return odds / (1.0 + odds)
+
+
+def _compute_occupancy_status(search_map, B, p, q, number_of_nodes, number_of_cells):
+    """Occupancy flags from each node's FUSED belief (odds product over all
+    unique events it knows) + per-cell max of those beliefs. Target-cell
+    beliefs are monotone non-decreasing (events only accumulate), so a crossed
+    threshold stays crossed — the old any-historical-prob latch is implied."""
     occupancy_status = np.zeros((number_of_nodes, number_of_cells), dtype=int)
     per_cell_max_probs = []
     for col in range(number_of_cells):
-        cell_probs = []
+        cell_beliefs = []
         for row in range(number_of_nodes):
-            cell_probs.append(search_map[row, col][-1]["prob"])
-            probs = [entry["prob"] for entry in search_map[row, col]]
-            if any(prob > B for prob in probs):
+            belief = _fused_belief(search_map[row, col], p, q)
+            cell_beliefs.append(belief)
+            if belief > B:
                 occupancy_status[row, col] = 1
-        per_cell_max_probs.append(max(cell_probs))
+        per_cell_max_probs.append(max(cell_beliefs))
     return occupancy_status, per_cell_max_probs
 
 
@@ -107,6 +137,14 @@ def _finalize_metrics(time_elapsed_at_steps, t_all_known, t_bs_knows, t_one_know
 
 
 def merge_maps(conn_comp, search_map, merge_topology="onboard"):
+    """Share sensing EVENTS within each connectivity clique.
+
+    Every member of a clique ends up with the UNION of the clique's unique
+    events per cell (dedup key: (drone, timestep) — one arrival per drone per
+    discrete step). Older events are shared too; belief fusion happens
+    downstream in _fused_belief — merging never picks a "winning" observation.
+      "none": no sharing. "onboard": every clique. "gcs": only cliques with node 0.
+    """
     if merge_topology not in VALID_MERGE_TOPOLOGIES:
         raise ValueError(
             f"Unknown merge_topology {merge_topology!r}; valid: {VALID_MERGE_TOPOLOGIES}")
@@ -117,51 +155,22 @@ def merge_maps(conn_comp, search_map, merge_topology="onboard"):
     for clique in conn_comp:
         if merge_topology == "gcs" and 0 not in clique:
             continue
-
         for cell in range(number_of_cells):
-            # Collect all observations in this cell across nodes in the clique
-            clique_observations = list(itertools.chain.from_iterable(search_map[node, cell] for node in clique))
-            seen = {}
-            for d in clique_observations:
-                # Convert the dictionary to a frozenset of its items (hashable)
-                key = frozenset(d.items())
-                if key not in seen:
-                    seen[key] = d  # Store the original dictionary
-            unique_clique_observations = list(seen.values())
-
-            # if not clique_observations:
-            #     continue
-
-            # Find the most recent timestep
-            clique_recent_timestep = max(obs["timestep"] for obs in unique_clique_observations)
-
-            # Filter observations to keep only those from the most recent timestep
-            clique_recent_observations = [obs for obs in unique_clique_observations if obs["timestep"] == clique_recent_timestep]
-
-            # # Merge info: max n_obs, mean prob
-            # merged_obs = {
-            #     "timestep": recent_timestep,
-            #     "n_obs": max(obs["n_obs"] for obs in recent_obs),
-            #     "prob": np.mean([obs["prob"] for obs in recent_obs])
-            # }
-
-            # Update each node's observation list in the clique for this cell
+            union = {}
             for node in clique:
-                node_obs = search_map[node, cell]
-                node_recent_timestep = node_obs[-1]["timestep"]
-                # node_recent_observations = [obs for obs in node_obs if obs["timestep"] == node_recent_timestep]
-                node_recent_observation = node_obs[-1]
-                for obs in clique_recent_observations:
-                    # print(obs)
-                    if obs["timestep"] > node_recent_timestep:
-                        node_obs.append(obs)
-                    elif obs["timestep"] == node_recent_timestep:
-                        # Compare n_obs and prob
-                        if obs["n_obs"] > node_recent_observation["n_obs"] or obs["prob"] != node_recent_observation["prob"]:
-                            node_obs.append(obs)
-                    else:
+                for obs in search_map[node, cell]:
+                    if obs["timestep"] < 0:
                         continue
-
+                    union.setdefault((obs["drone"], obs["timestep"]), obs)
+            if not union:
+                continue
+            merged_events = sorted(union.values(),
+                                   key=lambda o: (o["timestep"], o["drone"]))
+            for node in clique:
+                # every member's events are a subset of the union, so a length
+                # match means the set already matches — skip the rebuild
+                if len(search_map[node, cell]) - 1 != len(merged_events):
+                    search_map[node, cell] = [search_map[node, cell][0]] + merged_events
     return search_map
 
 
@@ -169,6 +178,8 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
     """Realtime sensing + merging: continuous positions, per-second connectivity,
     mid-flight merging. Sensing fires only on NEW grid arrivals (seam-deduped).
     Returns the same 7-key metrics dict as the discrete pipeline (contract AD1).
+    Beliefs are fused from the union of unique sensing events (see
+    _fused_belief); merging shares events, not posteriors.
     """
     merge_topology = config.merge_topology
     target_locations = config.target_locations
@@ -236,23 +247,23 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
                 pos = drone_positions[drone]
                 if pos == -1:
                     continue
-                prior = search_map[drone + 1, pos][-1]["prob"]
-                if pos in target_locations:
-                    new_prob = p * prior / (p * prior + q * (1 - prior))
-                else:
-                    new_prob = (1 - p) * prior / ((1 - p) * prior + (1 - q) * (1 - prior))
+                node_obs = search_map[drone + 1, pos]
+                positive = pos in target_locations
+                odds = _fused_odds(node_obs, p, q) * _likelihood_ratio(positive, p, q)
+                new_prob = 1.0 if np.isinf(odds) else odds / (1.0 + odds)
                 # n_obs counted from discrete-path arrivals, matching the discrete
                 # pipeline's bookkeeping for the same physical visit (AD2).
                 n_obs = len(np.where(drone_path_matrix[drone, :discrete_step + 1] == pos)[0])
-                search_map[drone + 1, pos].append(
-                    {"n_obs": n_obs, "timestep": discrete_step, "prob": new_prob})
+                node_obs.append({"drone": drone + 1, "n_obs": n_obs,
+                                 "timestep": discrete_step, "prob": new_prob,
+                                 "positive": positive})
 
         # --- merging: EVERY second, including mid-flight (AD5) ------------------
         search_map = merge_maps(conn_comp, search_map, merge_topology)
 
         # --- occupancy + tracking (shared helpers) ------------------------------
         occupancy_status, per_cell_max = _compute_occupancy_status(
-            search_map, B, info.number_of_nodes, info.number_of_cells)
+            search_map, B, p, q, info.number_of_nodes, info.number_of_cells)
         for col in range(info.number_of_cells):
             cell_occupancy_probabilities[col].append(per_cell_max[col])
 
@@ -358,7 +369,10 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
 
 
 def sensing_and_discrete_info_sharing(sol: PathSolution, config):
-    """Discrete sensing + merging: per-cell-step sensing on the discrete path matrix, clique merging each step, early return-to-base. Returns the same 7-key metrics dict as the realtime pipeline (contract AD1)."""
+    """Discrete sensing + merging: per-cell-step sensing on the discrete path matrix, clique merging each step, early return-to-base. Returns the same 7-key metrics dict as the realtime pipeline (contract AD1).
+    Beliefs are fused from the union of unique sensing events (see
+    _fused_belief); merging shares events, not posteriors.
+    """
     merge_topology = config.merge_topology
     target_locations = config.target_locations
     B, p, q = config.belief_threshold, config.detection_prob, config.false_alarm_prob
@@ -395,20 +409,19 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, config):
             pos = drone_path_matrix[drone, step]
             if pos == -1:
                 continue
-            prior = search_map[drone + 1, pos][-1]["prob"]
-            if pos in target_locations:
-                new_prob = p * prior / (p * prior + q * (1 - prior))
-            else:
-                new_prob = (1 - p) * prior / ((1 - p) * prior + (1 - q) * (1 - prior))
-            # n_obs = np.count_nonzero(drone_path_matrix[drone, :step + 1] == pos)
+            node_obs = search_map[drone + 1, pos]
+            positive = pos in target_locations
+            odds = _fused_odds(node_obs, p, q) * _likelihood_ratio(positive, p, q)
+            new_prob = 1.0 if np.isinf(odds) else odds / (1.0 + odds)
             n_obs = len(np.where(drone_path_matrix[drone, :step + 1] == pos)[0])
-            search_map[drone + 1, pos].append({"n_obs": n_obs, "timestep": step, "prob": new_prob})
+            node_obs.append({"drone": drone + 1, "n_obs": n_obs, "timestep": step,
+                             "prob": new_prob, "positive": positive})
 
         search_map = merge_maps(conn_comp, search_map, merge_topology)
 
         # Occupancy Status Check
         occupancy_status, per_cell_max = _compute_occupancy_status(
-            search_map, B, info.number_of_nodes, info.number_of_cells)
+            search_map, B, p, q, info.number_of_nodes, info.number_of_cells)
         for col in range(info.number_of_cells):
             cell_occupancy_probabilities[col].append(per_cell_max[col])
 
