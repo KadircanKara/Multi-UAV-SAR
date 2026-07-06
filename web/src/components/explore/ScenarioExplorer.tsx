@@ -14,7 +14,8 @@
 import { useEffect, useState, useCallback, useMemo, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { toast } from "sonner";
-import { getFront, compare } from "@/lib/api";
+import { sourceFront, sourceCompare } from "@/lib/source";
+import type { ExplorerSource } from "@/lib/source";
 import type { ParetoFront, SensingConfig } from "@/lib/types";
 import GridPlayback from "@/components/viz/GridPlayback/GridPlayback";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -121,11 +122,11 @@ const METRIC_NAMES = [
 ];
 
 interface MergingTabProps {
-  scenario: string;
+  source: ExplorerSource;
   selectedIndex: number;
 }
 
-function MergingTab({ scenario, selectedIndex }: MergingTabProps) {
+function MergingTab({ source, selectedIndex }: MergingTabProps) {
   // Config state
   const [timeModel, setTimeModel] = useState<"discrete" | "realtime">("discrete");
   const [detProb, setDetProb] = useState(0.8);
@@ -175,7 +176,7 @@ function MergingTab({ scenario, selectedIndex }: MergingTabProps) {
     const labels = ["none", "onboard", "gcs"];
 
     try {
-      const res = await compare(scenario, {
+      const res = await sourceCompare(source, {
         index: selectedIndex,
         configs,
         labels,
@@ -501,7 +502,7 @@ function SliderField({
 // ─── ScenarioExplorer ─────────────────────────────────────────────────────────
 
 interface Props {
-  scenario: string;
+  source: ExplorerSource;
   /** Show the big scenario title heading (standalone route). Off when embedded. */
   showTitle?: boolean;
   /** Notified once the front loads — lets a parent build a back-link, etc. */
@@ -512,7 +513,7 @@ interface Props {
 }
 
 export default function ScenarioExplorer({
-  scenario,
+  source,
   showTitle = true,
   onFrontLoaded,
   paretoFooter,
@@ -524,13 +525,23 @@ export default function ScenarioExplorer({
   // Shared across tabs
   const [selectedIndex, setSelectedIndex] = useState(0);
 
+  // Display label — was `scenario` before; derived for both source modes.
+  const displayLabel =
+    source.mode === "seeded"
+      ? source.scenario
+      : source.result.model.model_key ?? "uploaded run";
+
+  // Stable primitive key for the effect below (avoid re-fetch loops caused by
+  // a freshly-created `source` object identity on every render).
+  const sourceKey = source.mode === "seeded" ? source.scenario : "playground";
+
   useEffect(() => {
-    if (!scenario) return;
+    if (source.mode === "seeded" && !source.scenario) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
 
-    getFront(scenario)
+    sourceFront(source)
       .then((data) => {
         if (!cancelled) {
           setFront(data);
@@ -550,13 +561,14 @@ export default function ScenarioExplorer({
     return () => {
       cancelled = true;
     };
-  }, [scenario, onFrontLoaded]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceKey, onFrontLoaded]);
 
   const handleSelectIndex = useCallback((idx: number) => {
     setSelectedIndex(idx);
   }, []);
 
-  if (!scenario) return null;
+  if (source.mode === "seeded" && !source.scenario) return null;
   if (loading) return <ExplorerSkeleton />;
   if (error) {
     return (
@@ -566,7 +578,7 @@ export default function ScenarioExplorer({
             className="text-sm font-semibold tracking-widest uppercase text-primary font-display"
             style={{ fontFamily: "var(--font-display)" }}
           >
-            {scenario}
+            {displayLabel}
           </h1>
         )}
         <OfflinePanel message={error} />
@@ -584,7 +596,7 @@ export default function ScenarioExplorer({
             className="text-sm font-semibold tracking-widest uppercase text-primary font-display"
             style={{ fontFamily: "var(--font-display)" }}
           >
-            {scenario}
+            {displayLabel}
           </h1>
         )}
         <div className="flex flex-wrap items-center gap-2">
@@ -669,7 +681,7 @@ export default function ScenarioExplorer({
               </CardHeader>
               <CardContent>
                 <SolutionSelectorPanel
-                  scenario={scenario}
+                  source={source}
                   front={front}
                   selectedIndex={selectedIndex}
                   onSelectIndex={handleSelectIndex}
@@ -681,13 +693,13 @@ export default function ScenarioExplorer({
 
         {/* ── MERGING TAB ────────────────────────────────────────────── */}
         <TabsContent value="merging">
-          <MergingTab scenario={scenario} selectedIndex={selectedIndex} />
+          <MergingTab source={source} selectedIndex={selectedIndex} />
         </TabsContent>
 
         {/* ── ANIMATION TAB ──────────────────────────────────────────── */}
         <TabsContent value="animation">
           <GridPlayback
-            scenario={scenario}
+            source={source}
             front={front}
             selectedIndex={selectedIndex}
           />

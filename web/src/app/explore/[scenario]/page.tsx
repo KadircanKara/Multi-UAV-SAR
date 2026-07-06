@@ -37,7 +37,10 @@ export default function ExplorePage() {
         ← {modelKey ?? "MISSIONS"}
       </Link>
 
-      <ScenarioExplorer scenario={scenario} onFrontLoaded={handleFrontLoaded} />
+      <ScenarioExplorer
+        source={{ mode: "seeded", scenario }}
+        onFrontLoaded={handleFrontLoaded}
+      />
     </div>
   );
 }

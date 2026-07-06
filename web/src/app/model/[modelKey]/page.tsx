@@ -1097,7 +1097,7 @@ export default function ModelPage() {
             {selName ? (
               <ScenarioExplorer
                 key={selName}
-                scenario={selName}
+                source={{ mode: "seeded", scenario: selName }}
                 showTitle={false}
                 paretoFooter={<RunDetails scenario={selName} />}
               />

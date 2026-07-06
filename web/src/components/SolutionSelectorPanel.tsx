@@ -9,7 +9,7 @@ import React from "react";
 import { useState } from "react";
 import { toast } from "sonner";
 import type { ParetoFront, SolutionDetail } from "@/lib/types";
-import { selectSolution } from "@/lib/api";
+import { sourceSelect, type ExplorerSource } from "@/lib/source";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -54,14 +54,14 @@ function DetailCard({ detail }: { detail: SolutionDetail }) {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 interface Props {
-  scenario: string;
+  source: ExplorerSource;
   front: ParetoFront;
   selectedIndex: number;
   onSelectIndex: (idx: number) => void;
 }
 
 export default function SolutionSelectorPanel({
-  scenario,
+  source,
   front,
   selectedIndex,
   onSelectIndex,
@@ -84,11 +84,11 @@ export default function SolutionSelectorPanel({
 
   async function runSelect(
     strategy: string,
-    extra?: Partial<Parameters<typeof selectSolution>[1]>
+    extra?: Partial<Parameters<typeof sourceSelect>[1]>
   ) {
     setLoading(true);
     try {
-      const res = await selectSolution(scenario, {
+      const res = await sourceSelect(source, {
         strategy,
         model_key: front.model_key,
         ...extra,

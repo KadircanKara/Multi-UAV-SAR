@@ -13,7 +13,7 @@
 
 import { useState, useRef, useCallback } from "react";
 import { toast } from "sonner";
-import { playback } from "@/lib/api";
+import { sourcePlayback, type ExplorerSource } from "@/lib/source";
 import type { PlaybackPayload, SensingConfig, ParetoFront } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -33,7 +33,7 @@ import GridCanvas, { type GridCanvasHandle } from "./GridCanvas";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Props {
-  scenario: string;
+  source: ExplorerSource;
   front: ParetoFront | null;
   selectedIndex: number;
 }
@@ -95,7 +95,7 @@ const SPEED_OPTIONS: { label: string; value: number }[] = [
 
 // ─── GridPlayback component ───────────────────────────────────────────────────
 
-export default function GridPlayback({ scenario, front, selectedIndex }: Props) {
+export default function GridPlayback({ source, front, selectedIndex }: Props) {
   const colors = usePlaybackColors();
 
   // ── Config state ──────────────────────────────────────────────────────────
@@ -145,7 +145,7 @@ export default function GridPlayback({ scenario, front, selectedIndex }: Props) 
     };
 
     try {
-      const raw = await playback(scenario, {
+      const raw = await sourcePlayback(source, {
         model_key: front?.model_key ?? null,
         index: selectedIndex,
         config,
@@ -161,7 +161,7 @@ export default function GridPlayback({ scenario, front, selectedIndex }: Props) 
       setLoadingPayload(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canLoad, scenario, front, selectedIndex, mergeTopology, timeModel,
+  }, [canLoad, source, front, selectedIndex, mergeTopology, timeModel,
       detProb, faProb, beliefThresh, targetsInput, stride]);
 
   // ── Playback controls ─────────────────────────────────────────────────────
