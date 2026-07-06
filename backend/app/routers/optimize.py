@@ -4,10 +4,12 @@ Optimizer endpoints — configure + run an optimization (background + poll).
   POST /api/optimize/check  — config → {scenario_name, model_key, exists, seeded}
   POST /api/optimize        — start a run → {run_id, scenario_name, model_key, exists, seeded}
   GET  /api/optimize/{id}   — poll: running (gen X/Y) | done (front) | failed
+  GET  /api/optimize/{id}/export — download a finished run as Playground JSON
 """
 import app.rootpath  # must come before any root-module import
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import ORJSONResponse
 
 from app import settings
 from app.ratelimit import limiter
@@ -26,6 +28,7 @@ from app.optimizer_service import (
     get_status,
     request_stop,
     save_run,
+    serialize_finished_run,
     RunInProgressError,
     RunNotFoundError,
     RunNotReadyError,
@@ -99,3 +102,22 @@ def post_optimize_save(run_id: str, body: OptimizeSaveRequest) -> dict:
             status_code=409,
             detail=f"A run named {exc} already exists. Confirm overwrite to replace it.",
         ) from exc
+
+
+@router.get("/api/optimize/{run_id}/export")
+def get_optimize_export(run_id: str) -> ORJSONResponse:
+    """Download a finished run as a Playground JSON file (memoryless — the run
+    is not persisted to the library)."""
+    try:
+        payload = serialize_finished_run(run_id)
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RunNotReadyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except EmptyRunError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    fname = f"{payload.get('model', {}).get('model_key', 'run')}.json"
+    return ORJSONResponse(
+        content=payload,
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )

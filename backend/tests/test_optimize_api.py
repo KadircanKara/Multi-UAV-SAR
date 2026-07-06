@@ -495,3 +495,27 @@ def test_save_run_makes_it_browsable(client):
         for p in (obj_pkl, sol_pkl):
             if os.path.isfile(p):
                 os.remove(p)
+
+
+# ─── export endpoint ──────────────────────────────────────────────────────────
+
+def test_export_unknown_run_404(client):
+    assert client.get("/api/optimize/deadbeef/export").status_code == 404
+
+
+def test_export_finished_run_is_downloadable(client):
+    start = client.post("/api/optimize", json=_runnable(
+        optimization_type="MOO", method="NSGA2",
+        objectives=["Mission Time", "Mean Disconnected Time"],
+        pop_size=100, n_gen=100))
+    run_id = start.json()["run_id"]
+    for _ in range(180):
+        if client.get(f"/api/optimize/{run_id}").json()["state"] != "running":
+            break
+        time.sleep(1)
+    resp = client.get(f"/api/optimize/{run_id}/export")
+    if resp.status_code == 422:
+        import pytest; pytest.skip("no feasible solutions this seed")
+    assert resp.status_code == 200
+    assert "attachment" in resp.headers.get("content-disposition", "")
+    assert resp.json()["schema_version"] == 1
