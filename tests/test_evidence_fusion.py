@@ -110,3 +110,63 @@ def test_realtime_mission_time_finite_after_early_return(split_visits_solution):
     r = replay(split_visits_solution, _cfg_rt("onboard"))
     assert np.isfinite(r.effective_mission_time)
     assert r.effective_mission_time > 0
+
+
+from collections import Counter
+
+
+def _event_multiset(search_map):
+    """Multiset of sensing events (drone, matrix-column, cell, positive) across
+    all nodes/cells, ignoring the prior sentinel (timestep < 0)."""
+    c = Counter()
+    for row in range(search_map.shape[0]):
+        for cell in range(search_map.shape[1]):
+            for e in search_map[row, cell]:
+                if e["timestep"] >= 0:
+                    c[(e["drone"], e["timestep"], cell, e["positive"])] += 1
+    return c
+
+
+def _cfg_parity(time_model, B, targets):
+    # merge_topology="none" isolates the SENSING substrate: no cross-node event
+    # copying, so the multiset holds each drone's own observations only. B=0.999
+    # (unreachable) guarantees no early return, so both pipelines sense their
+    # full tours and the only remaining difference would be a real sensing bug.
+    return SensingConfig(merge_topology="none", time_model=time_model,
+                         detection_prob=0.7, false_alarm_prob=0.2,
+                         belief_threshold=B, target_locations=targets)
+
+
+def test_realtime_discrete_sensing_parity_spread_visits(split_visits_solution):
+    """No early return (B=0.999): realtime and discrete must produce the
+    identical sensing-event multiset. Locks the invariant that the two
+    pipelines share one sensing substrate and differ only in merge cadence."""
+    rd = replay(split_visits_solution, _cfg_parity("discrete", 0.999, [12]))
+    rr = replay(split_visits_solution, _cfg_parity("realtime", 0.999, [12]))
+    assert _event_multiset(rr.search_map) == _event_multiset(rd.search_map)
+
+
+def test_realtime_discrete_sensing_parity_consecutive_repeats():
+    """dt=0 repeat-visit legs (consecutive same-cell columns) must sense in
+    realtime exactly as in discrete (RT-1 + tour window together)."""
+    sol = _solution(3, np.repeat(np.arange(64), 3), [0, 48, 96, 144])
+    rd = replay(sol, _cfg_parity("discrete", 0.999, [12]))
+    rr = replay(sol, _cfg_parity("realtime", 0.999, [12]))
+    assert _event_multiset(rr.search_map) == _event_multiset(rd.search_map)
+
+
+def test_realtime_no_sensing_during_hovering():
+    """A drone with a short tour hovers on its last cell; that hover must NOT
+    generate sensing events. Target sits on the hovered cell (drone 0's last
+    tour cell), visited once for real. Realtime must match discrete's event
+    count for that cell (pre-fix realtime counted the hover repeats)."""
+    sol = _solution(1, np.arange(64), [0, 4, 8, 12], targets=(3,))
+    rd = replay(sol, _cfg_parity("discrete", 0.9, [3]))
+    rr = replay(sol, _cfg_parity("realtime", 0.9, [3]))
+    de, re_ = _event_multiset(rd.search_map), _event_multiset(rr.search_map)
+    cell3_d = sum(v for k, v in de.items() if k[2] == 3)
+    cell3_r = sum(v for k, v in re_.items() if k[2] == 3)
+    assert cell3_d >= 1               # the real tour visit is sensed
+    assert cell3_r == cell3_d         # realtime adds no hover events
+    # and full parity holds for this early-return-free scenario
+    assert re_ == de

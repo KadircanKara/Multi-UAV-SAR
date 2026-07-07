@@ -215,6 +215,10 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
     # sensing source; a copy so early-return mirror rewrites cannot alter
     # positions/n_obs of columns that are still to be sensed
     drone_path_matrix = x.real_time_path_matrix[1:, :].copy()
+    # tour-end sensing window (exact parity with the discrete pipeline): a drone
+    # stops sensing once past its own tour — hovering on a cell is not a new
+    # observation. Merging/relaying still runs every step for all drones.
+    final_search_steps = [len(dpath) - 2 for dpath in list(x.drone_dict.values())]
     realtime_x, realtime_y = get_real_paths(x)
 
     number_of_nodes, timesteps = realtime_x.shape
@@ -264,12 +268,15 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
         adj_mat = connectivity_matrix[step]
         conn_comp = connected_components(adj_mat)
 
-        # --- sensing: one event per (drone, matrix column) arrival (RT-1) -------
+        # --- sensing: one event per (drone, matrix column) arrival (RT-1),
+        #     within the drone's tour window only (no hovering — parity AD) -----
         for col in cols_at_step.get(step, ()):
             discrete_step = col
             for drone in range(number_of_drones):
                 if not drone_search_status[drone]:
                     continue   # early-returned: row rewritten, search is over
+                if col > final_search_steps[drone]:
+                    continue   # tour over: hovering/returning, no more sensing
                 pos = drone_path_matrix[drone, col]
                 if pos == -1:
                     continue
