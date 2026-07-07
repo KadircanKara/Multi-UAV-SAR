@@ -170,3 +170,23 @@ def test_realtime_no_sensing_during_hovering():
     assert cell3_r == cell3_d         # realtime adds no hover events
     # and full parity holds for this early-return-free scenario
     assert re_ == de
+
+
+def test_discrete_stops_sensing_after_early_return():
+    """With the discrete early-return guard, discrete and realtime produce the
+    identical sensing-event set even when early return FIRES. merge='none' makes
+    early return purely own-knowledge-driven (BS can't learn via merge), so the
+    triggering drone stops at the same visit/column in both pipelines.
+
+    Geometry: drone 0 visits cell 12 twice (path indices 12 and 76); at p=0.8,
+    q=0.1 its 2nd visit gives belief 0.985 > B=0.9 -> knows_all -> it heads home.
+    Pre-alignment discrete logged extra return-route events; now it must not."""
+    sol = _solution(2, np.arange(128), [0, 96, 112, 120])
+    def cfg(tm):
+        return SensingConfig(merge_topology="none", time_model=tm,
+                             detection_prob=0.8, false_alarm_prob=0.1,
+                             belief_threshold=0.9, target_locations=[12])
+    rd = replay(sol, cfg("discrete"))
+    rr = replay(sol, cfg("realtime"))
+    assert np.isfinite(rd.detection_time)   # early return actually fired
+    assert _event_multiset(rd.search_map) == _event_multiset(rr.search_map)

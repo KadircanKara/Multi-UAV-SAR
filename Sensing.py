@@ -448,6 +448,8 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, config):
 
         # Drones update probabilities
         for drone in range(number_of_drones):
+            if not drone_search_status[drone]:
+                continue   # early-returned: done searching, no more sensing (parity with realtime)
             if step > final_search_steps[drone]:
                 continue
             pos = drone_path_matrix[drone, step]
