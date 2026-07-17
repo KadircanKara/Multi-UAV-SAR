@@ -17,7 +17,8 @@ def _min_payload():
                            "Max Disconnected Time": 5.0, "Mean Disconnected Time": 2.0,
                            "Max Mean TBV": None},
             "f_row": [123.0, -0.8, 2.0, 5.0],
-            "path": [0, 1, 2, 3], "start_points": [0],
+            # one start_point per drone (4), each a valid index into the 4-cell path
+            "path": [0, 1, 2, 3], "start_points": [0, 1, 2, 3],
         }],
     }
 

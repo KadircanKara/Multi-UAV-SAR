@@ -6,7 +6,11 @@ are importable everywhere before the routers are loaded.
 """
 import app.rootpath  # side-effect: inserts repo root into sys.path
 
+import math
+
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, ORJSONResponse
 from slowapi import _rate_limit_exceeded_handler
@@ -27,6 +31,32 @@ app = FastAPI(
 # optimizer-start endpoint is throttled in routers/optimize.py.
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+def _json_safe(obj):
+    """Replace non-finite floats (NaN/Inf) with their string form, recursively."""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else repr(obj)
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    return obj
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Return a clean 422 even when the rejected body carried a NaN/Inf.
+
+    FastAPI's default handler echoes the offending input value in the error
+    payload; a non-finite float there makes jsonable_encoder raise "Out of range
+    float values are not JSON compliant", turning a legitimate 422 into a 500.
+    Sanitizing non-finite floats first keeps the validation error serializable.
+    """
+    return JSONResponse(
+        status_code=422,
+        content={"detail": jsonable_encoder(_json_safe(exc.errors()))},
+    )
 
 app.add_middleware(
     CORSMiddleware,
