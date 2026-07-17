@@ -3,21 +3,13 @@ import pytest
 from Sensing import sensing_and_discrete_info_sharing
 from SensingReplay import SensingConfig
 
-# Frozen 2026-07-06 from the evidence-fusion discrete pipeline (union-of-events
-# merging, odds-form belief fold). If a behavior-preserving refactor changes
-# ANY of these, the refactor is wrong.
+# Frozen from the evidence-fusion discrete pipeline (union-of-events merging,
+# odds-form belief fold). If a behavior-preserving refactor changes ANY of
+# these, the refactor is wrong.
 #
-# "inform time" re-frozen 2026-07-16 (532.55 -> 499.41): the discrete clock was
-# split into a SEARCH clock (pristine planned path) for detection/inform/
-# time-at-least-one and a MISSION clock (actual flown path) for mission_time.
-# Early-return path rewrites used to leak long return legs into the inform
-# window and inflate it; the search clock removes that artifact. detection,
-# mission, and time-at-least-one are unchanged (early returns fire after
-# detection, so the pre-detection clock never differed).
-#
-# All values re-frozen 2026-07-17 after three fixes; detection and
-# time-at-least-one never moved, because early return cannot fire before
-# detection and so the pre-detection legs are never rewritten.
+# Re-frozen 2026-07-17. detection and time-at-least-one have never moved through
+# any of it, structurally: early return cannot fire before detection, so the
+# pre-detection legs are never rewritten and every clock agrees on them.
 #
 # "mission time" (1193.38 -> 1209.95 -> 1176.81): the clock used to read column
 # step+1 BEFORE the early-return block rewrote it, so the leg on which a drone
