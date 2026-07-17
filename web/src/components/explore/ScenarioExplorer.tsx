@@ -11,7 +11,7 @@
  * combination fully remounts this subtree (resetting tab + per-tab state).
  */
 
-import { useEffect, useState, useCallback, useMemo, type ReactNode } from "react";
+import { useEffect, useState, useCallback, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { toast } from "sonner";
 import { sourceFront, sourceCompare } from "@/lib/source";
@@ -34,14 +34,6 @@ import MergingMetricsTable, {
 } from "@/components/viz/MergingMetricsTable";
 import type { BeliefRow } from "@/components/viz/BeliefEvolutionChart";
 import type { TargetsKnownRow } from "@/components/viz/TargetsKnownChart";
-import type {
-  ParameterEffectChartProps,
-  EffectSeries,
-} from "@/components/viz/ParameterEffectChart";
-import type {
-  CompareMetric,
-  CompareEntity,
-} from "@/components/compare/MetricComparisonView";
 import { cn } from "@/lib/utils";
 
 // ─── Dynamic (SSR-off) chart imports ─────────────────────────────────────────
@@ -59,17 +51,6 @@ const BeliefEvolutionChart = dynamic(
 const TargetsKnownChart = dynamic(
   () => import("@/components/viz/TargetsKnownChart"),
   { ssr: false, loading: () => <ChartSkeleton height="h-64" /> }
-);
-
-// Time-metric plots (bar/radar) + per-metric line chart for the merge compare.
-const MetricComparisonView = dynamic(
-  () => import("@/components/compare/MetricComparisonView"),
-  { ssr: false, loading: () => <ChartSkeleton height="h-64" /> }
-);
-
-const ParameterEffectChart = dynamic<ParameterEffectChartProps>(
-  () => import("@/components/viz/ParameterEffectChart"),
-  { ssr: false, loading: () => <ChartSkeleton height="h-56" /> }
 );
 
 // ─── Small utility components ─────────────────────────────────────────────────
@@ -133,10 +114,6 @@ function MergingTab({ source, selectedIndex }: MergingTabProps) {
   const [faProb, setFaProb] = useState(0.1);
   const [beliefThresh, setBeliefThresh] = useState(0.9);
   const [targetsInput, setTargetsInput] = useState("12");
-
-  // Which view to show for the time-metric results (table is the default).
-  const [timeChartType, setTimeChartType] =
-    useState<"table" | "bar" | "radar" | "line">("table");
 
   // Results state
   const [comparing, setComparing] = useState(false);
@@ -207,45 +184,6 @@ function MergingTab({ source, selectedIndex }: MergingTabProps) {
       setComparing(false);
     }
   }
-
-  // ── Time-metric plot data (entities = merge topologies, 4 metrics) ─────────
-  const timeMetrics = useMemo<CompareMetric[]>(
-    () => METRIC_NAMES.map((name) => ({ name, polarity: 1 })),
-    []
-  );
-  const timeEntities = useMemo<CompareEntity[]>(() => {
-    if (!tableRows) return [];
-    return tableRows.map((row) => ({
-      key: String(row.label),
-      label: String(row.label).toUpperCase(),
-      values: Object.fromEntries(
-        METRIC_NAMES.map((m) => {
-          const v = row[m];
-          return [m, typeof v === "number" ? v : null];
-        })
-      ),
-    }));
-  }, [tableRows]);
-  // One single-series line per metric, x-axis = the three merge topologies.
-  const timeLineSeries = useMemo<Record<string, EffectSeries[]>>(() => {
-    const out: Record<string, EffectSeries[]> = {};
-    for (const m of METRIC_NAMES) {
-      out[m] = [
-        {
-          key: m,
-          label: m,
-          points: timeEntities.map((e, i) => ({
-            xLabel: e.label,
-            xNum: i,
-            best: e.values[m] ?? null,
-            min: null,
-            max: null,
-          })),
-        },
-      ];
-    }
-    return out;
-  }, [timeEntities]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -371,74 +309,15 @@ function MergingTab({ source, selectedIndex }: MergingTabProps) {
 
       {!comparing && tableRows && (
         <>
-          {/* Time-metric results — table / bar / radar / line switcher */}
+          {/* Time-metric results — table */}
           <div className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span
-                className="text-xs font-semibold tracking-widest uppercase text-primary font-display"
-                style={{ fontFamily: "var(--font-display)" }}
-              >
-                TIME METRICS
-              </span>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground font-mono">VIEW</span>
-                <ToggleGroup
-                  type="single"
-                  value={timeChartType}
-                  onValueChange={(v) => {
-                    if (v === "table" || v === "bar" || v === "radar" || v === "line")
-                      setTimeChartType(v);
-                  }}
-                  className="gap-1"
-                >
-                  {(["table", "bar", "radar", "line"] as const).map((t) => (
-                    <ToggleGroupItem
-                      key={t}
-                      value={t}
-                      className="h-7 px-2.5 text-xs font-mono uppercase"
-                    >
-                      {t}
-                    </ToggleGroupItem>
-                  ))}
-                </ToggleGroup>
-              </div>
-            </div>
-
-            {timeChartType === "table" && (
-              <MergingMetricsTable tableRows={tableRows} metricNames={METRIC_NAMES} />
-            )}
-
-            {(timeChartType === "bar" || timeChartType === "radar") && (
-              <Card>
-                <CardContent className="pt-4">
-                  <MetricComparisonView
-                    metrics={timeMetrics}
-                    entities={timeEntities}
-                    chartType={timeChartType}
-                  />
-                </CardContent>
-              </Card>
-            )}
-
-            {timeChartType === "line" && (
-              <Card>
-                <CardContent className="pt-4">
-                  <div className="grid gap-6 grid-cols-1 md:grid-cols-2">
-                    {METRIC_NAMES.map((m, idx) => (
-                      <ParameterEffectChart
-                        key={m}
-                        objective={m}
-                        polarity={1}
-                        sweepLabel="Merge topology"
-                        series={timeLineSeries[m] ?? []}
-                        colorIndex={idx}
-                        heightClass="h-56"
-                      />
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+            <span
+              className="text-xs font-semibold tracking-widest uppercase text-primary font-display"
+              style={{ fontFamily: "var(--font-display)" }}
+            >
+              TIME METRICS
+            </span>
+            <MergingMetricsTable tableRows={tableRows} metricNames={METRIC_NAMES} />
           </div>
 
           {beliefRows && knownRows && (
