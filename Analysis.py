@@ -1,4 +1,4 @@
-from Sensing import sensing_and_discrete_info_sharing, sensing_and_realtime_info_sharing
+from Sensing import sensing_and_discrete_info_sharing, sensing_and_realtime_info_sharing, _fused_belief
 from SensingReplay import SensingConfig
 from PathSolution import *
 from PathFileManagement import load_pickle
@@ -106,7 +106,12 @@ def get_path_snapshot_at_step(B, p, p0, model, direction, objective, n_targets, 
 
     search_map = time_metrics["search map"]
     for target in target_locations:
-        max_recent_prob = round( max( [search_map[:,target][i][-1]["prob"] for i in range(search_map.shape[0])] ), 2)
+        # Fused posterior, not the last event's "prob": merging hands a node the
+        # UNION of its clique's events, so the final entry is whichever member
+        # sensed last and its "prob" was folded against THAT drone's private
+        # chain. Only _fused_belief gives the reading node's own posterior --
+        # the same quantity _compute_occupancy_status thresholds against B.
+        max_recent_prob = round( max( [_fused_belief(search_map[i, target], p, q) for i in range(search_map.shape[0])] ), 2)
         target_x, target_y = PathSolution.get_coords(new_sol, target)
         plt.annotate(str(max_recent_prob), xy=(target_x, target_y), xytext=(0.0, 0.0), textcoords='offset points')
         bottom_left_x, bottom_left_y = target_x - new_sol.info.cell_side_length/2, target_y - new_sol.info.cell_side_length/2
