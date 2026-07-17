@@ -503,25 +503,21 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, config):
             timestep_all_targets_are_known, timestep_bs_knows_all_targets,
             timestep_at_least_one_drone_knows_all_targets)
 
-        # Time elapsed at this step, on two clocks:
-        #   SEARCH clock (pristine planned path) -> detection / inform /
-        #     time-at-least-one + per-target detection times. Built from the
-        #     planned trajectory so early-return path rewrites (a merge-topology
-        #     side effect) cannot warp the search timeline: onboard and gcs reach
-        #     the same detection/inform STEPS, so they must report the same TIMES.
-        #   MISSION clock (actual flown path incl. early-return legs) ->
-        #     mission_time only, which must reflect the real return trajectory.
-        positions_now = x.real_time_path_matrix[1:, step]   # mutated: all-home check below
+        # SEARCH clock (pristine planned path) -> detection / inform /
+        # time-at-least-one + per-target detection times. Built from the planned
+        # trajectory so early-return path rewrites (a merge-topology side effect)
+        # cannot warp the search timeline: onboard and gcs reach the same
+        # detection/inform STEPS, so they must report the same TIMES.
+        # A view of column `step`: the early-return block below rewrites columns
+        # step: , but writes back this drone's CURRENT cell at column step
+        # (interpolate_between_cities starts its route at city_prev), so the
+        # values read here stay valid for the mission clock and the home check.
+        positions_now = x.real_time_path_matrix[1:, step]
         if step < timesteps - 1:
             planned_now = planned_path_matrix[1:, step]
             planned_next = planned_path_matrix[1:, step + 1]
             search_dt = max(info.D[a, b] for a, b in zip(planned_now, planned_next)) / info.max_drone_speed
             x.time_elapsed_at_steps.append(search_dt)
-
-            positions_next = x.real_time_path_matrix[1:, step + 1]
-            mission_dt = max(info.D[a, b] for a, b in zip(positions_now, positions_next)) / info.max_drone_speed
-            mission_time_at_steps.append(mission_dt)
-            x.mission_time += mission_dt
 
         # Check if targets are detected and update target detection timesteps if detected
         _update_target_detection_times(x, occupancy_status, step)
@@ -541,6 +537,19 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, config):
                     padded_path = path_to_0 + [-1] * (timesteps - len(path_to_0))
                     x.real_time_path_matrix[m + 1, step:] = padded_path[:timesteps - step]
 
+        # MISSION clock (actual flown path incl. early-return legs) -> mission_time
+        # only, which must reflect the real return trajectory. Computed AFTER the
+        # early-return block on purpose: a drone that diverts at this step has
+        # just had column step+1 rewritten to the first hop of its route home,
+        # and that hop is the leg it actually flies. Reading column step+1 before
+        # the rewrite timed the very leg the diversion replaced against the
+        # abandoned plan -- e.g. a drone diverting from cell 0 charged the 50 m
+        # hop to its next search cell instead of the full transit to the BS.
+        if step < timesteps - 1:
+            positions_next = x.real_time_path_matrix[1:, step + 1]
+            mission_dt = max(info.D[a, b] for a, b in zip(positions_now, positions_next)) / info.max_drone_speed
+            mission_time_at_steps.append(mission_dt)
+            x.mission_time += mission_dt
 
         if step > 0 and np.sum(positions_now == -1) == number_of_drones:
             timestep_drones_are_back_at_bs = step
