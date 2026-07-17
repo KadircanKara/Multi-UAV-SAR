@@ -111,22 +111,26 @@ def _matrix_column_arrival_steps(path_matrix, D, speed):
     return arrivals
 
 
-def _compute_occupancy_status(search_map, B, p, q, number_of_nodes, number_of_cells):
-    """Occupancy flags from each node's FUSED belief (odds product over all
-    unique events it knows) + per-cell max of those beliefs. Target-cell
-    beliefs are monotone non-decreasing (events only accumulate), so a crossed
-    threshold stays crossed — the old any-historical-prob latch is implied."""
-    occupancy_status = np.zeros((number_of_nodes, number_of_cells), dtype=int)
-    per_cell_max_probs = []
-    for col in range(number_of_cells):
-        cell_beliefs = []
-        for row in range(number_of_nodes):
-            belief = _fused_belief(search_map[row, col], p, q)
-            cell_beliefs.append(belief)
-            if belief > B:
-                occupancy_status[row, col] = 1
-        per_cell_max_probs.append(max(cell_beliefs))
-    return occupancy_status, per_cell_max_probs
+def _refresh_beliefs(search_map, beliefs, dirty, p, q):
+    """Re-fold the cached belief of every (node, cell) whose event list changed
+    this step, then clear the dirty set.
+
+    Only sensing (an append) and merge_maps (a list rebuild) ever mutate
+    search_map, and both record what they touched — so re-folding the whole
+    nodes x cells grid every step, as this used to do, redid identical work for
+    every cell that saw no event. That was the dominant cost of a pipeline that
+    runs once per pymoo fitness evaluation.
+    """
+    for node, cell in dirty:
+        beliefs[node, cell] = _fused_belief(search_map[node, cell], p, q)
+    dirty.clear()
+
+
+def _occupancy_from_beliefs(beliefs, B):
+    """Occupancy flags + per-cell max belief. Target-cell beliefs are monotone
+    non-decreasing (events only accumulate), so a crossed threshold stays
+    crossed — the old any-historical-prob latch is implied."""
+    return (beliefs > B).astype(int), beliefs.max(axis=0).tolist()
 
 
 def _update_detection_timesteps(occupancy_status, target_locations, step,
@@ -251,6 +255,9 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
         cols_at_step.setdefault(s, []).append(col)
 
     search_map = _init_search_map(info.number_of_nodes, info.number_of_cells)
+    # cached fused belief per (node, cell); 0.5 == the prior (no events yet)
+    beliefs = np.full((info.number_of_nodes, info.number_of_cells), 0.5)
+    dirty = set()
     cell_occupancy_probabilities = [[] for _ in range(info.number_of_cells)]
 
     drone_search_status = [True for _ in range(number_of_drones)]
@@ -299,13 +306,14 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
                 search_map[drone + 1, pos].append(
                     {"drone": drone + 1, "timestep": col,
                      "positive": pos in target_locations})
+                dirty.add((drone + 1, pos))
 
         # --- merging: EVERY second, including mid-flight (AD5) ------------------
-        search_map = merge_maps(conn_comp, search_map, merge_topology)
+        search_map = merge_maps(conn_comp, search_map, merge_topology, dirty)
 
         # --- occupancy + tracking (shared helpers) ------------------------------
-        occupancy_status, per_cell_max = _compute_occupancy_status(
-            search_map, B, p, q, info.number_of_nodes, info.number_of_cells)
+        _refresh_beliefs(search_map, beliefs, dirty, p, q)
+        occupancy_status, per_cell_max = _occupancy_from_beliefs(beliefs, B)
         for col in range(info.number_of_cells):
             cell_occupancy_probabilities[col].append(per_cell_max[col])
 
@@ -445,6 +453,9 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, config):
     cell_occupancy_probabilities = [ [] for _ in range(info.number_of_cells) ]
 
     search_map = _init_search_map(x.info.number_of_nodes, x.info.number_of_cells)
+    # cached fused belief per (node, cell); 0.5 == the prior (no events yet)
+    beliefs = np.full((x.info.number_of_nodes, x.info.number_of_cells), 0.5)
+    dirty = set()
 
     drone_search_status = [True for _ in range(number_of_drones)]
     timestep_bs_knows_all_targets = np.inf
@@ -475,12 +486,13 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, config):
             search_map[drone + 1, pos].append(
                 {"drone": drone + 1, "timestep": step,
                  "positive": pos in target_locations})
+            dirty.add((drone + 1, pos))
 
-        search_map = merge_maps(conn_comp, search_map, merge_topology)
+        search_map = merge_maps(conn_comp, search_map, merge_topology, dirty)
 
         # Occupancy Status Check
-        occupancy_status, per_cell_max = _compute_occupancy_status(
-            search_map, B, p, q, info.number_of_nodes, info.number_of_cells)
+        _refresh_beliefs(search_map, beliefs, dirty, p, q)
+        occupancy_status, per_cell_max = _occupancy_from_beliefs(beliefs, B)
         for col in range(info.number_of_cells):
             cell_occupancy_probabilities[col].append(per_cell_max[col])
 
