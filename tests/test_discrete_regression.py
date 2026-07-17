@@ -1,5 +1,9 @@
+import random
+
 import numpy as np
 import pytest
+from PathInfo import PathInfo
+from PathSolution import PathSolution
 from Sensing import sensing_and_discrete_info_sharing
 from SensingReplay import SensingConfig
 
@@ -48,6 +52,46 @@ def test_discrete_metrics_unchanged(small_solution):
         assert m[key] == expected, f"{key} drifted: {m[key]} != {expected}"
     assert int(np.sum(m["occupancy status"])) == OCCUPANCY_SUM
     assert len(m["cell occupancy probabilities"][0]) == N_PROB_STEPS
+
+
+@pytest.fixture(scope="module")
+def tight_return_solution():
+    """A solution where a drone's route home EXACTLY fills the columns left.
+
+    seed 271 of this generator: drone 0 diverts with len(path_to_0) == the
+    remaining columns, so the old code's `padded_path[:timesteps - step]` sliced
+    the trailing -1 away and parked it on cell 0 forever.
+    """
+    rng = random.Random(271)
+    info = PathInfo({'grid_size': 5, 'cell_side_length': 50, 'number_of_drones': 3,
+                     'max_drone_speed': 5.0, 'comm_cell_range': 2 * 2 ** 0.5,
+                     'n_visits': 2, 'target_positions': [6, 20], 'th': 0.9,
+                     'detection_probability': 0.7})
+    path = list(range(info.number_of_cells)) * info.n_visits
+    rng.shuffle(path)
+    start_points = [0] + sorted(rng.sample(range(1, len(path)), 2))
+    return PathSolution(np.array(path), np.array(start_points), info,
+                        calculate_pathplan=True, calculate_connectivity=True)
+
+
+@pytest.mark.parametrize("topo", ["onboard", "gcs", "none"])
+def test_early_return_always_reaches_the_bs(tight_return_solution, topo):
+    """Early return must never strand a drone short of the BS.
+
+    The route home needs its own columns PLUS one for the BS arrival. When it
+    exactly filled the columns left, the old code sliced the trailing -1 off and
+    the drone parked on cell 0: the all-home check could never fire and mission
+    time came back inf. The realtime pipeline already grew its horizon for this
+    (RT-2); discrete now does too.
+    """
+    m, x = sensing_and_discrete_info_sharing(
+        tight_return_solution,
+        SensingConfig(merge_topology=topo, time_model="discrete", target_locations=[6, 20],
+                      belief_threshold=0.9, detection_prob=0.7, false_alarm_prob=0.2))
+    flown = x.real_time_path_matrix[1:, :]
+    assert np.all(flown[:, -1] == -1), \
+        f"{topo}: drones {list(np.where(flown[:, -1] != -1)[0])} are parked off the BS"
+    assert np.isfinite(m["mission time"]), f"{topo}: mission time is inf"
 
 
 @pytest.mark.parametrize("topo", ["onboard", "gcs", "none"])

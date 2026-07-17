@@ -492,7 +492,9 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, config):
     x = deepcopy(sol)
     info = x.info
     final_search_steps = [len(dpath) - 2 for dpath in list(x.drone_dict.values())]
-    drone_path_matrix = x.real_time_path_matrix[1:, :]
+    # sensing source; a copy (parity with realtime) so early-return rewrites and
+    # a horizon grow cannot alter the positions of columns still to be sensed
+    drone_path_matrix = x.real_time_path_matrix[1:, :].copy()
     number_of_drones, timesteps = drone_path_matrix.shape
     connectivity_matrix = x.connectivity_matrix
     cell_occupancy_probabilities = [ [] for _ in range(info.number_of_cells) ]
@@ -513,7 +515,8 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, config):
 
     x.target_detection_times = {target:None for target in target_locations}
 
-    for step in range(timesteps):
+    step = 0
+    while step < timesteps:      # `timesteps` can grow: see the early-return block
 
         adj_mat = connectivity_matrix[step]
         conn_comp = connected_components(adj_mat)
@@ -568,8 +571,25 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, config):
                     drone_search_status[m] = False
                     current_pos = x.real_time_path_matrix[m + 1, step]
                     path_to_0 = interpolate_between_cities(x, current_pos, 0)
-                    padded_path = path_to_0 + [-1] * (timesteps - len(path_to_0))
-                    x.real_time_path_matrix[m + 1, step:] = padded_path[:timesteps - step]
+                    # The route home needs its own columns PLUS at least one for
+                    # the BS arrival (-1). Grow the horizon when it does not fit,
+                    # exactly as the realtime pipeline does (RT-2): the old code
+                    # sliced the route to the columns available, and when it
+                    # exactly filled them the trailing -1 was cut, stranding the
+                    # drone parked on cell 0. The all-home check then never fired
+                    # and mission time was inf. Grown columns repeat the final
+                    # column, which is -1 for every drone (every planned tour ends
+                    # at the BS), so drones already home simply stay home.
+                    needed = len(path_to_0) + 1
+                    if needed > timesteps - step:
+                        grow = needed - (timesteps - step)
+                        x.real_time_path_matrix = np.hstack(
+                            (x.real_time_path_matrix,
+                             np.repeat(x.real_time_path_matrix[:, -1:], grow, axis=1)))
+                        timesteps += grow
+                        positions_now = x.real_time_path_matrix[1:, step]   # old view is stale
+                    padded_path = path_to_0 + [-1] * (timesteps - step - len(path_to_0))
+                    x.real_time_path_matrix[m + 1, step:] = padded_path
                     paths_rewritten = True
 
         # Same as the realtime pipeline: connectivity must follow the rewritten
@@ -601,6 +621,7 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, config):
                 x.real_time_path_matrix = x.real_time_path_matrix[:, :step + 1]
             break
 
+        step += 1
 
     detection_time, inform_time, mission_time, time_at_least_one = _finalize_metrics(
         x.time_elapsed_at_steps, timestep_all_targets_are_known,
