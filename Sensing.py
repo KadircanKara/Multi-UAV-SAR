@@ -111,6 +111,27 @@ def _matrix_column_arrival_steps(path_matrix, D, speed):
     return arrivals
 
 
+def _discrete_connectivity_matrix(path_matrix, info):
+    """Per-step adjacency implied by a DISCRETE path matrix.
+
+    Mirrors PathSolution.do_connectivity_calculations' adjacency rule (metre
+    distance <= comm_cell_range * cell_side_length) but returns the matrix
+    instead of writing it onto the solution: percentage_connectivity is an
+    optimization objective measured on the PLANNED path, and the sensing
+    pipelines must never clobber it when they re-derive connectivity for a
+    trajectory that early return has rewritten.
+    """
+    comm_dist = info.comm_cell_range * info.cell_side_length
+    time_slots = path_matrix.shape[1]
+    conn = np.zeros((time_slots, info.number_of_nodes, info.number_of_nodes))
+    for time in range(time_slots):
+        paths_at_time = path_matrix[:, time]
+        for node_no in range(info.number_of_nodes):
+            conn[time, node_no, :] = info.D[paths_at_time[node_no], paths_at_time] <= comm_dist
+            conn[time, node_no, node_no] = 0   # no self-connection
+    return conn
+
+
 def _refresh_beliefs(search_map, beliefs, dirty, p, q):
     """Re-fold the cached belief of every (node, cell) whose event list changed
     this step, then clear the dirty set.
@@ -331,6 +352,7 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
         _update_target_detection_times(x, occupancy_status, step)
 
         # --- early return-to-base (AD3) ------------------------------------------
+        paths_rewritten = False
         for m in range(number_of_drones):
             if step > 0 and drone_positions[m] == -1:
                 continue
@@ -368,14 +390,13 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
                         realtime_y = np.hstack(
                             (realtime_y, np.repeat(realtime_y[:, -1:], grow, axis=1)))
                         timesteps += grow
-                        connectivity_matrix = get_real_connectivity_matrix(
-                            realtime_x, realtime_y, sol)
                         remaining = timesteps - step
                     pad = remaining - len(ret_x)
                     ret_x = np.hstack((ret_x, np.full(pad, cell_bs_x)))
                     ret_y = np.hstack((ret_y, np.full(pad, cell_bs_y)))
                     realtime_x[m + 1, step:] = ret_x
                     realtime_y[m + 1, step:] = ret_y
+                    paths_rewritten = True
                     # Mirror into the DISCRETE path matrix so PathAnimation (which
                     # re-derives trajectories from it via get_real_paths) shows the
                     # early return (AD3). Indexed by discrete waypoint (leg), NOT
@@ -395,6 +416,18 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
                         f"columns ({n_cols - leg})")
                     padded_path = path_to_0 + [-1] * (n_cols - leg - len(path_to_0))
                     x.real_time_path_matrix[m + 1, leg:] = padded_path[:n_cols - leg]
+
+        # Connectivity must describe the trajectory the drones ACTUALLY fly: a
+        # diverted drone relays from its route home, not from the search pattern
+        # it abandoned. Recomputed once per step in which any row was rewritten,
+        # which also covers a horizon grow (that only happens on a rewrite).
+        # Previously this ran ONLY inside the grow branch -- and even there it
+        # ran before the rewrite it was meant to capture -- so whether cliques
+        # were real depended on whether the return route happened to need extra
+        # columns. Past columns are untouched by the rewrite, so a full recompute
+        # reproduces them exactly.
+        if paths_rewritten:
+            connectivity_matrix = get_real_connectivity_matrix(realtime_x, realtime_y, sol)
 
         # --- mission end: every drone home (defect A2 fix: ndarray, not list) ----
         # A drone counts as "home" only when it is at the BS (get_city == -1) AND
@@ -523,6 +556,7 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, config):
         _update_target_detection_times(x, occupancy_status, step)
 
         # Drones that know enough info return to base
+        paths_rewritten = False
         for m in range(number_of_drones):
             if step > 0 and x.real_time_path_matrix[m + 1, step] == -1:
                 continue
@@ -536,6 +570,16 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, config):
                     path_to_0 = interpolate_between_cities(x, current_pos, 0)
                     padded_path = path_to_0 + [-1] * (timesteps - len(path_to_0))
                     x.real_time_path_matrix[m + 1, step:] = padded_path[:timesteps - step]
+                    paths_rewritten = True
+
+        # Same as the realtime pipeline: connectivity must follow the rewritten
+        # trajectory. x.connectivity_matrix was derived from the PLANNED path
+        # when the solution was built, so without this a diverted drone kept
+        # relaying from the search pattern it had abandoned. Rebind the local
+        # only -- never write back to x, whose percentage_connectivity objective
+        # is defined on the planned path.
+        if paths_rewritten:
+            connectivity_matrix = _discrete_connectivity_matrix(x.real_time_path_matrix, info)
 
         # MISSION clock (actual flown path incl. early-return legs) -> mission_time
         # only, which must reflect the real return trajectory. Computed AFTER the

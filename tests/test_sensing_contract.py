@@ -38,13 +38,37 @@ def test_realtime_mission_time_finite(small_solution):
     assert np.isfinite(metrics["mission time"]) and metrics["mission time"] > 0
 
 
-def test_realtime_early_return_shortens_mission(small_solution):
-    # Favorable: low threshold + onboard merging -> drones learn fast, go home early.
-    # Unfavorable: unreachable threshold + no merging -> full path is flown.
-    favorable, _ = sensing_and_realtime_info_sharing(small_solution, CFG("onboard"))
-    unfavorable, _ = sensing_and_realtime_info_sharing(small_solution, CFG("none", B=0.999))
+def _first_home_column(row):
+    """First path-matrix column after departure at which the drone is at the BS."""
+    back = np.where(row[1:] == -1)[0]        # column 0 is the BS it departs from
+    assert len(back), "drone never returns to the BS"
+    return int(back[0]) + 1
+
+
+def test_realtime_early_return_curtails_the_search(small_solution):
+    """Early return must genuinely cut the search short: the detecting drone is
+    parked at the BS strictly sooner than its planned tour would have brought it.
+
+    Favorable: low threshold + onboard merging -> drones learn fast, go home early.
+    Unfavorable: unreachable threshold + no merging -> the full path is flown.
+
+    Deliberately NOT asserted: that early return shortens MISSION TIME. It does
+    not, and asserting so was a premise this model never guaranteed. Mission time
+    is a lockstep clock -- a step costs max-over-drones leg distance / speed --
+    and a diverting drone flies DIAGONAL legs (70.7 m) where the others still fly
+    orthogonal ones (50 m), so its dash home stretches every synchronised step
+    for the whole formation. On this fixture the full planned tour costs 1160.24
+    (discrete) while the early-return run costs 1176.81. Early return curtails the
+    SEARCH, not the CLOCK; the old assertion passed only on a 5 s margin of luck.
+    """
+    favorable, x_fav = sensing_and_realtime_info_sharing(small_solution, CFG("onboard"))
+    unfavorable, x_unf = sensing_and_realtime_info_sharing(small_solution, CFG("none", B=0.999))
     assert np.isfinite(favorable["mission time"])
-    assert favorable["mission time"] < unfavorable["mission time"]
+    # row 1 == drone 0, whose subtour is the only one containing target cell 12
+    assert (_first_home_column(x_fav.real_time_path_matrix[1])
+            < _first_home_column(x_unf.real_time_path_matrix[1])), \
+        "early return must park the detecting drone at the BS sooner"
+    assert favorable["detection time"] <= unfavorable["detection time"]
 
 
 def test_realtime_detection_finite_when_detectable(small_solution):

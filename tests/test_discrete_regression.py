@@ -23,10 +23,20 @@ from SensingReplay import SensingConfig
 # test_mission_time_matches_flown_path re-derives this number from the returned
 # path matrix independently of the clock, and is the real guard; the snapshot
 # only pins that it does not drift.
+#
+# "inform time" re-frozen 2026-07-17 (499.41 -> 201.42) and "mission time"
+# (1209.95 -> 1176.81): connectivity is now re-derived from the trajectory the
+# drones actually fly, instead of staying pinned to the planned path forever.
+# A drone sent home used to keep relaying from the search pattern it had
+# abandoned; now it relays from its route home, reaches the BS, and informs it
+# far sooner -- hence the large inform drop. Detection is unchanged (it happens
+# before any early return), and onboard/gcs now agree exactly: once the
+# detecting drone physically flies to the BS, the merge topology stops mattering
+# for this scenario.
 SNAPSHOT = {
     "detection time": 632.5483399593904,
-    "inform time": 499.4112549695428,
-    "mission time": 1209.9494936611666,
+    "inform time": 201.4213562373095,
+    "mission time": 1176.812408671319,
     "time at least one drone knows all targets": 632.5483399593904,
 }
 OCCUPANCY_SUM = 5
