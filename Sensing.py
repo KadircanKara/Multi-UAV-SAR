@@ -563,8 +563,7 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, config):
             if drone_search_status[m]:
                 knows_all = np.sum(occupancy_status[m + 1]) >= len(target_locations)
                 is_connected_to_bs = m + 1 in get_connected_node_ids(adj_mat, 0)
-                if timestep_bs_knows_all_targets != np.inf and is_connected_to_bs or knows_all:
-
+                if (timestep_bs_knows_all_targets != np.inf and is_connected_to_bs) or knows_all:
                     drone_search_status[m] = False
                     current_pos = x.real_time_path_matrix[m + 1, step]
                     path_to_0 = interpolate_between_cities(x, current_pos, 0)

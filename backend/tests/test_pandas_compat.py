@@ -10,7 +10,6 @@ import pickle
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from app.pandas_compat import install_legacy_string_pickle_compat
 
