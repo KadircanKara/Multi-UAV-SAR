@@ -389,7 +389,7 @@ export default function LandingPage() {
           title="Model Comparison"
           description="Put models head-to-head across every objective and sensing time-metric — even objectives a model never optimised."
           bullets={[
-            "Bar, line, radar & table views",
+            "Bar, line & table views",
             "Objective & time-metric comparison",
             "Cross-model, cross-parameter",
           ]}

@@ -3,7 +3,7 @@
 /**
  * ObjectivesView — shared cross-model objectives comparison view.
  *
- * Renders the Bar | Line | Radar | Table chart-type views driven by a
+ * Renders the Bar | Line | Table chart-type views driven by a
  * ComparisonResponse (POST /api/comparison for seeded scenarios, or
  * POST /api/playground/comparison for uploaded result files). Used by both
  * `/compare/seeded-results` and `/compare/playground` so the objective-rendering
@@ -65,7 +65,7 @@ export const CompareStackedBarChart = dynamic<CompareStackedBarChartProps>(
 
 // ─── Types + constants ──────────────────────────────────────────────────────
 
-export type ChartType = "bar" | "line" | "radar" | "table";
+export type ChartType = "bar" | "line" | "table";
 type StatKey = "best" | "mean" | "min" | "max";
 
 export const SWEEP_LABELS: Record<SweepParam, string> = {
@@ -115,8 +115,7 @@ export function ChartTypeSwitch({
       type="single"
       value={value}
       onValueChange={(v) => {
-        if (v === "bar" || v === "line" || v === "radar" || v === "table")
-          onChange(v);
+        if (v === "bar" || v === "line" || v === "table") onChange(v);
       }}
       className="justify-start gap-2"
     >
@@ -125,9 +124,6 @@ export function ChartTypeSwitch({
       </ToggleGroupItem>
       <ToggleGroupItem value="line" className="h-7 px-3 text-xs">
         Line
-      </ToggleGroupItem>
-      <ToggleGroupItem value="radar" className="h-7 px-3 text-xs">
-        Radar
       </ToggleGroupItem>
       <ToggleGroupItem value="table" className="h-7 px-3 text-xs">
         Table
@@ -208,7 +204,7 @@ export interface ObjectivesViewProps {
    *  `data`, in first-seen order. Pass the full picker selection to keep
    *  colors/order anchored to it rather than to response order. */
   models?: string[];
-  /** Hide the internal Bar|Line|Radar|Table + sweep-param controls — pass this
+  /** Hide the internal Bar|Line|Table + sweep-param controls — pass this
    *  when the caller renders its own copy elsewhere (e.g. to keep the switch
    *  visible above a loading skeleton, before `data` exists). */
   hideControls?: boolean;

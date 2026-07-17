@@ -1,15 +1,14 @@
 "use client";
 
 /**
- * MetricComparisonView — the shared dispatcher for the three "snapshot" compare
- * views (bar grid / radar / table). The Line view is handled separately by
+ * MetricComparisonView — the shared dispatcher for the "snapshot" compare views
+ * (bar grid / table). The Line view is handled separately by
  * ParameterEffectChart. Reused by both the mission route (topologies) and the
  * comparison page (scenarios). Also the home of the shared CompareMetric /
  * CompareEntity data shapes.
  */
 
 import CompareBarChart from "@/components/viz/CompareBarChart";
-import CompareRadarChart from "@/components/viz/CompareRadarChart";
 import CompareMetricTable from "@/components/compare/CompareMetricTable";
 
 // ─── Shared data shapes ───────────────────────────────────────────────────────
@@ -27,7 +26,7 @@ export interface CompareEntity {
   values: Record<string, number | null>;
 }
 
-export type CompareChartType = "bar" | "radar" | "table";
+export type CompareChartType = "bar" | "table";
 
 export interface MetricComparisonViewProps {
   metrics: CompareMetric[];
@@ -35,7 +34,7 @@ export interface MetricComparisonViewProps {
   chartType: CompareChartType;
   /** per-metric-name set of entity keys that actually optimized that metric */
   metricOptimizedBy?: Record<string, Set<string>>;
-  /** tailwind height class forwarded to bar/radar charts */
+  /** tailwind height class forwarded to bar charts */
   heightClass?: string;
 }
 
@@ -62,16 +61,6 @@ export default function MetricComparisonView({
       optimizedBy: metricOptimizedBy?.[m.name],
     }));
     return <CompareMetricTable metrics={merged} entities={entities} />;
-  }
-
-  if (chartType === "radar") {
-    return (
-      <CompareRadarChart
-        metrics={metrics}
-        entities={entities}
-        {...(heightClass ? { heightClass } : {})}
-      />
-    );
   }
 
   // chartType === "bar" → one chart per metric in a responsive grid

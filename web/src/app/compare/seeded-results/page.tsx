@@ -10,11 +10,11 @@
  *   • Time Metrics — sensing-replay time metrics from POST /api/comparison/time
  *                    (run on demand against a shared sensing config + strategy).
  *
- * Each tab offers a Bar | Line | Radar | Table chart-type switcher. Bar renders
+ * Each tab offers a Bar | Line | Table chart-type switcher. Bar renders
  * one CompareStackedBarChart per objective/metric (x = parameter combination,
  * stacked by model); Line renders one ParameterEffectChart per objective/metric
  * with one line per (model × non-swept-param combo), built by buildModelComboSeries;
- * Radar/Table go through the shared MetricComparisonView. Stat is always "best".
+ * Table goes through the shared MetricComparisonView. Stat is always "best".
  *
  * Mirrors the model page's dynamic chart import + skeleton/offline patterns and
  * the MergingTab sensing-config layout. Uses the clean Geist-Sans styling of the
@@ -211,7 +211,7 @@ function SliderField({
 // ─── Objectives tab (module scope) ────────────────────────────────────────────
 //
 // Owns scenario capping + the debounced fetch against /api/comparison; the
-// bar/line/radar/table rendering itself is the shared ObjectivesView component
+// bar/line/table rendering itself is the shared ObjectivesView component
 // (also used by /compare/playground). Chart type + sweep param are lifted to
 // the page (shared across tabs, and consumed by the picker's line mode), so
 // they're passed down as controlled props; the always-visible switch below is
