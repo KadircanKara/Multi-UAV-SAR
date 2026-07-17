@@ -75,7 +75,7 @@ def test_realtime_merging_propagates_to_non_visiting_drones(small_solution):
     Fixture geometry: only drone 0's subtour (cells 0-15) contains target cell
     12; drones 1-3 (search_map rows 2-4) never visit it, so ANY observation of
     cell 12 in their maps can only have arrived via merge_maps. With merging
-    'none' those rows must hold exactly the initial default observation.
+    'none' those rows must stay empty (no events observed, no events received).
     B=0.999 disables early return so both runs fly identical full paths.
 
     Note: this pins belief PROPAGATION through the realtime pipeline's
@@ -91,7 +91,7 @@ def test_realtime_merging_propagates_to_non_visiting_drones(small_solution):
     n_nodes = onboard["search map"].shape[0]
     non_visiting_rows = range(2, n_nodes)   # drones 1-3: subtours exclude cell 12
     for row in non_visiting_rows:
-        assert len(none_["search map"][row, target]) == 1, \
-            f"row {row}: 'none' must leave only the default observation"
-        assert len(onboard["search map"][row, target]) > 1, \
+        assert len(none_["search map"][row, target]) == 0, \
+            f"row {row}: 'none' must leave the event list empty"
+        assert len(onboard["search map"][row, target]) > 0, \
             f"row {row}: 'onboard' must have delivered a merged observation"

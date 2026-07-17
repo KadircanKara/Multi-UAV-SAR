@@ -49,11 +49,17 @@ VALID_MERGE_TOPOLOGIES = ("none", "onboard", "gcs")
 
 
 def _init_search_map(number_of_nodes, number_of_cells):
-    default_obs = [{"n_obs": 0, "timestep": -1, "prob": 0.5}]
+    """Per-(node, cell) list of the sensing EVENTS that node knows about.
+
+    An empty list means "nothing observed yet" — the prior lives in
+    _fused_odds, not in a sentinel entry. (The old prior sentinel carried no
+    information any reader used, and one shallow-copied dict was aliased into
+    every node and every cell.)
+    """
     search_map = np.full((number_of_nodes, number_of_cells), fill_value=None, dtype=object)
     for i in range(number_of_nodes):
         for j in range(number_of_cells):
-            search_map[i, j] = default_obs.copy()
+            search_map[i, j] = []
     return search_map
 
 
@@ -64,14 +70,11 @@ def _likelihood_ratio(positive, p, q):
 
 def _fused_odds(observations, p, q, prior=0.5):
     """Posterior odds from the prior + every sensing EVENT in the list.
-    Entries with timestep < 0 are the prior sentinel and contribute nothing.
-    Order-independent (odds-form product of independent measurements).
-    May overflow to inf for very long positive chains — callers treat inf as
-    certainty."""
+    An empty list is the prior. Order-independent (odds-form product of
+    independent measurements). May overflow to inf for very long positive
+    chains — callers treat inf as certainty."""
     odds = prior / (1.0 - prior)
     for obs in observations:
-        if obs["timestep"] < 0:
-            continue
         odds *= _likelihood_ratio(obs["positive"], p, q)
     return odds
 
@@ -166,7 +169,7 @@ def _finalize_metrics(time_elapsed_at_steps, t_all_known, t_bs_knows, t_one_know
     return detection_time, inform_time, mission_time, time_at_least_one
 
 
-def merge_maps(conn_comp, search_map, merge_topology="onboard"):
+def merge_maps(conn_comp, search_map, merge_topology="onboard", dirty=None):
     """Share sensing EVENTS within each connectivity clique.
 
     Every member of a clique ends up with the UNION of the clique's unique
@@ -174,6 +177,9 @@ def merge_maps(conn_comp, search_map, merge_topology="onboard"):
     discrete step). Older events are shared too; belief fusion happens
     downstream in _fused_belief — merging never picks a "winning" observation.
       "none": no sharing. "onboard": every clique. "gcs": only cliques with node 0.
+
+    `dirty`, when given, collects the (node, cell) pairs whose event list this
+    call replaced, so callers can refresh only those cached beliefs.
     """
     if merge_topology not in VALID_MERGE_TOPOLOGIES:
         raise ValueError(
@@ -189,8 +195,6 @@ def merge_maps(conn_comp, search_map, merge_topology="onboard"):
             union = {}
             for node in clique:
                 for obs in search_map[node, cell]:
-                    if obs["timestep"] < 0:
-                        continue
                     union.setdefault((obs["drone"], obs["timestep"]), obs)
             if not union:
                 continue
@@ -199,8 +203,13 @@ def merge_maps(conn_comp, search_map, merge_topology="onboard"):
             for node in clique:
                 # every member's events are a subset of the union, so a length
                 # match means the set already matches — skip the rebuild
-                if len(search_map[node, cell]) - 1 != len(merged_events):
-                    search_map[node, cell] = [search_map[node, cell][0]] + merged_events
+                if len(search_map[node, cell]) != len(merged_events):
+                    # a fresh list per node: the sensing loop appends to these
+                    # in place, so sharing one list object would leak a drone's
+                    # own observation into every clique member's map
+                    search_map[node, cell] = list(merged_events)
+                    if dirty is not None:
+                        dirty.add((node, cell))
     return search_map
 
 
@@ -219,8 +228,8 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
     B, p, q = config.belief_threshold, config.detection_prob, config.false_alarm_prob
     x = deepcopy(sol)
     info = x.info
-    # sensing source; a copy so early-return mirror rewrites cannot alter
-    # positions/n_obs of columns that are still to be sensed
+    # sensing source; a copy so early-return mirror rewrites cannot alter the
+    # positions of columns that are still to be sensed
     drone_path_matrix = x.real_time_path_matrix[1:, :].copy()
     # tour-end sensing window (exact parity with the discrete pipeline): a drone
     # stops sensing once past its own tour — hovering on a cell is not a new
@@ -287,14 +296,9 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
                 pos = drone_path_matrix[drone, col]
                 if pos == -1:
                     continue
-                node_obs = search_map[drone + 1, pos]
-                positive = pos in target_locations
-                odds = _fused_odds(node_obs, p, q) * _likelihood_ratio(positive, p, q)
-                new_prob = 1.0 if np.isinf(odds) else odds / (1.0 + odds)
-                n_obs = len(np.where(drone_path_matrix[drone, :col + 1] == pos)[0])
-                node_obs.append({"drone": drone + 1, "n_obs": n_obs,
-                                 "timestep": col, "prob": new_prob,
-                                 "positive": positive})
+                search_map[drone + 1, pos].append(
+                    {"drone": drone + 1, "timestep": col,
+                     "positive": pos in target_locations})
 
         # --- merging: EVERY second, including mid-flight (AD5) ------------------
         search_map = merge_maps(conn_comp, search_map, merge_topology)
@@ -468,13 +472,9 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, config):
             pos = drone_path_matrix[drone, step]
             if pos == -1:
                 continue
-            node_obs = search_map[drone + 1, pos]
-            positive = pos in target_locations
-            odds = _fused_odds(node_obs, p, q) * _likelihood_ratio(positive, p, q)
-            new_prob = 1.0 if np.isinf(odds) else odds / (1.0 + odds)
-            n_obs = len(np.where(drone_path_matrix[drone, :step + 1] == pos)[0])
-            node_obs.append({"drone": drone + 1, "n_obs": n_obs, "timestep": step,
-                             "prob": new_prob, "positive": positive})
+            search_map[drone + 1, pos].append(
+                {"drone": drone + 1, "timestep": step,
+                 "positive": pos in target_locations})
 
         search_map = merge_maps(conn_comp, search_map, merge_topology)
 

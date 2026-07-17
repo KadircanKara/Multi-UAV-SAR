@@ -117,13 +117,12 @@ from collections import Counter
 
 def _event_multiset(search_map):
     """Multiset of sensing events (drone, matrix-column, cell, positive) across
-    all nodes/cells, ignoring the prior sentinel (timestep < 0)."""
+    all nodes/cells."""
     c = Counter()
     for row in range(search_map.shape[0]):
         for cell in range(search_map.shape[1]):
             for e in search_map[row, cell]:
-                if e["timestep"] >= 0:
-                    c[(e["drone"], e["timestep"], cell, e["positive"])] += 1
+                c[(e["drone"], e["timestep"], cell, e["positive"])] += 1
     return c
 
 
