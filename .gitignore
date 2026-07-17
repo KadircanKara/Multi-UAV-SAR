@@ -42,3 +42,6 @@ Figures/**
 # Local data backups / script outputs (never commit)
 Results_BACKUP/
 backend/scripts/verify_results/
+
+# Local dev-server logs
+/scratch_*.log

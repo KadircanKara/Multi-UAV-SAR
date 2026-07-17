@@ -13,3 +13,11 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
+
+# Bootstrap side-effect: make legacy 2-tuple StringArray pickles (the seeded
+# Results/ files) loadable under the installed pandas. Every module that reads
+# those pickles imports this module first, so the patch is always in place
+# before the first read_pickle. Idempotent.
+from app.pandas_compat import install_legacy_string_pickle_compat  # noqa: E402
+
+install_legacy_string_pickle_compat()
