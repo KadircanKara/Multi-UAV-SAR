@@ -35,7 +35,6 @@ import type {
 import ModelScenarioPicker, {
   type PickerSelection,
 } from "@/components/compare/ModelScenarioPicker";
-import CompareRunDetails from "@/components/compare/CompareRunDetails";
 import {
   ObjectivesView,
   ParameterEffectChart,
@@ -867,8 +866,6 @@ export default function ComparePage() {
               />
             </TabsContent>
           </Tabs>
-
-          <CompareRunDetails scenarios={selection.scenarios} />
         </>
       )}
     </div>
