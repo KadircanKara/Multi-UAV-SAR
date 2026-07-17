@@ -15,27 +15,31 @@ from SensingReplay import SensingConfig
 # mission, and time-at-least-one are unchanged (early returns fire after
 # detection, so the pre-detection clock never differed).
 #
-# "mission time" re-frozen 2026-07-17 (1193.38 -> 1209.95): the mission clock
-# used to read column step+1 BEFORE the early-return block rewrote it, so the
-# one leg on which a drone diverts home was timed against the planned route it
-# abandoned -- undercounting the diversion. Moving the mission clock after the
-# early-return block prices the leg actually flown, so the value rises.
-# test_mission_time_matches_flown_path re-derives this number from the returned
-# path matrix independently of the clock, and is the real guard; the snapshot
-# only pins that it does not drift.
+# All values re-frozen 2026-07-17 after three fixes; detection and
+# time-at-least-one never moved, because early return cannot fire before
+# detection and so the pre-detection legs are never rewritten.
 #
-# "inform time" re-frozen 2026-07-17 (499.41 -> 201.42) and "mission time"
-# (1209.95 -> 1176.81): connectivity is now re-derived from the trajectory the
-# drones actually fly, instead of staying pinned to the planned path forever.
-# A drone sent home used to keep relaying from the search pattern it had
-# abandoned; now it relays from its route home, reaches the BS, and informs it
-# far sooner -- hence the large inform drop. Detection is unchanged (it happens
-# before any early return), and onboard/gcs now agree exactly: once the
-# detecting drone physically flies to the BS, the merge topology stops mattering
-# for this scenario.
+# "mission time" (1193.38 -> 1209.95 -> 1176.81): the clock used to read column
+# step+1 BEFORE the early-return block rewrote it, so the leg on which a drone
+# diverts home was timed against the route it had just abandoned. Then
+# connectivity started being re-derived from the flown trajectory, which changes
+# when drones are sent home and reshapes the flown path.
+#
+# "inform time" (532.55 -> 499.41 -> 201.42 -> 209.71): connectivity is now
+# derived from the trajectory actually flown, so a drone sent home really
+# reaches the BS and tells it, instead of relaying forever from the search
+# pattern it abandoned -- that is the big drop. The final step (201.42 ->
+# 209.71) withdrew the SEARCH clock: "inform time" is DEFINED as the time that
+# elapses from all targets being detected to the BS knowing all targets, and the
+# search clock priced that window with planned legs the drones never flew,
+# reporting 201.42 s where 209.71 s had passed.
+#
+# The real guards are test_inform_time_is_real_elapsed_time and
+# test_mission_time_matches_flown_path, which re-derive these from the returned
+# path matrix without touching the pipeline's clock. This snapshot only pins drift.
 SNAPSHOT = {
     "detection time": 632.5483399593904,
-    "inform time": 201.4213562373095,
+    "inform time": 209.7056274847714,
     "mission time": 1176.812408671319,
     "time at least one drone knows all targets": 632.5483399593904,
 }
@@ -54,23 +58,41 @@ def test_discrete_metrics_unchanged(small_solution):
     assert len(m["cell occupancy probabilities"][0]) == N_PROB_STEPS
 
 
-def test_search_clock_topology_independent(small_solution):
-    """detection / inform / time-at-least-one must not depend on merge topology
-    when the detection and inform STEPS are topology-independent (they are for
-    this scenario). Guards the SEARCH-clock fix: early-return path rewrites are
-    a merge-topology side effect and must never leak into the search timeline.
-    mission_time legitimately differs (it rides the actual flown path)."""
-    def run(topo):
-        m, _ = sensing_and_discrete_info_sharing(
-            small_solution,
-            SensingConfig(merge_topology=topo, time_model="discrete", target_locations=[12],
-                          belief_threshold=0.7, detection_prob=0.7, false_alarm_prob=0.2))
-        return m
-    onboard, gcs = run("onboard"), run("gcs")
-    for key in ("detection time", "inform time",
-                "time at least one drone knows all targets"):
-        assert onboard[key] == gcs[key], (
-            f"{key} is topology-dependent: onboard {onboard[key]} != gcs {gcs[key]}")
+@pytest.mark.parametrize("topo", ["onboard", "gcs", "none"])
+def test_inform_time_is_real_elapsed_time(small_solution, topo):
+    """"Inform time" is defined as the time that ELAPSES from all targets being
+    detected to the BS knowing all targets. So it must equal the elapsed time
+    over [t_all_known, t_bs_knows) on the path the drones actually flew.
+
+    Re-derived here from the returned path matrix, never from the pipeline's own
+    clock. This is what the withdrawn SEARCH clock got wrong: it priced that
+    window with legs from the PLANNED path, which the drones abandon at the
+    moment of the diversion, and reported 201.42 s where 209.71 s had passed.
+    """
+    m, x = sensing_and_discrete_info_sharing(
+        small_solution,
+        SensingConfig(merge_topology=topo, time_model="discrete", target_locations=[12],
+                      belief_threshold=0.7, detection_prob=0.7, false_alarm_prob=0.2))
+    if not np.isfinite(m["inform time"]):
+        pytest.skip(f"{topo}: BS never learns, inform is inf by definition")
+    D, speed = x.info.D, x.info.max_drone_speed
+    flown = x.real_time_path_matrix[1:, :]
+    legs = [max(D[flown[r, s], flown[r, s + 1]] for r in range(flown.shape[0])) / speed
+            for s in range(flown.shape[1] - 1)]
+    # Elapsed time on the flown path can only ever be a PREFIX SUM of its legs.
+    # detection = elapsed(t_all_known) and detection + inform = elapsed(t_bs_knows),
+    # so both must land exactly on a prefix -- no index recovery needed, and no
+    # reuse of the pipeline's own clock. Under the withdrawn search clock,
+    # detection still landed on a prefix (early return cannot fire before
+    # detection) but detection + inform did NOT, because the diversion leg inside
+    # the window was priced on the abandoned plan.
+    prefixes = np.concatenate(([0.0], np.cumsum(legs)))
+    on_prefix = lambda v: bool(np.any(np.isclose(prefixes, v, rtol=1e-9, atol=1e-9)))
+    assert on_prefix(m["detection time"]), \
+        f"{topo}: detection {m['detection time']} is not elapsed time on the flown path"
+    assert on_prefix(m["detection time"] + m["inform time"]), (
+        f"{topo}: detection+inform {m['detection time'] + m['inform time']} is not elapsed "
+        f"time on the flown path -- inform is not a real duration")
 
 
 @pytest.mark.parametrize("topo", ["onboard", "gcs", "none"])
