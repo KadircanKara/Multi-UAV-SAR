@@ -104,6 +104,11 @@ def test_inform_time_is_real_elapsed_time(small_solution, topo):
     clock. This is what the withdrawn SEARCH clock got wrong: it priced that
     window with legs from the PLANNED path, which the drones abandon at the
     moment of the diversion, and reported 201.42 s where 209.71 s had passed.
+
+    Exception: under merge_topology="none" the BS has no comms channel, so it is
+    treated as informed only when the drones return home -- inform is reported as
+    the full mission_time, not the detection->BS-knows window (see
+    _finalize_metrics), and that convention is checked directly here.
     """
     m, x = sensing_and_discrete_info_sharing(
         small_solution,
@@ -111,6 +116,12 @@ def test_inform_time_is_real_elapsed_time(small_solution, topo):
                       belief_threshold=0.7, detection_prob=0.7, false_alarm_prob=0.2))
     if not np.isfinite(m["inform time"]):
         pytest.skip(f"{topo}: BS never learns, inform is inf by definition")
+    if topo == "none":
+        # No merging: inform is defined as the full mission time (BS informed on
+        # physical return), so the flown-window prefix invariant does not apply.
+        assert m["inform time"] == m["mission time"], \
+            f"none: inform {m['inform time']} must equal mission {m['mission time']}"
+        return
     D, speed = x.info.D, x.info.max_drone_speed
     flown = x.real_time_path_matrix[1:, :]
     legs = [max(D[flown[r, s], flown[r, s + 1]] for r in range(flown.shape[0])) / speed

@@ -148,10 +148,29 @@ def _refresh_beliefs(search_map, beliefs, dirty, p, q):
 
 
 def _occupancy_from_beliefs(beliefs, B):
-    """Occupancy flags + per-cell max belief. Target-cell beliefs are monotone
-    non-decreasing (events only accumulate), so a crossed threshold stays
-    crossed — the old any-historical-prob latch is implied."""
-    return (beliefs > B).astype(int), beliefs.max(axis=0).tolist()
+    """Occupancy flags + the per-cell displayed belief (most-informed node).
+
+    Occupancy flags stay per-node ``beliefs > B``; target-cell beliefs are
+    monotone non-decreasing (events only accumulate), so a crossed threshold
+    stays crossed — the old any-historical-prob latch is implied.
+
+    The DISPLAYED per-cell value is the belief of the most-informed node — the
+    one whose fused belief has moved furthest from the 0.5 prior. Observations
+    are deterministic (a cell reads positive iff it truly holds a target), so
+    every node's belief for a given cell moves the SAME direction; the most
+    extreme belief is therefore the most-informed node's, whether a target cell
+    rising toward 1 or an empty cell falling toward 0.
+
+    A plain ``max(axis=0)`` surfaced RISING beliefs but hid FALLING ones: under
+    merge_topology='none' the base station (and any drone that never visited a
+    cell) sits at the 0.5 prior, and ``max(0.5, 0.18, ...) == 0.5`` pinned every
+    swept EMPTY cell to 0.5 for the whole mission. Selecting by ``|belief - 0.5|``
+    lets empty cells fall while leaving every target-cell series (all beliefs
+    >= 0.5, so |dev| picks the same max) byte-identical.
+    """
+    idx = np.abs(beliefs - 0.5).argmax(axis=0)
+    per_cell = beliefs[idx, np.arange(beliefs.shape[1])]
+    return (beliefs > B).astype(int), per_cell.tolist()
 
 
 def _update_detection_timesteps(occupancy_status, target_locations, step,
@@ -179,13 +198,23 @@ def _update_target_detection_times(x, occupancy_status, step):
                     x.target_detection_times[target] = sum(x.time_elapsed_at_steps[:step])
 
 
-def _finalize_metrics(time_elapsed_at_steps, t_all_known, t_bs_knows, t_one_knows, t_back):
+def _finalize_metrics(time_elapsed_at_steps, t_all_known, t_bs_knows, t_one_knows,
+                      t_back, merge_topology="onboard"):
     """Turn step indices into elapsed times on the ONE clock of the flown mission.
 
     Every metric here is defined as a real elapsed duration -- "inform time" is
     the time that elapses from all targets being detected to the BS knowing all
     targets -- so all four are summed over the same clock, the one built from the
     path the drones ACTUALLY flew (early-return legs included).
+
+    merge_topology == "none": the BS has no comms channel, so it is never
+    informed live (t_bs_knows stays inf and inform would be inf forever). By
+    model convention the BS is instead treated as informed when the drones
+    physically return home, so inform is reported as the full mission time -- but
+    only once every target has actually been detected (t_all_known finite); if a
+    target was never found, the BS cannot know all even at home, so inform stays
+    inf ("-"). This override applies to "none" only; onboard/gcs inform via
+    merging as before.
 
     An earlier design ran a second clock built from a pristine snapshot of the
     PLANNED path for detection/inform/t1, to stop merge topology from moving
@@ -206,6 +235,8 @@ def _finalize_metrics(time_elapsed_at_steps, t_all_known, t_bs_knows, t_one_know
     detection_time = sum(time_elapsed_at_steps[:t_all_known]) if t_all_known != np.inf else np.inf
     inform_time = sum(time_elapsed_at_steps[t_all_known:t_bs_knows]) if t_bs_knows != np.inf else np.inf
     mission_time = sum(time_elapsed_at_steps[:t_back]) if t_back != np.inf else np.inf
+    if merge_topology == "none" and t_all_known != np.inf:
+        inform_time = mission_time
     return detection_time, inform_time, mission_time, time_at_least_one
 
 
@@ -468,7 +499,7 @@ def sensing_and_realtime_info_sharing(sol: PathSolution, config):
     detection_time, inform_time, mission_time, time_at_least_one = _finalize_metrics(
         x.time_elapsed_at_steps, timestep_all_targets_are_known,
         timestep_bs_knows_all_targets, timestep_at_least_one_drone_knows_all_targets,
-        timestep_drones_are_back_at_bs)
+        timestep_drones_are_back_at_bs, merge_topology)
 
     return {"cell occupancy probabilities": cell_occupancy_probabilities,
             "search map": search_map,
@@ -626,7 +657,7 @@ def sensing_and_discrete_info_sharing(sol: PathSolution, config):
     detection_time, inform_time, mission_time, time_at_least_one = _finalize_metrics(
         x.time_elapsed_at_steps, timestep_all_targets_are_known,
         timestep_bs_knows_all_targets, timestep_at_least_one_drone_knows_all_targets,
-        timestep_drones_are_back_at_bs)
+        timestep_drones_are_back_at_bs, merge_topology)
 
     return  {"cell occupancy probabilities": cell_occupancy_probabilities, "search map": search_map, "occupancy status": occupancy_status, "detection time": detection_time, "inform time": inform_time, "mission time": mission_time, "time at least one drone knows all targets": time_at_least_one}, x
 # print(f"TC Best Conn Metrics:\n{tc_best_conn_metrics}")
