@@ -341,7 +341,7 @@ class OptimizeConfig(BaseModel):
     """A user-configured optimization run."""
 
     optimization_type: str = Field(description="SOO | MOO")
-    method: str = Field(description="SOO: GA | WS ; MOO: NSGA2 | NSGA3 (MOEAD blocked)")
+    method: str = Field(description="SOO: GA | WS ; MOO: NSGA2 | NSGA3 | MOEAD")
     objectives: list[str] = Field(..., min_length=1)
     weights: Optional[dict[str, float]] = None
     pop_size: int = Field(default=100, ge=10, le=500)
@@ -379,11 +379,8 @@ class OptimizeConfig(BaseModel):
             raise ValueError("max_mean_tbv must be > 0")
         if t == "SOO" and m not in ("GA", "WS"):
             raise ValueError("SOO method must be 'GA' or 'WS'")
-        if t == "MOO":
-            if m == "MOEAD":
-                raise ValueError("MOEAD is not available yet")
-            if m not in ("NSGA2", "NSGA3"):
-                raise ValueError("MOO method must be 'NSGA2' or 'NSGA3'")
+        if t == "MOO" and m not in ("NSGA2", "NSGA3", "MOEAD"):
+            raise ValueError("MOO method must be 'NSGA2', 'NSGA3' or 'MOEAD'")
         bad = [o for o in self.objectives if o not in _VALID_OBJECTIVES]
         if bad:
             raise ValueError(f"unknown objectives: {bad}")

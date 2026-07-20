@@ -120,9 +120,20 @@ def test_gen_strategy_invalid_is_422(client):
     assert client.post("/api/optimize/check", json=_cfg(gen_strategy="bogus")).status_code == 422
 
 
-def test_moead_blocked(client):
+def test_moead_accepted(client):
     resp = client.post("/api/optimize/check", json=_cfg(method="MOEAD"))
-    assert resp.status_code == 422
+    assert resp.status_code == 200
+
+
+def test_resolve_model_moead_synthesizes_alg():
+    from app.optimizer_service import resolve_model
+    key, model = resolve_model(
+        "MOO", "MOEAD", ["Mission Time", "Percentage Connectivity"],
+        max_mission_time=3600.0, min_connectivity=0.5)
+    assert model["Type"] == "MOO" and model["Alg"] == "MOEAD"
+    assert key.endswith("_MOO_MOEAD")
+    assert model["G"] == ["Max Mission Time", "Min Percentage Connectivity"]
+    assert model["H"] == ["Path Speed Violations as Constraint"]
 
 
 def test_moo_requires_two_objectives(client):
