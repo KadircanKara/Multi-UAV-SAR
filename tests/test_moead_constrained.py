@@ -103,31 +103,38 @@ def test_setup_override_matches_pymoo_minus_the_assert():
     ]
 
 
-def _replacement_winners(scale):
-    """Which neighbourhood slots an offspring claims, with objective 0 x scale.
+_SCALE_PROBLEMS = {2: "zdt1", 3: "dtlz2"}  # unconstrained; 2 -> Tchebicheff, 3 -> PBI
+
+
+def _replacement_winners(scale, n_obj=2):
+    """Which neighbourhood slots the offspring claims, with objective 0 x scale.
 
     Uses an UNCONSTRAINED problem so the feasibility-first branch is bypassed and
     only the decomposition's scale behaviour is under test.
     """
     from pymoo.core.population import Population
 
-    problem = get_problem("zdt1")  # 2 objectives, no constraints
-    ref_dirs = get_reference_directions("energy", 2, n_points=8, seed=1)
+    problem = get_problem(_SCALE_PROBLEMS[n_obj])
+    ref_dirs = get_reference_directions("energy", n_obj, n_points=8, seed=1)
     alg = ConstrainedMOEAD(ref_dirs=ref_dirs, n_neighbors=8)
     alg.setup(problem, termination=("n_gen", 1), seed=1)
 
-    base = np.array([[0.1, 0.9], [0.2, 0.8], [0.3, 0.7], [0.4, 0.6],
-                     [0.5, 0.5], [0.6, 0.4], [0.7, 0.3], [0.8, 0.2]])
-    F = base * np.array([scale, 1.0])
+    grid = np.linspace(0.1, 0.8, 8)
+    F = np.column_stack([grid if j == 0 else (0.9 - grid + 0.1 * j)
+                         for j in range(n_obj)])
+    scales = np.ones(n_obj)
+    scales[0] = scale
+    F = F * scales
     alg.pop = Population.new(F=F)
     alg.ideal = F.min(axis=0)
 
-    off = Population.new(F=np.array([[0.55 * scale, 0.25]]))[0]
+    off_F = np.array([[0.55 if j == 0 else 0.25 + 0.05 * j for j in range(n_obj)]])
+    off = Population.new(F=off_F * scales)[0]
+    alg.ideal = np.minimum(alg.ideal, off.F)
 
     before = alg.pop.get("F").copy()
     alg._replace(0, off)
-    after = alg.pop.get("F")
-    return tuple(np.where(~np.all(before == after, axis=1))[0])
+    return tuple(np.where(~np.all(before == alg.pop.get("F"), axis=1))[0])
 
 
 def test_replacement_is_scale_invariant():
@@ -139,4 +146,56 @@ def test_replacement_is_scale_invariant():
     discriminating -- scaling one objective changes which neighbours an offspring
     claims, which is exactly the bug this asserts against.
     """
+    assert _replacement_winners(1.0), "offspring must win something for this to mean anything"
     assert _replacement_winners(1.0) == _replacement_winners(1000.0)
+
+
+def test_replacement_is_scale_invariant_under_pbi():
+    """Same invariance for PBI, which default_decomp picks at n_obj > 2.
+
+    Every 3-to-5-objective MOO model in this project runs PBI, and its
+    perpendicular-distance term is the more scale-sensitive of the two.
+    """
+    assert _replacement_winners(1.0, n_obj=3), "offspring must win something"
+    assert _replacement_winners(1.0, n_obj=3) == _replacement_winners(1000.0, n_obj=3)
+
+
+def _winners_with_second_objective(second_col):
+    """Slots an offspring claims when objective 1 takes the given incumbent values.
+
+    Objective 0 is a mission-time-like magnitude (~1e3), objective 1 an integer
+    count like Max Disconnected Time whose floor and optimum are both 0.
+    """
+    from pymoo.core.population import Population
+
+    problem = get_problem("zdt1")  # unconstrained: isolates the decomposition
+    ref_dirs = get_reference_directions("energy", 2, n_points=8, seed=1)
+    alg = ConstrainedMOEAD(ref_dirs=ref_dirs, n_neighbors=8)
+    alg.setup(problem, termination=("n_gen", 1), seed=1)
+
+    times = np.array([650.0, 700, 750, 800, 850, 900, 950, 1000])
+    F = np.column_stack([times, second_col])
+    alg.pop = Population.new(F=F)
+    alg.ideal = F.min(axis=0)
+
+    # Halves the best mission time; regresses objective 1 by a single unit.
+    off = Population.new(F=np.array([[325.0, 1.0]]))[0]
+    alg.ideal = np.minimum(alg.ideal, off.F)  # MOEAD._next does this before _replace
+
+    before = alg.pop.get("F").copy()
+    alg._replace(0, off)
+    return tuple(np.where(~np.all(before == alg.pop.get("F"), axis=1))[0])
+
+
+def test_a_stalled_objective_does_not_veto():
+    """An objective that is constant across the population must not dominate.
+
+    Max Disconnected Time is an integer count whose floor IS its optimum, so an
+    all-zero column is routine. Normalising by that column's (zero) range would
+    scale any deviation in it by 1/eps and let a one-timestep regression veto a
+    50% mission-time improvement across every subproblem.
+    """
+    stalled = np.zeros(8)
+    spread = np.array([0.0, 1, 0, 0, 0, 0, 0, 0])
+    assert _winners_with_second_objective(stalled), "offspring must win something"
+    assert _winners_with_second_objective(stalled) == _winners_with_second_objective(spread)

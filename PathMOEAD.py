@@ -11,8 +11,9 @@ moead.py:125-129, promoted to working code:
   * infeasible vs infeasible -> lower total constraint violation (CV) wins
 
 Objectives are normalised into the population's own [0,1] box before the
-decomposition sees them; without that, this project's raw scales (seconds beside
-fractions) let the large objective dominate every subproblem.
+decomposition sees them, with the offspring measured against that same box;
+without it, this project's raw scales (seconds beside fractions) let the large
+objective dominate every subproblem.
 
 This matches the feasibility-first semantics NSGA2/NSGA3 use elsewhere in this
 project, so fronts are comparable across engines.
@@ -57,15 +58,28 @@ class ConstrainedMOEAD(MOEAD):
         # magnitudes (pymoo's Decomposition stores a nadir_point but neither
         # decomposition uses it, so there is no hook to do this for us). Left raw,
         # the large objective dominates every subproblem, the weight vectors stop
-        # discriminating, and MOEA/D's diversity mechanism goes inert: only ~4 of
-        # 52 subproblems were distinct at this project's scales. Mapping F into the
-        # population's own [0,1] box first restores it. NSGA3 normalises via its
-        # ideal/extreme points and NSGA2's rank+crowding is scale-invariant, so
-        # this puts MOEA/D in line with the other engines rather than apart.
+        # discriminating, and MOEA/D's diversity mechanism goes inert: at raw
+        # scales, pop=100/gen=150 over 3 seeds found ZERO feasible solutions.
+        # Mapping F into the population's own [0,1] box, with the offspring
+        # measured against that same box, first restores it. NSGA3 normalises via
+        # its ideal/extreme points and NSGA2's rank+crowding is scale-invariant,
+        # so this puts MOEA/D in line with the other engines rather than apart.
         # F is shifted so the ideal sits at the origin, hence ideal_point=zero.
         allF = pop.get("F")
-        lo = np.minimum(allF.min(axis=0), self.ideal)
-        span = np.maximum(allF.max(axis=0) - lo, 1e-12)
+        # `lo` folds in the offspring: Tchebicheff takes |F - utopian|, so a value
+        # BELOW the shift origin folds back into a penalty. pymoo's MOEAD._next
+        # already updates self.ideal with the offspring before calling us, but
+        # taking the min here too keeps _replace correct on its own terms.
+        lo = np.minimum(np.minimum(allF.min(axis=0), self.ideal), off.F)
+        # `hi` deliberately EXCLUDES the offspring: the same affine map is applied
+        # to incumbents and offspring, so an offspring worse than every incumbent
+        # maps above 1 and simply scores worse. Letting it widen the range instead
+        # would compress the incumbents into a sliver and randomise the comparison.
+        span = allF.max(axis=0) - lo
+        # A column with no spread carries no information; dividing by a tiny floor
+        # would turn any deviation in it into the whole scalarisation. Leave it
+        # unscaled, matching pymoo's own handling of zero-range objectives.
+        span[span <= 0] = 1.0
         zero = np.zeros(allF.shape[1])
 
         FV = self.decomposition.do((pop[N].get("F") - lo) / span,
@@ -88,8 +102,7 @@ class ConstrainedMOEAD(MOEAD):
         # Uncapped, a single offspring takes the whole neighbourhood -- and while
         # the population is infeasible, parameter_less makes every comparison
         # weight-INDEPENDENT (pure CV), so that happens constantly: at raw scales
-        # this collapsed 52 distinct individuals to 8 by generation 100. With
-        # normalised objectives (above) the cap holds ~55% of the population
-        # distinct.
+        # it held only 11-13 of 100 population members distinct. With normalised
+        # objectives (above) it holds 53-60 of 100.
         I = np.where(off_FV < FV)[0][:MAX_REPLACEMENTS]
         pop[N[I]] = off
