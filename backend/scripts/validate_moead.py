@@ -1,8 +1,10 @@
 """MOEAD-vs-NSGA2 validation sweep (manual research gate, K seeds).
 
 Runs both engines on the same scenario/model across seeds and reports
-feasible-solution counts, hypervolume (signed objective space, union-normalized),
-and runtime. Usage (from backend/):
+feasible-solution counts, distinct-solution counts (de-duplicated by objective
+vector -- MOEA/D's neighbourhood replacement can alias one Individual into
+several population slots, inflating the raw feasible count), hypervolume
+(signed objective space, union-normalized), and runtime. Usage (from backend/):
 
     ../.venv/bin/python scripts/validate_moead.py            # 5 seeds, pop 52, 100 gen (~long)
     ../.venv/bin/python scripts/validate_moead.py --seeds 2 --pop 20 --gen 20   # quick sanity
@@ -62,7 +64,9 @@ def run_one(alg_name: str, seed: int, pop_size: int, n_gen: int):
     dt = time.time() - t0
 
     F = np.atleast_2d(res.F) if res.F is not None else np.empty((0, len(model["F"])))
-    return {"alg": alg_name, "seed": seed, "n_feasible": len(F), "F": F, "sec": dt}
+    n_uniq = len(np.unique(F, axis=0)) if len(F) else 0
+    return {"alg": alg_name, "seed": seed, "n_feasible": len(F), "n_distinct": n_uniq,
+            "F": F, "sec": dt}
 
 
 def hypervolume(F, ideal, nadir):
@@ -95,12 +99,14 @@ def main():
         for r in runs:
             r["hv"] = 0.0
 
-    print(f"\n{'alg':7} {'seed':4} {'feas':>5} {'HV':>8} {'sec':>7}")
+    print(f"\n{'alg':7} {'seed':4} {'feas':>5} {'uniq':>5} {'HV':>8} {'sec':>7}")
     for r in runs:
-        print(f"{r['alg']:7} {r['seed']:4d} {r['n_feasible']:5d} {r['hv']:8.4f} {r['sec']:7.1f}")
+        print(f"{r['alg']:7} {r['seed']:4d} {r['n_feasible']:5d} {r['n_distinct']:5d} "
+              f"{r['hv']:8.4f} {r['sec']:7.1f}")
     for alg in ("NSGA2", "MOEAD"):
         rs = [r for r in runs if r["alg"] == alg]
         print(f"{alg}: mean feas {np.mean([r['n_feasible'] for r in rs]):.1f}, "
+              f"mean distinct {np.mean([r['n_distinct'] for r in rs]):.1f}, "
               f"mean HV {np.mean([r['hv'] for r in rs]):.4f}, "
               f"mean sec {np.mean([r['sec'] for r in rs]):.0f}")
 

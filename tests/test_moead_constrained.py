@@ -10,7 +10,7 @@ from pymoo.optimize import minimize
 from pymoo.problems import get_problem
 from pymoo.util.ref_dirs import get_reference_directions
 
-from PathMOEAD import ConstrainedMOEAD
+from PathMOEAD import ConstrainedMOEAD, MAX_REPLACEMENTS
 
 
 def test_vanilla_moead_rejects_constraints():
@@ -58,11 +58,15 @@ def test_replace_is_feasibility_first():
     alg._replace(0, off)
     assert np.array_equal(alg.pop.get("X"), before)
 
-    # …and a feasible offspring must displace infeasible incumbents.
+    # …and a feasible offspring displaces infeasible incumbents, up to the
+    # MAX_REPLACEMENTS cap: n_neighbors=3 here exceeds MAX_REPLACEMENTS=2, so
+    # only the closest 2 of the 3 neighbours flip feasible; the 3rd is left
+    # infeasible (CV=0.36) rather than the whole neighbourhood being claimed.
     alg.pop = _evaluated(problem, [infeasible_X] * 5)
     off = _evaluated(problem, feasible_X)[0]
     alg._replace(0, off)
-    assert np.all(alg.pop.get("CV")[alg.neighbors[0], 0] <= 1e-9)
+    cv = alg.pop.get("CV")[alg.neighbors[0], 0]
+    assert np.sum(cv <= 1e-9) == MAX_REPLACEMENTS
 
 
 def test_setup_override_matches_pymoo_minus_the_assert():

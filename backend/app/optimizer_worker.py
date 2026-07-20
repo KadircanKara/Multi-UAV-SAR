@@ -255,9 +255,22 @@ def run_optimization(
     stopped_at_gen = int(getattr(getattr(res, "algorithm", None), "n_gen", n_gen) or n_gen)
 
     # Unwrap solution objects (mirrors selector_service / PathUnitTest).
+    # MOEA/D replacement aliases ONE Individual into every neighbourhood slot it
+    # wins, so res.X can repeat the same object dozens of times. Drop repeats by
+    # object identity -- they are literally the same object, so nothing is lost.
+    # Distinct solutions that merely share objective values are kept (NSGA2
+    # legitimately produces those).
     raw = np.atleast_1d(res.X).flatten() if res.X is not None else np.array([])
-    sols = [x[0] if isinstance(x, np.ndarray) else x for x in raw]
-    F = np.atleast_2d(res.F) if res.F is not None else np.empty((0, len(model_dict["F"])))
+    sols, keep, seen = [], [], set()
+    for i, x in enumerate(raw):
+        s = x[0] if isinstance(x, np.ndarray) else x
+        if id(s) in seen:
+            continue
+        seen.add(id(s))
+        sols.append(s)
+        keep.append(i)
+    F = (np.atleast_2d(res.F)[keep] if res.F is not None and keep
+         else np.empty((0, len(model_dict["F"]))))
 
     # Back-fill ALL objectives on each solution so the saved run behaves like a
     # seeded one (Explore / Compare / Animation), and read individual values.

@@ -72,7 +72,7 @@ def _derive_type_alg(optimization_type: str, method: str) -> tuple[str, str]:
     """(optimization_type SOO|MOO, method) → (model Type, Alg)."""
     if optimization_type == "SOO":
         return ("WS", "GA") if method == "WS" else ("SOO", "GA")
-    return ("MOO", method)  # NSGA2 / NSGA3
+    return ("MOO", method)  # NSGA2 / NSGA3 / MOEAD
 
 
 def _find_preset(model_type: str, alg: str, objectives: list[str]):

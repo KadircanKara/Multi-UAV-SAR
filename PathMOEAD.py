@@ -27,6 +27,9 @@ from pymoo.algorithms.moo.moead import MOEAD, default_decomp
 from pymoo.util.misc import parameter_less
 from pymoo.util.reference_direction import default_ref_dirs
 
+# Max neighbours a single offspring may replace in one step (MOEA/D-DE's `nr`).
+MAX_REPLACEMENTS = 2
+
 
 class ConstrainedMOEAD(MOEAD):
 
@@ -56,5 +59,11 @@ class ConstrainedMOEAD(MOEAD):
             FV = parameter_less(FV, CV, fmax=fmax)
             off_FV = parameter_less(off_FV, off_CV, fmax=fmax)
 
-        I = np.where(off_FV < FV)[0]
+        # MOEA/D-DE-style cap: one offspring may claim at most MAX_REPLACEMENTS of
+        # its neighbours. Uncapped, a single offspring takes the whole
+        # neighbourhood -- and while the population is infeasible, parameter_less
+        # makes every comparison weight-INDEPENDENT (pure CV), so that happens
+        # constantly: measured 52 distinct individuals collapsing to 8 by
+        # generation 100. Capping holds ~30/52.
+        I = np.where(off_FV < FV)[0][:MAX_REPLACEMENTS]
         pop[N[I]] = off

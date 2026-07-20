@@ -125,6 +125,11 @@ def test_moead_accepted(client):
     assert resp.status_code == 200
 
 
+def test_moo_unknown_method_is_422(client):
+    resp = client.post("/api/optimize/check", json=_cfg(method="SPEA2"))
+    assert resp.status_code == 422
+
+
 def test_resolve_model_moead_synthesizes_alg():
     from app.optimizer_service import resolve_model
     key, model = resolve_model(

@@ -20,13 +20,13 @@ _SEED_NAME_RE = re.compile(
 
 
 def _type_method(model_dict: dict) -> tuple[str, str]:
-    """(model Type, Alg) → (optimization_type SOO|MOO, method GA|WS|NSGA2|NSGA3)."""
+    """(model Type, Alg) → (optimization_type SOO|MOO, method GA|WS|NSGA2|NSGA3|MOEAD)."""
     t, alg = model_dict["Type"], model_dict["Alg"]
     if t == "WS":
         return "SOO", "WS"
     if t == "SOO":
         return "SOO", "GA"
-    return "MOO", alg  # NSGA2 / NSGA3
+    return "MOO", alg  # NSGA2 / NSGA3 / MOEAD
 
 
 def build_run_config(
