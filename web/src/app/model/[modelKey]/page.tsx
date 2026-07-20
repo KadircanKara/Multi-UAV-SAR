@@ -897,7 +897,7 @@ export default function ModelPage() {
     <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6">
       {/* Back link — a model page is reached from the mission browser, so return there. */}
       <Link
-        href="/missions/seeded-results"
+        href="/missions"
         className="inline-flex items-center gap-1 text-xs font-mono tracking-widest text-muted-foreground hover:text-primary transition-colors uppercase"
       >
         ← MISSIONS
