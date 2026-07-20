@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * /model/[modelKey] — Parameter-effect analysis + an in-page scenario explorer
+ * /missions/[modelKey] — Parameter-effect analysis + an in-page scenario explorer
  * for one model.
  *
  * Layout: model overview → parameter-effect sweep plots (with optional multi-line

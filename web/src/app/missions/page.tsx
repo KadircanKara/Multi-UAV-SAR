@@ -115,7 +115,7 @@ function ModelCard({ group }: { group: ModelGroup }) {
 
   return (
     <Link
-      href={"/model/" + encodeURIComponent(group.model_key)}
+      href={"/missions/" + encodeURIComponent(group.model_key)}
       className="group flex flex-col gap-3 rounded-xl border border-border bg-card p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-md hover:shadow-foreground/5"
     >
       <div className="flex items-start justify-between gap-2">

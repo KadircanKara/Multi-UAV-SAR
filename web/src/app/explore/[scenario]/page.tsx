@@ -1,46 +1,52 @@
 "use client";
 
 /**
- * /explore/[scenario] — standalone deep-dive for a precomputed scenario.
+ * /explore/[scenario] — legacy deep-link redirector.
  *
- * The actual Pareto / Merging / Animation UI lives in <ScenarioExplorer>, which
- * is also embedded inline on the model page (driven by the parameter-combination
- * dropdowns). This route stays for deep-linking / bookmarking a single scenario.
+ * Old bookmarks address a scenario by its FULL backend name. The canonical URL
+ * now nests under the model (/missions/[modelKey]/scenario/[suffix]) and only
+ * the front payload knows the model, so this cannot be a next.config redirect:
+ * fetch the front, read model_key, strip the prefix, replace the URL.
  */
 
-import { useState, useCallback } from "react";
-import Link from "next/link";
-import { useParams } from "next/navigation";
-import type { ParetoFront } from "@/lib/types";
-import ScenarioExplorer from "@/components/explore/ScenarioExplorer";
+import { useEffect } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { getFront } from "@/lib/api";
 
-export default function ExplorePage() {
+export default function LegacyExploreRedirect() {
   const params = useParams();
-  const rawScenario = params?.scenario;
+  const router = useRouter();
+  const raw = params?.scenario;
   const scenario = decodeURIComponent(
-    Array.isArray(rawScenario) ? rawScenario[0] ?? "" : rawScenario ?? ""
+    Array.isArray(raw) ? raw[0] ?? "" : raw ?? ""
   );
 
-  // Captured from the loaded front so the back-link can return to the model page.
-  const [modelKey, setModelKey] = useState<string | null>(null);
-  const handleFrontLoaded = useCallback((front: ParetoFront) => {
-    setModelKey(front.model_key ?? null);
-  }, []);
+  useEffect(() => {
+    if (!scenario) return;
+    let cancelled = false;
+    getFront(scenario)
+      .then((front) => {
+        if (cancelled) return;
+        const suffix = "g_" + (scenario.split("_g_")[1] ?? "");
+        if (front.model_key && suffix !== "g_") {
+          router.replace(
+            `/missions/${encodeURIComponent(front.model_key)}/scenario/${encodeURIComponent(suffix)}`
+          );
+        } else {
+          router.replace("/missions");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) router.replace("/missions");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scenario, router]);
 
   return (
-    <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6">
-      {/* Back link — goes to the model page once the front is loaded, else the mission browser */}
-      <Link
-        href={modelKey ? "/model/" + encodeURIComponent(modelKey) : "/missions/seeded-results"}
-        className="inline-flex items-center gap-1 text-xs font-mono tracking-widest text-muted-foreground hover:text-primary transition-colors uppercase"
-      >
-        ← {modelKey ?? "MISSIONS"}
-      </Link>
-
-      <ScenarioExplorer
-        source={{ mode: "seeded", scenario }}
-        onFrontLoaded={handleFrontLoaded}
-      />
+    <div className="mx-auto max-w-7xl px-4 py-6">
+      <p className="text-sm text-muted-foreground">Redirecting…</p>
     </div>
   );
 }

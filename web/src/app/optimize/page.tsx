@@ -463,6 +463,7 @@ export default function OptimizePage() {
   // Duplicate pre-check
   const [duplicate, setDuplicate] = useState<{
     scenario_name: string;
+    model_key: string;
     seeded: boolean;
   } | null>(null);
 
@@ -718,7 +719,11 @@ export default function OptimizePage() {
         .then((res) => {
           if (cancelled || checkTokenRef.current !== token) return;
           if (res.exists)
-            setDuplicate({ scenario_name: res.scenario_name, seeded: res.seeded });
+            setDuplicate({
+              scenario_name: res.scenario_name,
+              model_key: res.model_key,
+              seeded: res.seeded,
+            });
           else setDuplicate(null);
         })
         .catch(() => {
@@ -997,7 +1002,7 @@ export default function OptimizePage() {
                   {duplicate.scenario_name}
                 </span>
                 <Link
-                  href={`/explore/${encodeURIComponent(duplicate.scenario_name)}`}
+                  href={`/missions/${encodeURIComponent(duplicate.model_key)}/scenario/${encodeURIComponent("g_" + (duplicate.scenario_name.split("_g_")[1] ?? ""))}`}
                   className="ml-auto shrink-0 whitespace-nowrap text-sm font-medium text-chart-1 hover:underline"
                 >
                   Open it →

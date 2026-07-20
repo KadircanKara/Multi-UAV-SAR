@@ -72,7 +72,7 @@ function CompareIcon() {
 }
 
 const NAV = [
-  { href: "/missions", label: "Missions", icon: <MissionsIcon />, match: ["/missions", "/model", "/explore"] },
+  { href: "/missions", label: "Missions", icon: <MissionsIcon />, match: ["/missions", "/explore"] },
   { href: "/optimize", label: "Optimizer", icon: <OptimizeIcon />, match: ["/optimize"] },
   { href: "/compare", label: "Compare", icon: <CompareIcon />, match: ["/compare"] },
 ];

@@ -7,6 +7,7 @@ const nextConfig = {
       { source: "/missions/playground", destination: "/optimize", permanent: true },
       { source: "/compare/seeded-results", destination: "/compare", permanent: true },
       { source: "/compare/playground", destination: "/compare", permanent: true },
+      { source: "/model/:modelKey", destination: "/missions/:modelKey", permanent: true },
     ];
   },
 };
