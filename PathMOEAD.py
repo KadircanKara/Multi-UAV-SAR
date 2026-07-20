@@ -60,7 +60,9 @@ class ConstrainedMOEAD(MOEAD):
             off_FV = parameter_less(off_FV, off_CV, fmax=fmax)
 
         # MOEA/D-DE-style cap: one offspring may claim at most MAX_REPLACEMENTS of
-        # its neighbours. Uncapped, a single offspring takes the whole
+        # its neighbours. Unlike Li & Zhang's `nr`, which permutes the neighbourhood
+        # before selecting, this takes the closest winners deterministically.
+        # Uncapped, a single offspring takes the whole
         # neighbourhood -- and while the population is infeasible, parameter_less
         # makes every comparison weight-INDEPENDENT (pure CV), so that happens
         # constantly: measured 52 distinct individuals collapsing to 8 by

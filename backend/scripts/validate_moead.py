@@ -1,10 +1,13 @@
 """MOEAD-vs-NSGA2 validation sweep (manual research gate, K seeds).
 
 Runs both engines on the same scenario/model across seeds and reports
-feasible-solution counts, distinct-solution counts (de-duplicated by objective
-vector -- MOEA/D's neighbourhood replacement can alias one Individual into
-several population slots, inflating the raw feasible count), hypervolume
-(signed objective space, union-normalized), and runtime. Usage (from backend/):
+feasible-solution counts, distinct-solution counts (de-duplicated by SOLUTION
+OBJECT IDENTITY, not objective vector -- MOEA/D's neighbourhood replacement can
+alias one Individual into several population slots, inflating the raw feasible
+count, whereas NSGA2 legitimately returns distinct solutions that share
+objective values and must not be penalized for it), hypervolume (signed
+objective space, union-normalized; nan when the union front has zero span),
+and runtime. Usage (from backend/):
 
     ../.venv/bin/python scripts/validate_moead.py            # 5 seeds, pop 52, 100 gen (~long)
     ../.venv/bin/python scripts/validate_moead.py --seeds 2 --pop 20 --gen 20   # quick sanity
@@ -64,18 +67,30 @@ def run_one(alg_name: str, seed: int, pop_size: int, n_gen: int):
     dt = time.time() - t0
 
     F = np.atleast_2d(res.F) if res.F is not None else np.empty((0, len(model["F"])))
-    n_uniq = len(np.unique(F, axis=0)) if len(F) else 0
-    return {"alg": alg_name, "seed": seed, "n_feasible": len(F), "n_distinct": n_uniq,
+    # Distinct SOLUTION OBJECTS, not unique objective vectors: MOEA/D aliases one
+    # Individual across its neighbourhood, while NSGA2 legitimately returns
+    # distinct solutions that happen to share objective values.
+    raw = np.atleast_1d(res.X).flatten() if res.X is not None else np.array([])
+    n_distinct = len({id(x[0] if isinstance(x, np.ndarray) else x) for x in raw})
+    return {"alg": alg_name, "seed": seed, "n_feasible": len(F), "n_distinct": n_distinct,
             "F": F, "sec": dt}
 
 
 def hypervolume(F, ideal, nadir):
-    """HV of the signed front, union-normalized to [0,1], ref point (1.05, ...)."""
+    """HV of the signed front, union-normalized to [0,1], ref point (1.05, ...).
+
+    Returns nan when the union of both engines' fronts spans no volume (a single
+    unique point): normalizing by a zero span puts every point at the origin and
+    HV degenerates to a constant 1.05**n_obj, which reads as a perfect score
+    rather than the non-result it is.
+    """
     if len(F) == 0:
         return 0.0
     from pymoo.indicators.hv import HV
-    span = np.maximum(nadir - ideal, 1e-12)
-    return float(HV(ref_point=np.full(F.shape[1], 1.05))((F - ideal) / span))
+    span = nadir - ideal
+    if not np.any(span > 0):
+        return float("nan")
+    return float(HV(ref_point=np.full(F.shape[1], 1.05))((F - ideal) / np.maximum(span, 1e-12)))
 
 
 def main():

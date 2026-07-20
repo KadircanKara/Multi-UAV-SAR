@@ -115,6 +115,30 @@ def _build_algorithm(alg: str, pop_size: int, n_obj: int, seed: int, operators: 
     return GA(pop_size=pop_size, **operators)
 
 
+def _unwrap_front(res, n_obj):
+    """(sols, F) from a pymoo result, with MOEA/D's aliased duplicates dropped.
+
+    MOEA/D replacement assigns ONE Individual object into every neighbourhood slot
+    it wins, so res.X can repeat the same object dozens of times. Repeats are
+    dropped by object IDENTITY -- distinct solutions that merely share objective
+    values are kept, which NSGA2 legitimately produces.
+    """
+    import numpy as np
+
+    raw = np.atleast_1d(res.X).flatten() if res.X is not None else np.array([])
+    sols, keep, seen = [], [], set()
+    for i, x in enumerate(raw):
+        s = x[0] if isinstance(x, np.ndarray) else x
+        if id(s) in seen:
+            continue
+        seen.add(id(s))
+        sols.append(s)
+        keep.append(i)
+    F = (np.atleast_2d(res.F)[keep] if res.F is not None and keep
+         else np.empty((0, n_obj)))
+    return sols, F
+
+
 def run_optimization(
     run_id: str,
     model_dict: dict,
@@ -186,7 +210,19 @@ def run_optimization(
                 }
                 # Live optimum: the current non-dominated front (MOO) / best (SOO).
                 opt = getattr(algorithm, "opt", None)
-                Fsigned = opt.get("F") if opt is not None else None
+                if opt is not None:
+                    # Same aliasing as the final front (see _unwrap_front): MOEA/D
+                    # repeats one Individual across the slots it won, so plot each
+                    # solution once instead of once per slot.
+                    seen, keep = set(), []
+                    for i, ind in enumerate(opt):
+                        if id(ind) in seen:
+                            continue
+                        seen.add(id(ind))
+                        keep.append(i)
+                    Fsigned = opt.get("F")[keep]
+                else:
+                    Fsigned = None
                 if Fsigned is not None and len(Fsigned):
                     Fsigned = np.atleast_2d(np.asarray(Fsigned, dtype=float))
                     Fabs = Fsigned * _pol  # back to actual objective values
@@ -255,22 +291,7 @@ def run_optimization(
     stopped_at_gen = int(getattr(getattr(res, "algorithm", None), "n_gen", n_gen) or n_gen)
 
     # Unwrap solution objects (mirrors selector_service / PathUnitTest).
-    # MOEA/D replacement aliases ONE Individual into every neighbourhood slot it
-    # wins, so res.X can repeat the same object dozens of times. Drop repeats by
-    # object identity -- they are literally the same object, so nothing is lost.
-    # Distinct solutions that merely share objective values are kept (NSGA2
-    # legitimately produces those).
-    raw = np.atleast_1d(res.X).flatten() if res.X is not None else np.array([])
-    sols, keep, seen = [], [], set()
-    for i, x in enumerate(raw):
-        s = x[0] if isinstance(x, np.ndarray) else x
-        if id(s) in seen:
-            continue
-        seen.add(id(s))
-        sols.append(s)
-        keep.append(i)
-    F = (np.atleast_2d(res.F)[keep] if res.F is not None and keep
-         else np.empty((0, len(model_dict["F"]))))
+    sols, F = _unwrap_front(res, len(model_dict["F"]))
 
     # Back-fill ALL objectives on each solution so the saved run behaves like a
     # seeded one (Explore / Compare / Animation), and read individual values.

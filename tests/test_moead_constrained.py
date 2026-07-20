@@ -66,6 +66,10 @@ def test_replace_is_feasibility_first():
     off = _evaluated(problem, feasible_X)[0]
     alg._replace(0, off)
     cv = alg.pop.get("CV")[alg.neighbors[0], 0]
+    # Guard the constant itself: the assertion below is relative to
+    # MAX_REPLACEMENTS, so without this a cap of 0 (replacement disabled -- MOEA/D
+    # never evolves) would leave this test green. 3 == n_neighbors in this fixture.
+    assert 0 < MAX_REPLACEMENTS < 3
     assert np.sum(cv <= 1e-9) == MAX_REPLACEMENTS
 
 
