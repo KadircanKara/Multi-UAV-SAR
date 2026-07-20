@@ -63,3 +63,33 @@ def test_replace_is_feasibility_first():
     off = _evaluated(problem, feasible_X)[0]
     alg._replace(0, off)
     assert np.all(alg.pop.get("CV")[alg.neighbors[0], 0] <= 1e-9)
+
+
+def test_setup_override_matches_pymoo_minus_the_assert():
+    """Drift guard: our _setup is a copy of pymoo's minus its constraint assert.
+
+    requirements.txt allows any pymoo 0.6.x, so an in-range upgrade could change
+    MOEAD._setup and leave our override silently stale. Comparing AST-normalized
+    statements makes this immune to reformatting/comments while still catching a
+    real logic change. On failure: re-diff the two methods and update our copy.
+    """
+    import ast
+    import inspect
+    import textwrap
+    from pymoo.algorithms.moo.moead import MOEAD
+
+    def statements(fn):
+        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+        body = tree.body[0].body
+        first = body[0]
+        if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)):
+            body = body[1:]  # drop the docstring
+        return [ast.unparse(node) for node in body]
+
+    theirs = statements(MOEAD._setup)
+    assert any(s.startswith("assert not problem.has_constraints") for s in theirs), \
+        "pymoo no longer asserts against constraints — ConstrainedMOEAD may be obsolete"
+    assert statements(ConstrainedMOEAD._setup) == [
+        s for s in theirs if not s.startswith("assert not problem.has_constraints")
+    ]

@@ -16,8 +16,9 @@ project, so fronts are comparable across engines.
 Import-safety: this module imports only numpy/scipy/pymoo — it must NEVER
 import ``main`` or ``PathAlgorithm`` (the optimizer worker imports it).
 
-Pinned to pymoo 0.6.1.6: ``_setup`` duplicates the parent's body minus its
-assert; re-diff against pymoo on any upgrade.
+``_setup`` duplicates the parent's body minus its assert (pymoo inlines the
+assert with no overridable hook). ``test_setup_override_matches_pymoo_minus_the_assert``
+fails if a pymoo upgrade changes that body, so the copy cannot go stale silently.
 """
 import numpy as np
 from scipy.spatial.distance import cdist
