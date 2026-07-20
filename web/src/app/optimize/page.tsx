@@ -92,7 +92,7 @@ const OBJECTIVES: ObjectiveSpec[] = [
 
 const SOO_METHODS = ["GA", "WS"] as const;
 const MOO_METHODS = ["NSGA2", "NSGA3", "MOEAD"] as const;
-const DISABLED_METHODS = new Set<string>(["MOEAD"]);
+const DISABLED_METHODS = new Set<string>([]);
 
 // Selected SOO/MOO toggle uses the same indigo treatment as the Method /
 // Objectives chips (the default outline `bg-accent` slate was too faint).
@@ -254,7 +254,7 @@ function fitSelection(
   if (isSingleSelect(type, method)) {
     return ordered.length > 0 ? [ordered[0]!] : [OBJECTIVES[0]!.name];
   }
-  // multi-select rules (WS / NSGA2 / NSGA3): need ≥2
+  // multi-select rules (WS / NSGA2 / NSGA3 / MOEAD): need ≥2
   if (ordered.length >= 2) return ordered;
   // grow to ≥2 by adding objectives in canonical order (no duplicates)
   const grown = new Set(ordered);
