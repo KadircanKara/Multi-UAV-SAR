@@ -243,8 +243,8 @@ function ParetoLive({
                 fontSize: 12,
               }}
               formatter={(val, name) => [
-                fmtVal(name === "x" ? xObj : yObj, Number(val)),
-                name === "x" ? xObj : yObj,
+                fmtVal(String(name), Number(val)),
+                name,
               ]}
             />
             <Scatter data={data} fill={colors.series[0]} isAnimationActive={false} />

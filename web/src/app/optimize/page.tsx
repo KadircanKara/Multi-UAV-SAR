@@ -94,6 +94,13 @@ const SOO_METHODS = ["GA", "WS"] as const;
 const MOO_METHODS = ["NSGA2", "NSGA3", "MOEAD"] as const;
 const DISABLED_METHODS = new Set<string>(["MOEAD"]);
 
+// Selected SOO/MOO toggle uses the same indigo treatment as the Method /
+// Objectives chips (the default outline `bg-accent` slate was too faint).
+const OPT_TYPE_ITEM_CLS =
+  "px-5 data-[state=on]:border-chart-1/40 data-[state=on]:bg-chart-1/10 " +
+  "data-[state=on]:text-chart-1 data-[state=on]:hover:bg-chart-1/10 " +
+  "data-[state=on]:hover:text-chart-1";
+
 const POP_MIN = 10;
 const POP_MAX = 500;
 const POP_DEFAULT = 100;
@@ -110,7 +117,6 @@ const ES_THRESH_PCT_DEFAULT = 10; // % improvement that counts as progress
 // Constraint defaults (the speed-violation constraint is always applied).
 const MMT_DEFAULT = 3600; // max mission time (seconds)
 const MIN_CONN_DEFAULT = 0.5; // min percentage connectivity (fraction)
-const TBV_CEIL_DEFAULT = 40; // max mean TBV ceiling (seconds)
 
 function Toggle({
   on,
@@ -200,14 +206,12 @@ interface RunParams {
   scenario: ScenarioConfig;
   maxMissionTime: number | null;
   minConnectivity: number | null;
-  maxMeanTbv: number | null;
 }
 
 function constraintsSummary(p: RunParams): string {
   const extra: string[] = [];
   if (p.maxMissionTime != null) extra.push(`max time ${p.maxMissionTime}s`);
   if (p.minConnectivity != null) extra.push(`min conn ${p.minConnectivity}`);
-  if (p.maxMeanTbv != null) extra.push(`max TBV ${p.maxMeanTbv}s`);
   return extra.length ? `speed · ${extra.join(" · ")}` : "speed only";
 }
 
@@ -448,8 +452,6 @@ export default function OptimizePage() {
   const [mmtValue, setMmtValue] = useState(MMT_DEFAULT);
   const [minConnEnabled, setMinConnEnabled] = useState(false);
   const [minConnValue, setMinConnValue] = useState(MIN_CONN_DEFAULT);
-  const [tbvCeilEnabled, setTbvCeilEnabled] = useState(false);
-  const [tbvCeilValue, setTbvCeilValue] = useState(TBV_CEIL_DEFAULT);
   const [seed, setSeed] = useState(SEED_DEFAULT);
 
   // Scenario
@@ -617,12 +619,6 @@ export default function OptimizePage() {
   const minConnOk =
     !minConnEnabled ||
     (Number.isFinite(minConnValue) && minConnValue >= 0 && minConnValue <= 1);
-  // Max Mean TBV is 0 (undefined) at n_visits == 1, so the ceiling can't bind
-  // there — lock the toggle off until n_visits ≥ 2.
-  const tbvLocked = scenario != null && scenario.n_visits < 2;
-  const tbvActive = tbvCeilEnabled && !tbvLocked;
-  const tbvCeilOk =
-    !tbvActive || (Number.isFinite(tbvCeilValue) && tbvCeilValue > 0);
 
   const earlyStopOk =
     genStrategy !== "max" ||
@@ -638,7 +634,6 @@ export default function OptimizePage() {
     weightsOk &&
     mmtOk &&
     minConnOk &&
-    tbvCeilOk &&
     earlyStopOk &&
     !running;
 
@@ -655,7 +650,6 @@ export default function OptimizePage() {
       seed,
       max_mission_time: mmtEnabled ? mmtValue : null,
       min_connectivity: minConnEnabled ? minConnValue : null,
-      max_mean_tbv: tbvCeilEnabled && scenario.n_visits >= 2 ? tbvCeilValue : null,
       gen_strategy: genStrategy,
       // Only send the tuning when Max mode is active; otherwise the backend
       // applies its defaults (and a cleared field can't 422 a Fixed run).
@@ -683,8 +677,6 @@ export default function OptimizePage() {
     mmtValue,
     minConnEnabled,
     minConnValue,
-    tbvCeilEnabled,
-    tbvCeilValue,
     genStrategy,
     earlyStopPatience,
     earlyStopThresholdPct,
@@ -708,7 +700,6 @@ export default function OptimizePage() {
       seed: SEED_DEFAULT,
       max_mission_time: null,
       min_connectivity: null,
-      max_mean_tbv: null,
       gen_strategy: "fixed",
       scenario: { ...scenario, target_positions: [0] },
     };
@@ -846,7 +837,6 @@ export default function OptimizePage() {
       scenario: config.scenario,
       maxMissionTime: mmtEnabled ? mmtValue : null,
       minConnectivity: minConnEnabled ? minConnValue : null,
-      maxMeanTbv: tbvActive ? tbvCeilValue : null,
     };
     setRunParams(snapshot);
     try {
@@ -898,6 +888,32 @@ export default function OptimizePage() {
     value: ScenarioConfig[K]
   ) {
     setScenario((prev) => (prev ? { ...prev, [key]: value } : prev));
+  }
+
+  // Download the finished run as JSON. The export lives on the API origin
+  // (:8000), so an <a download> filename is cross-origin and ignored by the
+  // browser — fetch it into a same-origin blob so we can name the file after
+  // the canonical scenario (model + every parameter), not the backend's
+  // model_key-only default.
+  async function downloadResultJson() {
+    if (!runId || !result) return;
+    try {
+      const res = await fetch(optimizeExportUrl(runId));
+      if (!res.ok) throw new Error(`export failed (${res.status})`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${result.scenario}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error("Download failed", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
 
   const methods = methodsFor(optType);
@@ -1069,10 +1085,10 @@ export default function OptimizePage() {
                 onValueChange={(v) => handleTypeChange(v as OptType)}
                 className="justify-start"
               >
-                <ToggleGroupItem value="SOO" variant="outline" className="px-5">
+                <ToggleGroupItem value="SOO" variant="outline" className={OPT_TYPE_ITEM_CLS}>
                   SOO
                 </ToggleGroupItem>
-                <ToggleGroupItem value="MOO" variant="outline" className="px-5">
+                <ToggleGroupItem value="MOO" variant="outline" className={OPT_TYPE_ITEM_CLS}>
                   MOO
                 </ToggleGroupItem>
               </ToggleGroup>
@@ -1435,7 +1451,20 @@ export default function OptimizePage() {
                   constraints usually need more generations to converge.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="flex flex-1 flex-col justify-between gap-4">
+              <CardContent className="flex flex-1 flex-col gap-4">
+                {/* Speed Violation — always enforced (the ever-present base
+                    constraint); toggle is locked on, no numeric bound. */}
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-col">
+                    <span className="text-sm text-foreground">Speed Violation</span>
+                    <span className="text-xs text-muted-foreground">
+                      Restricts drones from making long jumps.
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Toggle on={true} onChange={() => {}} disabled />
+                  </div>
+                </div>
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex flex-col">
                     <span className="text-sm text-foreground">Mission Time Ceiling</span>
@@ -1496,40 +1525,6 @@ export default function OptimizePage() {
                     <Toggle on={minConnEnabled} onChange={setMinConnEnabled} />
                   </div>
                 </div>
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex flex-col">
-                    <span className="text-sm text-foreground">Max Mean TBV Ceiling</span>
-                    <span className="text-xs text-muted-foreground">
-                      {tbvLocked
-                        ? "Needs n_visits ≥ 2 (TBV is 0 at n_visits = 1)."
-                        : "Max Mean TBV ≤ this (seconds)."}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {tbvActive && (
-                      <Input
-                        type="number"
-                        min={1}
-                        value={tbvCeilValue}
-                        onChange={(e) => {
-                          const n = Number(e.target.value);
-                          if (!Number.isNaN(n)) setTbvCeilValue(n);
-                        }}
-                        onBlur={() =>
-                          setTbvCeilValue((v) =>
-                            Number.isFinite(v) && v > 0 ? v : TBV_CEIL_DEFAULT
-                          )
-                        }
-                        className="h-9 w-20 text-right tabular-nums"
-                      />
-                    )}
-                    <Toggle
-                      on={tbvActive}
-                      onChange={setTbvCeilEnabled}
-                      disabled={tbvLocked}
-                    />
-                  </div>
-                </div>
               </CardContent>
             </Card>
 
@@ -1545,7 +1540,7 @@ export default function OptimizePage() {
               </CardHeader>
               {scenario && (
                 <CardContent className="flex flex-1 flex-col gap-4">
-                  <div className="grid flex-1 grid-cols-2 content-between gap-4">
+                  <div className="grid flex-1 grid-cols-2 content-start gap-4">
                     {/* number_of_drones */}
                     <div className="flex flex-col gap-1.5">
                       <Label className="text-xs text-muted-foreground">
@@ -1752,12 +1747,13 @@ export default function OptimizePage() {
               {/* Download result (runs are not saved server-side) */}
               {runId && result.n_solutions > 0 && (
                 <div className="flex flex-col items-end gap-1.5">
-                  <a
-                    href={optimizeExportUrl(runId)}
+                  <button
+                    type="button"
+                    onClick={downloadResultJson}
                     className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-secondary px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent"
                   >
                     Download result (JSON)
-                  </a>
+                  </button>
                   <p className="max-w-xs text-right text-xs text-muted-foreground">
                     Runs are not saved. Download the JSON and upload it in the
                     Playground to explore or compare it.
