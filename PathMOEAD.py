@@ -59,7 +59,9 @@ class ConstrainedMOEAD(MOEAD):
         # decomposition uses it, so there is no hook to do this for us). Left raw,
         # the large objective dominates every subproblem, the weight vectors stop
         # discriminating, and MOEA/D's diversity mechanism goes inert: at raw
-        # scales, pop=100/gen=150 over 3 seeds found ZERO feasible solutions.
+        # scales this engine found ZERO feasible solutions on this project's TC
+        # model. Normalised, it finds them on 5 seeds of 5, averaging 39 distinct
+        # solutions against NSGA2's 7.6 (pop=100, gen=150).
         # Mapping F into the population's own [0,1] box, with the offspring
         # measured against that same box, first restores it. NSGA3 normalises via
         # its ideal/extreme points and NSGA2's rank+crowding is scale-invariant,
@@ -76,10 +78,20 @@ class ConstrainedMOEAD(MOEAD):
         # maps above 1 and simply scores worse. Letting it widen the range instead
         # would compress the incumbents into a sliver and randomise the comparison.
         span = allF.max(axis=0) - lo
-        # A column with no spread carries no information; dividing by a tiny floor
-        # would turn any deviation in it into the whole scalarisation. Leave it
-        # unscaled, matching pymoo's own handling of zero-range objectives.
-        span[span <= 0] = 1.0
+        # A column with no spread carries no scale of its own, and dividing by a
+        # floor would turn any deviation in it into the whole scalarisation. The
+        # offspring's own deviation is the only scale available, so use it: the
+        # offspring then lands at exactly 1.0 in that column however large the
+        # regression, mirroring the 0.0 it already lands at when it IMPROVES a flat
+        # column (`lo` folds the offspring in above, so the span becomes the
+        # improvement itself). This trades magnitude for scale-freedom -- a +1 and a
+        # +30 regression cost the same -- which is the same trade the improvement
+        # direction already makes, and is the point: a stalled objective must not
+        # outrank objectives that are actually still moving.
+        flat = span <= 0
+        if flat.any():
+            dev = np.ravel(off.F)[flat] - lo[flat]
+            span[flat] = np.where(dev > 0, dev, 1.0)
         zero = np.zeros(allF.shape[1])
 
         FV = self.decomposition.do((pop[N].get("F") - lo) / span,
@@ -101,8 +113,8 @@ class ConstrainedMOEAD(MOEAD):
         #
         # Uncapped, a single offspring takes the whole neighbourhood -- and while
         # the population is infeasible, parameter_less makes every comparison
-        # weight-INDEPENDENT (pure CV), so that happens constantly: at raw scales
-        # it held only 11-13 of 100 population members distinct. With normalised
-        # objectives (above) it holds 53-60 of 100.
+        # weight-INDEPENDENT (pure CV), so that happens constantly, which is what
+        # collapsed the population to a handful of distinct individuals before the
+        # objectives were normalised.
         I = np.where(off_FV < FV)[0][:MAX_REPLACEMENTS]
         pop[N[I]] = off

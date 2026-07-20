@@ -160,7 +160,7 @@ def test_replacement_is_scale_invariant_under_pbi():
     assert _replacement_winners(1.0, n_obj=3) == _replacement_winners(1000.0, n_obj=3)
 
 
-def _winners_with_second_objective(second_col):
+def _winners_with_second_objective(second_col, off_second=1.0):
     """Slots an offspring claims when objective 1 takes the given incumbent values.
 
     Objective 0 is a mission-time-like magnitude (~1e3), objective 1 an integer
@@ -179,8 +179,10 @@ def _winners_with_second_objective(second_col):
     alg.ideal = F.min(axis=0)
 
     # Halves the best mission time; regresses objective 1 by a single unit.
-    off = Population.new(F=np.array([[325.0, 1.0]]))[0]
-    alg.ideal = np.minimum(alg.ideal, off.F)  # MOEAD._next does this before _replace
+    off = Population.new(F=np.array([[325.0, off_second]]))[0]
+    # MOEAD._next does this before _replace. Load-bearing for this test: without
+    # it both branches collapse to the same winners and the assertion goes vacuous.
+    alg.ideal = np.minimum(alg.ideal, off.F)
 
     before = alg.pop.get("F").copy()
     alg._replace(0, off)
@@ -192,10 +194,16 @@ def test_a_stalled_objective_does_not_veto():
 
     Max Disconnected Time is an integer count whose floor IS its optimum, so an
     all-zero column is routine. Normalising by that column's (zero) range would
-    scale any deviation in it by 1/eps and let a one-timestep regression veto a
-    50% mission-time improvement across every subproblem.
+    scale any deviation in it by 1/eps and let a regression veto a 50%
+    mission-time improvement across every subproblem -- neither the presence
+    nor the size of the regression may be what lets a stalled column dominate.
     """
     stalled = np.zeros(8)
     spread = np.array([0.0, 1, 0, 0, 0, 0, 0, 0])
-    assert _winners_with_second_objective(stalled), "offspring must win something"
-    assert _winners_with_second_objective(stalled) == _winners_with_second_objective(spread)
+    reference = _winners_with_second_objective(spread)
+    assert reference, "offspring must win something for this to mean anything"
+    # The regression's MAGNITUDE must not matter in a column that carries no
+    # scale of its own: +1 and +1000 timesteps are equally uninformative there.
+    for regression in (1.0, 2.0, 10.0, 1000.0):
+        assert _winners_with_second_objective(stalled, regression) == reference, \
+            f"a stalled objective vetoed at regression +{regression:g}"
