@@ -103,6 +103,14 @@ def _build_algorithm(alg: str, pop_size: int, n_obj: int, seed: int, operators: 
         # objective count (avoids the "pop_size < ref_dirs" warning of das-dennis).
         ref_dirs = get_reference_directions("energy", n_obj, n_points=pop_size, seed=seed)
         return NSGA3(ref_dirs=ref_dirs, pop_size=pop_size, **operators)
+    if alg == "MOEAD":
+        from PathMOEAD import ConstrainedMOEAD
+
+        ref_dirs = get_reference_directions("energy", n_obj, n_points=pop_size, seed=seed)
+        # MOEAD sets pop_size (= len(ref_dirs)) and eliminate_duplicates itself;
+        # passing either raises TypeError (duplicate keyword to the parent ctor).
+        ops = {k: v for k, v in operators.items() if k != "eliminate_duplicates"}
+        return ConstrainedMOEAD(ref_dirs=ref_dirs, n_neighbors=min(20, pop_size), **ops)
     # SOO-GA and WS both run a single-objective GA
     return GA(pop_size=pop_size, **operators)
 

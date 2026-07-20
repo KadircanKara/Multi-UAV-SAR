@@ -262,6 +262,28 @@ def test_run_to_completion_returns_front(client):
     assert front["n_solutions"] >= 0 and "solutions" in front
 
 
+def test_moead_run_to_completion_returns_front(client):
+    """A real tiny MOEA/D run end-to-end through the worker process."""
+    start = client.post("/api/optimize", json=_runnable(method="MOEAD"))
+    assert start.status_code == 200
+    run_id = start.json()["run_id"]
+
+    front = None
+    for _ in range(60):  # up to ~60s
+        s = client.get(f"/api/optimize/{run_id}").json()
+        if s["state"] == "done":
+            front = s["front"]
+            break
+        if s["state"] == "failed":
+            raise AssertionError(f"run failed: {s.get('error')}")
+        time.sleep(1)
+    # Completion is the contract; with the always-on speed constraint a tiny run
+    # may legitimately find 0 feasible solutions (same caveat as the NSGA2 test).
+    assert front is not None, "run did not finish in time"
+    assert front["objectives"] == ["Mission Time", "Percentage Connectivity"]
+    assert front["n_solutions"] >= 0 and "solutions" in front
+
+
 def test_save_empty_run_is_rejected(client, monkeypatch):
     """A run that found 0 feasible solutions must not be persisted — an empty
     front in the library breaks selection/replay endpoints with 500s."""
