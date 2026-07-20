@@ -10,6 +10,10 @@ moead.py:125-129, promoted to working code:
   * feasible vs infeasible   -> the feasible one wins
   * infeasible vs infeasible -> lower total constraint violation (CV) wins
 
+Objectives are normalised into the population's own [0,1] box before the
+decomposition sees them; without that, this project's raw scales (seconds beside
+fractions) let the large objective dominate every subproblem.
+
 This matches the feasibility-first semantics NSGA2/NSGA3 use elsewhere in this
 project, so fronts are comparable across engines.
 
@@ -46,10 +50,28 @@ class ConstrainedMOEAD(MOEAD):
     def _replace(self, k, off):
         pop = self.pop
         N = self.neighbors[k]
-        FV = self.decomposition.do(pop[N].get("F"), weights=self.ref_dirs[N, :],
-                                   ideal_point=self.ideal)
-        off_FV = self.decomposition.do(off.F[None, :], weights=self.ref_dirs[N, :],
-                                       ideal_point=self.ideal)
+
+        # Scalarise on NORMALISED objectives. PathProblem reports raw values --
+        # Mission Time in seconds (~1e3) beside Percentage Connectivity as a
+        # fraction (~1) -- and Tchebicheff/PBI apply the weights straight to those
+        # magnitudes (pymoo's Decomposition stores a nadir_point but neither
+        # decomposition uses it, so there is no hook to do this for us). Left raw,
+        # the large objective dominates every subproblem, the weight vectors stop
+        # discriminating, and MOEA/D's diversity mechanism goes inert: only ~4 of
+        # 52 subproblems were distinct at this project's scales. Mapping F into the
+        # population's own [0,1] box first restores it. NSGA3 normalises via its
+        # ideal/extreme points and NSGA2's rank+crowding is scale-invariant, so
+        # this puts MOEA/D in line with the other engines rather than apart.
+        # F is shifted so the ideal sits at the origin, hence ideal_point=zero.
+        allF = pop.get("F")
+        lo = np.minimum(allF.min(axis=0), self.ideal)
+        span = np.maximum(allF.max(axis=0) - lo, 1e-12)
+        zero = np.zeros(allF.shape[1])
+
+        FV = self.decomposition.do((pop[N].get("F") - lo) / span,
+                                   weights=self.ref_dirs[N, :], ideal_point=zero)
+        off_FV = self.decomposition.do((off.F[None, :] - lo) / span,
+                                       weights=self.ref_dirs[N, :], ideal_point=zero)
 
         if self.problem.has_constraints():
             # parameter_less maps infeasible entries to fmax + CV, so any feasible
@@ -65,8 +87,9 @@ class ConstrainedMOEAD(MOEAD):
         #
         # Uncapped, a single offspring takes the whole neighbourhood -- and while
         # the population is infeasible, parameter_less makes every comparison
-        # weight-INDEPENDENT (pure CV), so that happens constantly: measured 52
-        # distinct individuals collapsing to 8 by generation 100. Capping holds
-        # ~30/52.
+        # weight-INDEPENDENT (pure CV), so that happens constantly: at raw scales
+        # this collapsed 52 distinct individuals to 8 by generation 100. With
+        # normalised objectives (above) the cap holds ~55% of the population
+        # distinct.
         I = np.where(off_FV < FV)[0][:MAX_REPLACEMENTS]
         pop[N[I]] = off

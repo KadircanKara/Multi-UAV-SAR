@@ -101,3 +101,42 @@ def test_setup_override_matches_pymoo_minus_the_assert():
     assert statements(ConstrainedMOEAD._setup) == [
         s for s in theirs if not s.startswith("assert not problem.has_constraints")
     ]
+
+
+def _replacement_winners(scale):
+    """Which neighbourhood slots an offspring claims, with objective 0 x scale.
+
+    Uses an UNCONSTRAINED problem so the feasibility-first branch is bypassed and
+    only the decomposition's scale behaviour is under test.
+    """
+    from pymoo.core.population import Population
+
+    problem = get_problem("zdt1")  # 2 objectives, no constraints
+    ref_dirs = get_reference_directions("energy", 2, n_points=8, seed=1)
+    alg = ConstrainedMOEAD(ref_dirs=ref_dirs, n_neighbors=8)
+    alg.setup(problem, termination=("n_gen", 1), seed=1)
+
+    base = np.array([[0.1, 0.9], [0.2, 0.8], [0.3, 0.7], [0.4, 0.6],
+                     [0.5, 0.5], [0.6, 0.4], [0.7, 0.3], [0.8, 0.2]])
+    F = base * np.array([scale, 1.0])
+    alg.pop = Population.new(F=F)
+    alg.ideal = F.min(axis=0)
+
+    off = Population.new(F=np.array([[0.55 * scale, 0.25]]))[0]
+
+    before = alg.pop.get("F").copy()
+    alg._replace(0, off)
+    after = alg.pop.get("F")
+    return tuple(np.where(~np.all(before == after, axis=1))[0])
+
+
+def test_replacement_is_scale_invariant():
+    """The same trade-off must win the same subproblems at any objective scale.
+
+    PathProblem reports Mission Time in seconds (~1e3) beside Percentage
+    Connectivity as a fraction (~1). If the decomposition sees raw magnitudes the
+    large objective dominates every subproblem and the weight vectors stop
+    discriminating -- scaling one objective changes which neighbours an offspring
+    claims, which is exactly the bug this asserts against.
+    """
+    assert _replacement_winners(1.0) == _replacement_winners(1000.0)
