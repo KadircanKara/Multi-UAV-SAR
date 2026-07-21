@@ -27,10 +27,13 @@ import type {
   OptimizeFront,
   OptimizeFrontSolution,
   OptimizeStatus,
+  PlaygroundResult,
   ScenarioConfig,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import type { ProgressPoint } from "@/components/optimize/LiveProgress";
+import { UploadResult, parseRunJson } from "@/components/playground/UploadResult";
+import ScenarioExplorer from "@/components/explore/ScenarioExplorer";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -450,6 +453,12 @@ export default function OptimizePage() {
   // Run identity (used for the post-run Download JSON action — runs are not
   // persisted server-side; this is memoryless by design).
   const [runId, setRunId] = useState<string | null>(null);
+
+  // ── Analysis section (single uploaded/exported run) ──
+  const [analysisResult, setAnalysisResult] = useState<PlaygroundResult | null>(null);
+  const [analysisNonce, setAnalysisNonce] = useState(0);
+  const [analyzeBusy, setAnalyzeBusy] = useState(false);
+  const analysisRef = useRef<HTMLDivElement | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
@@ -881,6 +890,32 @@ export default function OptimizePage() {
       toast.error("Download failed", {
         description: e instanceof Error ? e.message : String(e),
       });
+    }
+  }
+
+  function loadAnalysis(r: PlaygroundResult) {
+    setAnalysisResult(r);
+    setAnalysisNonce((n) => n + 1);
+    requestAnimationFrame(() =>
+      analysisRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+    );
+  }
+
+  // Load the just-finished run into the Analysis section without the
+  // download→re-upload roundtrip. Same parse path as a manual upload.
+  async function analyzeCurrentResult() {
+    if (!runId) return;
+    setAnalyzeBusy(true);
+    try {
+      const res = await fetch(optimizeExportUrl(runId));
+      if (!res.ok) throw new Error(`export failed (${res.status})`);
+      loadAnalysis(parseRunJson(await res.text()));
+    } catch (e) {
+      toast.error("Could not load result", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setAnalyzeBusy(false);
     }
   }
 
@@ -1715,13 +1750,23 @@ export default function OptimizePage() {
               {/* Download result (runs are not saved server-side) */}
               {runId && result.n_solutions > 0 && (
                 <div className="flex flex-col items-end gap-1.5">
-                  <button
-                    type="button"
-                    onClick={downloadResultJson}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-secondary px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent"
-                  >
-                    Download result (JSON)
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={analyzeCurrentResult}
+                      disabled={analyzeBusy}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-secondary px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+                    >
+                      {analyzeBusy ? "Loading…" : "Analyze this result"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={downloadResultJson}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-secondary px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+                    >
+                      Download result (JSON)
+                    </button>
+                  </div>
                   <p className="max-w-xs text-right text-xs text-muted-foreground">
                     Runs are not saved. Download the JSON, or analyze it in the
                     Analysis section below.
@@ -1747,6 +1792,28 @@ export default function OptimizePage() {
             )}
           </div>
         )}
+
+        {/* ── Analysis — works with any exported run, no run required ── */}
+        <div ref={analysisRef} className="flex flex-col gap-4">
+          <Separator />
+          <div className="flex flex-col gap-1">
+            <h2 className="text-lg font-semibold tracking-tight text-foreground">
+              Analysis
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              Analyze any exported run — upload a result JSON, or use
+              “Analyze this result” after a run finishes. Results are not
+              stored; everything runs from the file.
+            </p>
+          </div>
+          <UploadResult onLoaded={loadAnalysis} />
+          {analysisResult && (
+            <ScenarioExplorer
+              key={analysisNonce}
+              source={{ mode: "playground", result: analysisResult }}
+            />
+          )}
+        </div>
       </div>
     </TooltipProvider>
   );

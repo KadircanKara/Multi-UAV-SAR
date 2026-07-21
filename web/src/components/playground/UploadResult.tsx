@@ -2,17 +2,23 @@
 import { useState } from "react";
 import type { PlaygroundResult } from "@/lib/types";
 
+/** Parse + shape-check an exported run JSON. Shared by the manual upload and
+ *  the optimizer's "Analyze this result" button so the two paths cannot drift. */
+export function parseRunJson(text: string): PlaygroundResult {
+  const parsed = JSON.parse(text);
+  if (parsed?.schema_version !== 1 || !Array.isArray(parsed?.solutions)) {
+    throw new Error("Not a valid result file (expected schema_version 1).");
+  }
+  return parsed as PlaygroundResult;
+}
+
 export function UploadResult({ onLoaded }: { onLoaded: (r: PlaygroundResult) => void }) {
   const [error, setError] = useState<string | null>(null);
   async function handle(file: File | undefined) {
     if (!file) return;
     setError(null);
     try {
-      const parsed = JSON.parse(await file.text());
-      if (parsed?.schema_version !== 1 || !Array.isArray(parsed?.solutions)) {
-        throw new Error("Not a valid result file (expected schema_version 1).");
-      }
-      onLoaded(parsed as PlaygroundResult);
+      onLoaded(parseRunJson(await file.text()));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not read file.");
     }
