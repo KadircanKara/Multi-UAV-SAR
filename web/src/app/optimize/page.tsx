@@ -25,8 +25,8 @@ import {
 import type {
   OptimizeConfig,
   OptimizeFront,
+  OptimizeFrontSolution,
   OptimizeStatus,
-  ParetoFront,
   ScenarioConfig,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -59,12 +59,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-
-// ParetoScatter pulls in Recharts; load client-side only (mirrors explore page).
-const ParetoScatter = dynamic(
-  () => import("@/components/viz/ParetoScatter"),
-  { ssr: false }
-);
 
 // LiveProgress (Recharts) — only mounted while a run is in flight.
 const LiveProgress = dynamic(
@@ -345,82 +339,53 @@ function InlineWarning({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ResultTable({
-  front,
-}: {
-  front: OptimizeFront;
-}) {
-  return (
-    <div className="overflow-x-auto rounded-xl border border-border">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border bg-muted/40">
-            <th className="px-3 py-2 text-left font-medium text-muted-foreground">
-              #
-            </th>
-            {front.objectives.map((o) => (
-              <th
-                key={o}
-                className="px-3 py-2 text-right font-medium text-muted-foreground"
-              >
-                {o}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {front.solutions.map((sol) => (
-            <tr
-              key={sol.index}
-              className="border-b border-border last:border-0"
-            >
-              <td className="px-3 py-2 text-left tabular-nums text-muted-foreground">
-                {sol.index}
-              </td>
-              {front.objectives.map((o) => (
-                <td
-                  key={o}
-                  className="px-3 py-2 text-right tabular-nums text-foreground"
-                >
-                  {fmtObjValue(o, sol.objectives_abs[o])}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function SingleResult({ front }: { front: OptimizeFront }) {
-  const sol = front.solutions[0];
-  if (!sol) {
+/** Best value per objective across the returned front. For a single solution
+ *  these are just its values; for a front each objective's optimum is taken
+ *  independently (minimum SIGNED value — direction already encoded), so the
+ *  values may come from different solutions. The full front lives in the
+ *  Analysis section, not here. */
+function BestValues({ front }: { front: OptimizeFront }) {
+  if (front.solutions.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">No solution returned.</p>
     );
   }
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      {front.objectives.map((o) => {
-        const unit = unitFor(o);
-        return (
-          <div
-            key={o}
-            className="flex flex-col gap-1 rounded-xl border border-border bg-card p-4"
-          >
-            <p className="text-xs text-muted-foreground">{o}</p>
-            <p className="text-2xl font-semibold tabular-nums text-foreground">
-              {fmtObjValue(o, sol.objectives_abs[o])}
-              {unit && (
-                <span className="ml-1 text-sm font-normal text-muted-foreground">
-                  {unit}
-                </span>
-              )}
-            </p>
-          </div>
-        );
-      })}
+    <div className="flex flex-col gap-2">
+      {front.solutions.length > 1 && (
+        <p className="text-xs text-muted-foreground">
+          Best per objective, across {front.n_solutions} solutions — values may
+          come from different solutions.
+        </p>
+      )}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {front.objectives.map((o) => {
+          let best: OptimizeFrontSolution | null = null;
+          for (const sol of front.solutions) {
+            const v = sol.objectives_signed[o];
+            if (v == null) continue;
+            const b = best?.objectives_signed[o];
+            if (b == null || v < b) best = sol;
+          }
+          const unit = unitFor(o);
+          return (
+            <div
+              key={o}
+              className="flex flex-col gap-1 rounded-xl border border-border bg-card p-4"
+            >
+              <p className="text-xs text-muted-foreground">{o}</p>
+              <p className="text-2xl font-semibold tabular-nums text-foreground">
+                {fmtObjValue(o, best?.objectives_abs[o])}
+                {unit && (
+                  <span className="ml-1 text-sm font-normal text-muted-foreground">
+                    {unit}
+                  </span>
+                )}
+              </p>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -473,7 +438,6 @@ export default function OptimizePage() {
     null
   );
   const [result, setResult] = useState<OptimizeFront | null>(null);
-  const [selectedSolution, setSelectedSolution] = useState(0);
   const [stopping, setStopping] = useState(false);
   // Live progress (while running): sampled best-per-objective history + front.
   const [progressHistory, setProgressHistory] = useState<ProgressPoint[]>([]);
@@ -810,7 +774,6 @@ export default function OptimizePage() {
       setStopping(false);
       if (status.state === "done" && status.front) {
         setResult(status.front);
-        setSelectedSolution(status.front.solutions[0]?.index ?? 0);
       } else if (status.state === "failed") {
         toast.error("Optimization failed", {
           description: status.error ?? "Unknown error",
@@ -1760,8 +1723,8 @@ export default function OptimizePage() {
                     Download result (JSON)
                   </button>
                   <p className="max-w-xs text-right text-xs text-muted-foreground">
-                    Runs are not saved. Download the JSON and upload it in the
-                    Playground to explore or compare it.
+                    Runs are not saved. Download the JSON, or analyze it in the
+                    Analysis section below.
                   </p>
                 </div>
               )}
@@ -1779,21 +1742,8 @@ export default function OptimizePage() {
                   connectivity constraints.
                 </p>
               </div>
-            ) : result.result_kind === "front" && result.n_solutions > 1 ? (
-              <div className="flex flex-col gap-5">
-                <div className="rounded-xl border border-border bg-card p-4">
-                  <ParetoScatter
-                    front={
-                      { ...result, capabilities: {} } as unknown as ParetoFront
-                    }
-                    selectedIndex={selectedSolution}
-                    onSelectIndex={setSelectedSolution}
-                  />
-                </div>
-                <ResultTable front={result} />
-              </div>
             ) : (
-              <SingleResult front={result} />
+              <BestValues front={result} />
             )}
           </div>
         )}
