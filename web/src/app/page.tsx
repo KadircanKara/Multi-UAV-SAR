@@ -375,11 +375,11 @@ export default function LandingPage() {
         <DeckCard
           href="/optimize"
           title="Optimizer"
-          description="Configure and run your own optimization — pick the objectives, method, and algorithm, then watch it solve."
+          description="Configure and run your own optimization — then analyze any exported run right on the page."
           bullets={[
-            "SOO & MOO (NSGA-II / NSGA-III)",
+            "SOO & MOO (NSGA-II / NSGA-III / MOEA/D)",
             "Weighted-sum with custom weights",
-            "Live generation progress",
+            "Live progress + single-run analysis",
           ]}
           glyph={<OptimizeGlyph />}
           delay={280}

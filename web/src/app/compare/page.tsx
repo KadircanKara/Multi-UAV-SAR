@@ -209,13 +209,13 @@ function SliderField({
 // ─── Objectives tab (module scope) ────────────────────────────────────────────
 //
 // Owns scenario capping + the debounced fetch against /api/comparison; the
-// bar/line/table rendering itself is the shared ObjectivesView component
-// (also used by /compare/playground). Chart type + sweep param are lifted to
-// the page (shared across tabs, and consumed by the picker's line mode), so
-// they're passed down as controlled props; the always-visible switch below is
-// kept here (rather than inside ObjectivesView) so it doesn't disappear behind
-// the loading skeleton while a comparison is in flight — ObjectivesView is told
-// to hide its own copy via `hideControls`.
+// bar/line/table rendering itself is the shared ObjectivesView component.
+// Chart type + sweep param are lifted to the page (shared across tabs, and
+// consumed by the picker's line mode), so they're passed down as controlled
+// props; the always-visible switch below is kept here (rather than inside
+// ObjectivesView) so it doesn't disappear behind the loading skeleton while a
+// comparison is in flight — ObjectivesView is told to hide its own copy via
+// `hideControls`.
 
 interface ObjectivesTabProps {
   selection: PickerSelection;

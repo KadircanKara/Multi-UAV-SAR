@@ -322,12 +322,6 @@ export function playgroundPlayback(
   });
 }
 
-/** POST /api/playground/comparison — cross-model objective comparison across uploaded results. */
-export function playgroundComparison(
-  results: PlaygroundResult[]
-): Promise<ComparisonResponse> {
-  return request<ComparisonResponse>("/api/playground/comparison", {
-    method: "POST",
-    body: JSON.stringify({ results }),
-  });
-}
+// NOTE: POST /api/playground/comparison (multi-run objective comparison) still
+// exists on the backend but has no UI caller since the compare-playground page
+// was removed (2026-07 route re-architecture).

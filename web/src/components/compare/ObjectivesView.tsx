@@ -4,19 +4,16 @@
  * ObjectivesView — shared cross-model objectives comparison view.
  *
  * Renders the Bar | Line | Table chart-type views driven by a
- * ComparisonResponse (POST /api/comparison for seeded scenarios, or
- * POST /api/playground/comparison for uploaded result files). Used by both
- * `/compare/seeded-results` and `/compare/playground` so the objective-rendering
- * logic (stat extraction, per-objective series building, chart-type dispatch)
- * lives in exactly one place.
+ * ComparisonResponse (POST /api/comparison). Used by /compare so the
+ * objective-rendering pieces stay in one place.
  *
- * Chart type + sweep param default to internal state (self-contained — this is
- * how the playground page uses it). The seeded page instead lifts them to the
- * page level (so its ModelScenarioPicker can react to line mode) and passes
- * them down as controlled props, along with `hideControls` so its own
- * always-visible switch (shown even while a comparison is loading) isn't
- * duplicated, and `models` so stacked-bar color/legend order stays anchored to
- * the picker's selection instead of first-seen order in the response.
+ * Chart type + sweep param default to internal state (self-contained), but
+ * the seeded page instead lifts them to the page level (so its
+ * ModelScenarioPicker can react to line mode) and passes them down as
+ * controlled props, along with `hideControls` so its own always-visible
+ * switch (shown even while a comparison is loading) isn't duplicated, and
+ * `models` so stacked-bar color/legend order stays anchored to the picker's
+ * selection instead of first-seen order in the response.
  */
 
 import { useMemo, useState } from "react";
