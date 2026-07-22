@@ -41,7 +41,7 @@ function DetailCard({ detail }: { detail: SolutionDetail }) {
       <dl className="grid grid-cols-2 gap-x-4 gap-y-0.5 tabular-nums">
         {Object.entries(detail.objectives_abs).map(([k, v]) => (
           <React.Fragment key={k}>
-            <dt className="text-muted-foreground/70 truncate">{k}</dt>
+            <dt className="text-muted-foreground truncate">{k}</dt>
             <dd className="text-foreground">
               {typeof v !== "number"
                 ? "—"

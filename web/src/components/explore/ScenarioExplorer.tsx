@@ -90,7 +90,7 @@ function OfflinePanel({ message }: { message: string }) {
         Start the API on :8000 then reload.
       </p>
       {message && (
-        <p className="mt-2 text-xs text-muted-foreground/70 break-all">
+        <p className="mt-2 text-xs text-muted-foreground break-all">
           {message}
         </p>
       )}

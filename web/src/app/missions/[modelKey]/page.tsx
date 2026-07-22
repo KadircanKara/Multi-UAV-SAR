@@ -84,7 +84,7 @@ function OfflinePanel({ message }: { message: string }) {
         Check the API on :8000 or verify the model key.
       </p>
       {message && (
-        <p className="mt-2 text-xs text-muted-foreground/70 break-all">
+        <p className="mt-2 text-xs text-muted-foreground break-all">
           {message}
         </p>
       )}
@@ -1165,7 +1165,7 @@ export default function ModelPage() {
                         className="text-xs font-mono tracking-widest uppercase text-muted-foreground"
                       >
                         {obj}
-                        <span className="ml-1 text-muted-foreground/60 normal-case tracking-normal font-normal">
+                        <span className="ml-1 text-muted-foreground normal-case tracking-normal font-normal">
                           (best)
                         </span>
                       </TableHead>
