@@ -36,25 +36,77 @@ import type {
 const BASE =
   process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 
+// ─── Errors ──────────────────────────────────────────────────────────────────
+
+/**
+ * Error thrown by every fetcher on failure. `.message` is already
+ * human-readable (safe to drop straight into a toast); `.status` carries the
+ * HTTP status (0 = the request never reached the server) for callers that need
+ * to branch on it — prefer `err.status === 404` over string-matching the message.
+ */
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+/** A friendly message for statuses that carry no useful server detail. */
+function fallbackMessage(status: number): string {
+  if (status === 0) return "Can't reach the server. Check that the backend is running and try again.";
+  if (status === 413) return "That request is too large to process.";
+  if (status === 429) return "You're going a bit fast — wait a moment and try again.";
+  if (status === 404) return "We couldn't find what you asked for.";
+  if (status >= 500) return "The server ran into a problem. Please try again in a moment.";
+  return "Something went wrong. Please try again.";
+}
+
+/** Pull a readable message out of an error response body (any shape). */
+function messageFromBody(body: unknown, status: number): string {
+  const detail = (body as { detail?: unknown })?.detail;
+  // FastAPI HTTPException: detail is a plain string.
+  if (typeof detail === "string" && detail.trim()) return detail.trim();
+  // Pydantic/validation: detail is a list of error objects. The backend
+  // normalizes these to a friendly string, so this is a defensive fallback.
+  if (Array.isArray(detail) && detail.length) {
+    const first = detail[0] as { msg?: string; loc?: unknown[] };
+    const msg = (first?.msg ?? "").replace(/^Value error,\s*/, "");
+    if (msg) return msg;
+  }
+  return fallbackMessage(status);
+}
+
 // ─── Internal helper ─────────────────────────────────────────────────────────
 
 async function request<T>(
   path: string,
   options?: RequestInit
 ): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...(options?.headers ?? {}) },
-    ...options,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      headers: { "Content-Type": "application/json", ...(options?.headers ?? {}) },
+      ...options,
+    });
+  } catch {
+    // Network-level failure (server down, DNS, CORS, offline) — fetch rejects
+    // before any response. Present it as a reachability problem, not a crash.
+    throw new ApiError(fallbackMessage(0), 0);
+  }
   if (!res.ok) {
-    let detail: string;
+    // Never surface a raw server-side (5xx) detail to the user — it can carry
+    // stack traces or internal paths. Only trust 4xx detail, which describes
+    // something the user can act on.
+    if (res.status >= 500) throw new ApiError(fallbackMessage(res.status), res.status);
+    let body: unknown = null;
     try {
-      const body = await res.json();
-      detail = body?.detail ?? JSON.stringify(body);
+      body = await res.json();
     } catch {
-      detail = res.statusText;
+      /* non-JSON error body — fall back to a status-based message */
     }
-    throw new Error(`API ${res.status}: ${detail}`);
+    throw new ApiError(messageFromBody(body, res.status), res.status);
   }
   return res.json() as Promise<T>;
 }

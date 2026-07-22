@@ -60,7 +60,13 @@ class _CompareObjReq(BaseModel):
 
 def _heavy_solution(result: PlaygroundResult, index: int):
     if index < 0 or index >= len(result.solutions):
-        raise HTTPException(status_code=422, detail=f"index {index} out of range")
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Solution #{index} doesn't exist — this result has "
+                f"{len(result.solutions)} solution(s) (0 to {len(result.solutions) - 1})."
+            ),
+        )
     info = reconstruct_info(result.scenario.to_scenario_dict(), result.model)
     return reconstruct_solution(result.solutions[index], info, full=True)
 

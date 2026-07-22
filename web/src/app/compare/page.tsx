@@ -415,7 +415,7 @@ function TimeMetricsTab({
       setData(res);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      toast.error("TIME COMPARISON FAILED", { description: msg });
+      toast.error("Couldn't compare time metrics", { description: msg });
     } finally {
       setRunning(false);
     }

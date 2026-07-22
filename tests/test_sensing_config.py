@@ -28,7 +28,7 @@ def test_invalid_values_raise(field, value):
 
 def test_detection_prob_must_exceed_false_alarm():
     # p <= q inverts the Bayesian update (belief drops on a target hit).
-    with pytest.raises(ValueError, match="false_alarm"):
+    with pytest.raises(ValueError, match="false-alarm"):
         SensingConfig(detection_prob=0.3, false_alarm_prob=0.5)
     with pytest.raises(ValueError):
         SensingConfig(detection_prob=0.4, false_alarm_prob=0.4)

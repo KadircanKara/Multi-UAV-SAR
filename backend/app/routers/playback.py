@@ -18,7 +18,7 @@ router = APIRouter()
 
 
 def _not_found(scenario: str, detail: str = None) -> HTTPException:
-    msg = detail or f"Scenario {scenario!r} not found or pickles missing"
+    msg = detail or f"We couldn't find saved data for scenario {scenario}."
     return HTTPException(status_code=404, detail=msg)
 
 
@@ -49,7 +49,7 @@ def post_playback(request: Request, scenario: str, body: PlaybackRequest) -> dic
             stride=body.stride,
         )
     except _SelectorNotFound as exc:
-        raise _not_found(scenario, str(exc)) from exc
+        raise _not_found(scenario) from exc
     except StrategyUnavailableError as exc:
         raise _unprocessable(str(exc)) from exc
     except ValueError as exc:

@@ -102,7 +102,7 @@ export default function SolutionSelectorPanel({
       setDetail(res.detail);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      toast.error("SELECTION FAILED", { description: msg });
+      toast.error("Couldn't select a solution", { description: msg });
     } finally {
       setLoading(false);
     }

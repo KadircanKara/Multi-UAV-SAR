@@ -167,3 +167,24 @@ def test_optimize_is_rate_limited(client, monkeypatch):
                 time.sleep(0.5)
     finally:
         client.app.state.limiter.reset()
+
+
+@pytest.mark.parametrize("path,body", [
+    ("/api/replay/no_such_scenario", {"index": 0, "config": {}}),
+    ("/api/compare/no_such_scenario", {"index": 0, "configs": [{}]}),
+    ("/api/playback/no_such_scenario", {"index": 0, "config": {}}),
+    ("/api/comparison", {"scenarios": ["no_such_scenario"]}),
+    ("/api/comparison/time", {"scenarios": ["no_such_scenario"], "config": {}}),
+])
+def test_replay_family_is_rate_limited(client, monkeypatch, path, body):
+    """Every sensing-replay endpoint carries the per-IP throttle. With the limit
+    at 1/minute, the second schema-valid request 429s before the handler runs
+    (the scenario doesn't need to exist — the first request's 404 proves the
+    handler was reached, the second's 429 proves the limiter fired first)."""
+    from app import settings
+    monkeypatch.setattr(settings, "REPLAY_RATE_LIMIT", "1/minute", raising=False)
+    client.app.state.limiter.reset()
+    r1 = client.post(path, json=body)
+    assert r1.status_code == 404, r1.text
+    r2 = client.post(path, json=body)
+    assert r2.status_code == 429, r2.text

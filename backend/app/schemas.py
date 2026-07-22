@@ -36,7 +36,7 @@ class ScenarioConfig(BaseModel):
     @model_validator(mode="after")
     def validate_target_positions(self) -> "ScenarioConfig":
         if not self.target_positions:
-            raise ValueError("target_positions must not be empty")
+            raise ValueError("Enter at least one target cell.")
         max_cell = self.grid_size**2
         if len(self.target_positions) > max_cell:
             raise ValueError(
@@ -46,7 +46,7 @@ class ScenarioConfig(BaseModel):
         for t in self.target_positions:
             if not (0 <= t < max_cell):
                 raise ValueError(
-                    f"target position {t} is out of range [0, {max_cell})"
+                    f"Cell {t} is out of range — valid cells are 0 to {max_cell - 1}."
                 )
         return self
 
@@ -204,7 +204,7 @@ class SensingConfigModel(BaseModel):
     def validate_merge_topology(cls, v: str) -> str:
         allowed = {"none", "onboard", "gcs"}
         if v not in allowed:
-            raise ValueError(f"merge_topology must be one of {sorted(allowed)}, got {v!r}")
+            raise ValueError("Merge topology must be none, onboard, or gcs.")
         return v
 
     @field_validator("time_model")
@@ -212,7 +212,7 @@ class SensingConfigModel(BaseModel):
     def validate_time_model(cls, v: str) -> str:
         allowed = {"discrete", "realtime"}
         if v not in allowed:
-            raise ValueError(f"time_model must be one of {sorted(allowed)}, got {v!r}")
+            raise ValueError("Time model must be discrete or realtime.")
         return v
 
     def to_cfg_dict(self) -> dict:

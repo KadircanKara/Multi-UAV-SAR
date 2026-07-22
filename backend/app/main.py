@@ -45,20 +45,92 @@ def _json_safe(obj):
     return obj
 
 
+# Human labels for the request fields users can actually set, so a validation
+# error reads "at most 8 configurations" rather than echoing the raw field path.
+_FIELD_LABELS: dict[str, str] = {
+    "configs": "configurations",
+    "target_locations": "target cells",
+    "target_positions": "target cells",
+    "scenarios": "scenarios",
+    "number_of_drones": "number of drones",
+    "grid_size": "grid size",
+    "n_visits": "number of visits",
+    "pop_size": "population size",
+    "n_gen": "number of generations",
+    "detection_prob": "detection probability",
+    "false_alarm_prob": "false-alarm probability",
+    "belief_threshold": "belief threshold",
+    "max_mission_time": "max mission time",
+    "min_connectivity": "min connectivity",
+    "max_mean_tbv": "max mean TBV",
+    "index": "solution number",
+    "stride": "step size",
+}
+
+
+def _field_label(loc: tuple) -> str:
+    """Human label for the deepest named field in a Pydantic error location."""
+    for part in reversed(loc):
+        if isinstance(part, str) and part not in ("body", "query", "path"):
+            return _FIELD_LABELS.get(part, part.replace("_", " "))
+    return ""
+
+
+def _friendly_validation_message(errors: list[dict]) -> str:
+    """Turn Pydantic's structured errors into one plain-language sentence."""
+    if not errors:
+        return "Some of the values you entered aren't valid."
+    err = errors[0]
+    field = _field_label(tuple(err.get("loc", ())))
+    etype = str(err.get("type", ""))
+    ctx = err.get("ctx") or {}
+
+    if etype == "too_long":
+        return f"Too many {field or 'items'} — at most {ctx.get('max_length')} allowed."
+    if etype in ("too_short", "missing"):
+        return f"{(field or 'A required value').capitalize()} is required."
+    if etype in ("less_than", "less_than_equal", "greater_than", "greater_than_equal"):
+        op = {
+            "less_than": "less than",
+            "less_than_equal": "at most",
+            "greater_than": "greater than",
+            "greater_than_equal": "at least",
+        }[etype]
+        limit = next(
+            (ctx[k] for k in ("le", "lt", "ge", "gt", "limit_value", "limit") if k in ctx),
+            "",
+        )
+        return f"{(field or 'Value').capitalize()} must be {op} {limit}.".replace("  ", " ")
+    if etype == "value_error":
+        # Custom validator messages are already written for humans (see schemas).
+        return err.get("msg", "").replace("Value error, ", "") or "That value isn't valid."
+    # Anything else: label the field and pass the (lightly cleaned) message through.
+    msg = err.get("msg", "That value isn't valid.")
+    return f"{field.capitalize()}: {msg}" if field else msg
+
+
 @app.exception_handler(RequestValidationError)
 async def _validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Return a clean 422 even when the rejected body carried a NaN/Inf.
+    """Return a clean, human-readable 422.
 
-    FastAPI's default handler echoes the offending input value in the error
-    payload; a non-finite float there makes jsonable_encoder raise "Out of range
-    float values are not JSON compliant", turning a legitimate 422 into a 500.
-    Sanitizing non-finite floats first keeps the validation error serializable.
+    Two jobs: (1) sanitize non-finite floats — FastAPI's default handler echoes
+    the offending input, and a NaN/Inf there makes jsonable_encoder raise "Out
+    of range float values are not JSON compliant", turning a legitimate 422 into
+    a 500; (2) collapse Pydantic's error array into a friendly ``detail`` string
+    so the frontend can drop it straight into a toast. The raw structured errors
+    stay available under ``errors`` for debugging.
     """
+    errors = _json_safe(exc.errors())
     return JSONResponse(
         status_code=422,
-        content={"detail": jsonable_encoder(_json_safe(exc.errors()))},
+        content={
+            "detail": _friendly_validation_message(errors),
+            "errors": jsonable_encoder(errors),
+        },
     )
 
+# The API is anonymous (no cookies/auth), so credentialed CORS is disabled;
+# never re-enable it together with a wildcard or reflected origin.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,

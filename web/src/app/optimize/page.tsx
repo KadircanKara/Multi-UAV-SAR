@@ -15,6 +15,7 @@ import dynamic from "next/dynamic";
 import { toast } from "sonner";
 
 import {
+  ApiError,
   checkOptimize,
   startOptimize,
   getOptimizeStatus,
@@ -785,10 +786,9 @@ export default function OptimizePage() {
         failures = 0;
       } catch (err: unknown) {
         inFlight = false;
-        const msg = err instanceof Error ? err.message : String(err);
         // A 404 means the run is gone (e.g. the server restarted and it wasn't
         // a finished run recoverable from disk). Don't spin forever.
-        const permanent = msg.includes("404");
+        const permanent = err instanceof ApiError && err.status === 404;
         if (permanent || ++failures >= 5) {
           stopPolling();
           clearStoredRun();
@@ -828,10 +828,14 @@ export default function OptimizePage() {
       if (status.state === "done" && status.front) {
         setResult(status.front);
       } else if (status.state === "failed") {
+        // The worker's raw exception isn't user-actionable (and can carry
+        // internal paths), so show a friendly, generic hint instead.
         toast.error("Optimization failed", {
-          description: status.error ?? "Unknown error",
+          description:
+            "The run couldn't finish. Try different parameters and run it again.",
         });
       }
+
     }, 1000);
   }
 
@@ -875,7 +879,7 @@ export default function OptimizePage() {
       setRunning(false);
       setProgress(null);
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("409")) {
+      if (err instanceof ApiError && err.status === 409) {
         toast.error("A run is already in progress");
       } else {
         toast.error("Failed to start optimization", { description: msg });

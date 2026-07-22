@@ -16,7 +16,7 @@ router = APIRouter()
 
 
 def _not_found(scenario: str, detail: str = None) -> HTTPException:
-    msg = detail or f"Scenario {scenario!r} not found or pickles missing"
+    msg = detail or f"We couldn't find saved data for scenario {scenario}."
     return HTTPException(status_code=404, detail=msg)
 
 
@@ -42,7 +42,7 @@ def post_replay(request: Request, scenario: str, body: ReplayRequest) -> dict:
             label=body.label,
         )
     except _SelectorNotFound as exc:
-        raise _not_found(scenario, str(exc)) from exc
+        raise _not_found(scenario) from exc
     except StrategyUnavailableError as exc:
         raise _unprocessable(str(exc)) from exc
     except ValueError as exc:
@@ -67,7 +67,7 @@ def post_compare(request: Request, scenario: str, body: CompareRequest) -> dict:
             labels=body.labels,
         )
     except _SelectorNotFound as exc:
-        raise _not_found(scenario, str(exc)) from exc
+        raise _not_found(scenario) from exc
     except StrategyUnavailableError as exc:
         raise _unprocessable(str(exc)) from exc
     except ValueError as exc:
