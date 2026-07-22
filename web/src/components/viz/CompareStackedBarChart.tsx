@@ -17,7 +17,7 @@ import {
   Tooltip as RechartsTooltip,
   ResponsiveContainer,
 } from "recharts";
-import { useChartColors } from "@/hooks/useChartColors";
+import { alpha, axisStyles, useChartColors } from "@/hooks/useChartColors";
 import { cn } from "@/lib/utils";
 import type { StackedRow } from "@/components/compare/buildStackedBars";
 
@@ -83,6 +83,7 @@ export default function CompareStackedBarChart({
   heightClass = "h-60",
 }: CompareStackedBarChartProps) {
   const colors = useChartColors();
+  const ax = axisStyles(colors);
   const palette = buildPalette(colors.series, models.length);
   const colorFor = (i: number) => palette[i] ?? colors.series[0]!;
   const betterHint = polarity === -1 ? "higher is better" : "lower is better";
@@ -137,22 +138,22 @@ export default function CompareStackedBarChart({
               interval={0}
               angle={xAngle}
               textAnchor="end"
-              tick={{ fontSize: xFontSize, fill: colors.axis }}
+              tick={{ ...ax.tick, fontSize: xFontSize }}
               tickLine={false}
-              axisLine={{ stroke: colors.grid }}
+              axisLine={ax.axisLine}
             />
             <YAxis
               tickFormatter={(v: number) =>
                 Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1)
               }
-              tick={{ fontSize: 10, fill: colors.axis }}
+              tick={ax.tick}
               tickLine={false}
-              axisLine={{ stroke: colors.grid }}
+              axisLine={ax.axisLine}
               width={56}
             />
             <RechartsTooltip
               content={<StackedTooltip />}
-              cursor={{ fill: `${colors.reference}1a` }}
+              cursor={{ fill: alpha(colors.reference, 0.1) }}
             />
             {models.map((m, i) => (
               <Bar

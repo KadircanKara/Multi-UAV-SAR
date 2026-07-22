@@ -32,6 +32,7 @@ import {
 } from "react";
 import type { PlaybackPayload } from "@/lib/types";
 import type { PlaybackColors } from "./usePlaybackColors";
+import { useCanvasDPR } from "@/hooks/useCanvasDPR";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -427,6 +428,16 @@ const GridCanvas = forwardRef<GridCanvasHandle, Props>(function GridCanvas(
     [getCtx, buildT, payload, colors, showAllBeliefLabels]
   );
 
+  // `redraw` changes identity whenever a DRAW parameter changes (labels toggle,
+  // theme colors). Everything that owns the rAF loop reads it through this ref
+  // instead of depending on it, so a draw-parameter change can never tear the
+  // running animation down (that used to cancel the rAF while playingRef stayed
+  // true — animation frozen, but the PLAY/PAUSE button still read "PAUSE").
+  const redrawRef = useRef(redraw);
+  useEffect(() => {
+    redrawRef.current = redraw;
+  }, [redraw]);
+
   // Keep speedRef in sync so rafLoop always reads the latest speed
   useEffect(() => {
     speedRef.current = speedMultiplier;
@@ -443,7 +454,7 @@ const GridCanvas = forwardRef<GridCanvasHandle, Props>(function GridCanvas(
       const msPerStep = BASE_MS_PER_STEP / speedRef.current;
       const next = Math.min(frameRef.current + dt / msPerStep, maxStep);
       frameRef.current = next;
-      redraw(next);
+      redrawRef.current(next);
 
       // Throttled React state update for slider/readout (rounded to a step)
       if (ts - lastNotifyRef.current > 80) {
@@ -459,7 +470,7 @@ const GridCanvas = forwardRef<GridCanvasHandle, Props>(function GridCanvas(
       rafRef.current = requestAnimationFrame(rafLoop);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [redraw, onFrameChange, payload.steps, BASE_MS_PER_STEP]
+    [onFrameChange, payload.steps, BASE_MS_PER_STEP]
   );
 
   // Expose handle to parent
@@ -468,7 +479,7 @@ const GridCanvas = forwardRef<GridCanvasHandle, Props>(function GridCanvas(
     () => ({
       seekTo(step: number) {
         frameRef.current = Math.max(0, Math.min(step, payload.steps - 1));
-        redraw(frameRef.current);
+        redrawRef.current(frameRef.current);
         onFrameChange(Math.round(frameRef.current), playingRef.current);
       },
       play() {
@@ -492,37 +503,32 @@ const GridCanvas = forwardRef<GridCanvasHandle, Props>(function GridCanvas(
         return playingRef.current;
       },
     }),
-    [redraw, rafLoop, onFrameChange, payload.steps]
+    [rafLoop, onFrameChange, payload.steps]
   );
 
-  // Initial draw + resize support
+  // Initial draw + resize support. The callback is stable (reads the latest
+  // redraw + frame through refs), so the sizing effect inside useCanvasDPR is
+  // effectively mount-only and can never tear the rAF loop down mid-playback.
+  const drawCurrent = useCallback(() => {
+    redrawRef.current(frameRef.current);
+  }, []);
+  useCanvasDPR(canvasRef, drawCurrent);
+
+  // rAF teardown on unmount.
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    function applyDPR() {
-      if (!canvas) return;
-      const dpr = window.devicePixelRatio || 1;
-      const rect = canvas.getBoundingClientRect();
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
-      const ctx = canvas.getContext("2d");
-      if (ctx) ctx.scale(dpr, dpr);
-    }
-
-    applyDPR();
-    redraw(frameRef.current);
-
-    const ro = new ResizeObserver(() => {
-      applyDPR();
-      redraw(frameRef.current);
-    });
-    ro.observe(canvas);
-
     return () => {
-      ro.disconnect();
-      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+      if (rafRef.current != null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
     };
+  }, []);
+
+  // Draw parameters changed (labels toggle, theme colors) — repaint the current
+  // frame. While playing, the rAF loop already repaints every frame with the
+  // fresh parameters via redrawRef, so this is only needed when paused.
+  useEffect(() => {
+    if (!playingRef.current) redraw(frameRef.current);
   }, [redraw]);
 
   return (

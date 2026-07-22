@@ -19,7 +19,7 @@ import {
   Tooltip as RechartsTooltip,
   ResponsiveContainer,
 } from "recharts";
-import { useChartColors } from "@/hooks/useChartColors";
+import { alpha, axisStyles, useChartColors } from "@/hooks/useChartColors";
 import { cn } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -129,6 +129,7 @@ export default function ParameterEffectChart({
   heightClass = "h-48",
 }: ParameterEffectChartProps) {
   const colors = useChartColors();
+  const ax = axisStyles(colors);
 
   const multi = series.length > 1;
   const palette = buildPalette(colors.series, series.length);
@@ -218,32 +219,20 @@ export default function ParameterEffectChart({
                 value: sweepLabel,
                 position: "insideBottom",
                 offset: -10,
-                style: {
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 10,
-                  fill: colors.axis,
-                },
+                style: ax.label,
               }}
-              tick={{
-                fontFamily: "var(--font-mono)",
-                fontSize: 10,
-                fill: colors.axis,
-              }}
+              tick={ax.tick}
               tickLine={false}
-              axisLine={{ stroke: colors.grid }}
+              axisLine={ax.axisLine}
             />
             <YAxis
               domain={yDomain ?? ["auto", "auto"]}
               tickFormatter={(v: number) =>
                 Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1)
               }
-              tick={{
-                fontFamily: "var(--font-mono)",
-                fontSize: 10,
-                fill: colors.axis,
-              }}
+              tick={ax.tick}
               tickLine={false}
-              axisLine={{ stroke: colors.grid }}
+              axisLine={ax.axisLine}
               width={60}
             />
             <RechartsTooltip
@@ -253,7 +242,7 @@ export default function ParameterEffectChart({
                   singleSeriesKey={singleSeriesKey}
                 />
               }
-              cursor={{ stroke: `${colors.reference}66` }}
+              cursor={{ stroke: alpha(colors.reference, 0.4) }}
             />
             {series.map((s, i) => (
               <Line

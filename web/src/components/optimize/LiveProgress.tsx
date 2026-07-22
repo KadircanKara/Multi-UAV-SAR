@@ -19,7 +19,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useChartColors } from "@/hooks/useChartColors";
+import { axisStyles, useChartColors } from "@/hooks/useChartColors";
+import ParetoScatter3D from "@/components/viz/ParetoScatter3D";
 
 /** One sampled generation: the optimal (absolute) value of each objective. */
 export interface ProgressPoint {
@@ -32,7 +33,6 @@ interface LiveProgressProps {
   nGen: number;
   objectives: string[];
   history: ProgressPoint[];
-  liveFront: Record<string, number>[] | null;
   isMOO: boolean;
 }
 
@@ -57,7 +57,6 @@ export function LiveProgress({
   nGen,
   objectives,
   history,
-  liveFront,
   isMOO,
 }: LiveProgressProps) {
   const colors = useChartColors();
@@ -148,14 +147,68 @@ export function LiveProgress({
         })}
       </div>
 
-      {/* Live Pareto front (MOO only) */}
-      {isMOO && objectives.length >= 2 && (
-        <ParetoLive
-          objectives={objectives}
-          liveFront={liveFront}
-          colors={colors}
-        />
+    </div>
+  );
+}
+
+/**
+ * The live Pareto front (2D + 3D). Split out of LiveProgress so the optimizer
+ * page can give it the full container width below the run parameters and the
+ * per-objective cards. MOO only — a scalar run has no front to plot.
+ */
+export function LiveParetoFront({
+  objectives,
+  liveFront,
+  isMOO,
+}: {
+  objectives: string[];
+  liveFront: Record<string, number>[] | null;
+  isMOO: boolean;
+}) {
+  const colors = useChartColors();
+  if (!isMOO || objectives.length < 2) return null;
+  return (
+    <div className="flex flex-col gap-4">
+      <ParetoLive objectives={objectives} liveFront={liveFront} colors={colors} />
+      {objectives.length >= 3 && (
+        <LivePareto3D objectives={objectives} liveFront={liveFront} />
       )}
+    </div>
+  );
+}
+
+/** 3D companion to ParetoLive. The live payload carries no solution indices,
+ *  so points are view-only (hover readout, no click-to-select). */
+function LivePareto3D({
+  objectives,
+  liveFront,
+}: {
+  objectives: string[];
+  liveFront: Record<string, number>[] | null;
+}) {
+  const points = useMemo(
+    () =>
+      (liveFront ?? []).map((values) => ({
+        index: null as number | null,
+        values,
+      })),
+    [liveFront]
+  );
+
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4">
+      <span className="text-sm font-medium text-foreground">
+        Pareto front · 3D{" "}
+        <span className="text-muted-foreground">
+          · {points.length} solution{points.length !== 1 ? "s" : ""}
+        </span>
+      </span>
+      <ParetoScatter3D
+        objectives={objectives}
+        points={points}
+        polarities={POLARITY}
+        height={420}
+      />
     </div>
   );
 }
@@ -169,6 +222,7 @@ function ParetoLive({
   liveFront: Record<string, number>[] | null;
   colors: ReturnType<typeof useChartColors>;
 }) {
+  const ax = axisStyles(colors);
   const [xSel, setXSel] = useState<string | null>(null);
   const [ySel, setYSel] = useState<string | null>(null);
   const xObj = xSel ?? objectives[0];
@@ -205,15 +259,14 @@ function ParetoLive({
               dataKey="x"
               name={xObj}
               domain={["auto", "auto"]}
-              tick={{ fontSize: 11, fill: colors.axis }}
-              axisLine={{ stroke: colors.grid }}
-              tickLine={{ stroke: colors.grid }}
+              tick={ax.tick}
+              axisLine={ax.axisLine}
+              tickLine={ax.axisLine}
               label={{
                 value: xObj,
                 position: "insideBottom",
                 offset: -14,
-                fontSize: 12,
-                fill: colors.axis,
+                ...ax.label,
               }}
             />
             <YAxis
@@ -222,15 +275,14 @@ function ParetoLive({
               name={yObj}
               domain={["auto", "auto"]}
               width={72}
-              tick={{ fontSize: 11, fill: colors.axis }}
-              axisLine={{ stroke: colors.grid }}
-              tickLine={{ stroke: colors.grid }}
+              tick={ax.tick}
+              axisLine={ax.axisLine}
+              tickLine={ax.axisLine}
               label={{
                 value: yObj,
                 angle: -90,
                 position: "insideLeft",
-                fontSize: 12,
-                fill: colors.axis,
+                ...ax.label,
                 style: { textAnchor: "middle" },
               }}
             />

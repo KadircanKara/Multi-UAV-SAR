@@ -9,7 +9,7 @@
  * the single best solution (SOO / weighted-sum).
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { toast } from "sonner";
@@ -25,8 +25,8 @@ import {
 import type {
   OptimizeConfig,
   OptimizeFront,
-  OptimizeFrontSolution,
   OptimizeStatus,
+  ParetoFront,
   PlaygroundResult,
   ScenarioConfig,
 } from "@/lib/types";
@@ -66,6 +66,13 @@ import {
 // LiveProgress (Recharts) — only mounted while a run is in flight.
 const LiveProgress = dynamic(
   () => import("@/components/optimize/LiveProgress").then((m) => m.LiveProgress),
+  { ssr: false }
+);
+
+// Live Pareto front (2D + 3D) — full-width block below the run summary.
+const LiveParetoFront = dynamic(
+  () =>
+    import("@/components/optimize/LiveProgress").then((m) => m.LiveParetoFront),
   { ssr: false }
 );
 
@@ -342,12 +349,24 @@ function InlineWarning({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Best value per objective across the returned front. For a single solution
- *  these are just its values; for a front each objective's optimum is taken
- *  independently (minimum SIGNED value — direction already encoded), so the
- *  values may come from different solutions. The full front lives in the
- *  Analysis section, not here. */
-function BestValues({ front }: { front: OptimizeFront }) {
+/** Minimal front shape BestValues needs. Both the live-run `OptimizeFront` and
+ *  the explorer's `ParetoFront` (Analysis section) satisfy it. */
+interface BestValuesFront {
+  objectives: string[];
+  n_solutions: number;
+  solutions: {
+    index: number;
+    objectives_signed: Record<string, number | null>;
+    objectives_abs: Record<string, number | null>;
+  }[];
+}
+
+/** Best value per objective across the returned front — the extreme Pareto
+ *  point for each objective. For a single solution these are just its values;
+ *  for a front each objective's optimum is taken independently (minimum SIGNED
+ *  value — direction already encoded), so the values may come from different
+ *  solutions, hence the per-card solution index. */
+function BestValues({ front }: { front: BestValuesFront }) {
   if (front.solutions.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">No solution returned.</p>
@@ -363,7 +382,7 @@ function BestValues({ front }: { front: OptimizeFront }) {
       )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {front.objectives.map((o) => {
-          let best: OptimizeFrontSolution | null = null;
+          let best: BestValuesFront["solutions"][number] | null = null;
           for (const sol of front.solutions) {
             const v = sol.objectives_signed[o];
             if (v == null) continue;
@@ -377,14 +396,21 @@ function BestValues({ front }: { front: OptimizeFront }) {
               className="flex flex-col gap-1 rounded-xl border border-border bg-card p-4"
             >
               <p className="text-xs text-muted-foreground">{o}</p>
-              <p className="text-2xl font-semibold tabular-nums text-foreground">
-                {fmtObjValue(o, best?.objectives_abs[o])}
-                {unit && (
-                  <span className="ml-1 text-sm font-normal text-muted-foreground">
-                    {unit}
-                  </span>
+              <div className="flex items-baseline justify-between gap-2">
+                <p className="text-2xl font-semibold tabular-nums text-foreground">
+                  {fmtObjValue(o, best?.objectives_abs[o])}
+                  {unit && (
+                    <span className="ml-1 text-sm font-normal text-muted-foreground">
+                      {unit}
+                    </span>
+                  )}
+                </p>
+                {best && front.solutions.length > 1 && (
+                  <p className="text-xs tabular-nums text-muted-foreground">
+                    #{best.index}
+                  </p>
                 )}
-              </p>
+              </div>
             </div>
           );
         })}
@@ -457,6 +483,9 @@ export default function OptimizePage() {
   // ── Analysis section (single uploaded/exported run) ──
   const [analysisResult, setAnalysisResult] = useState<PlaygroundResult | null>(null);
   const [analysisNonce, setAnalysisNonce] = useState(0);
+  // Front of the analysed run, handed over by the explorer once it loads — lets
+  // the extreme-point cards render without a second fetch.
+  const [analysisFront, setAnalysisFront] = useState<ParetoFront | null>(null);
   const [analyzeBusy, setAnalyzeBusy] = useState(false);
   const analysisRef = useRef<HTMLDivElement | null>(null);
 
@@ -895,11 +924,20 @@ export default function OptimizePage() {
 
   function loadAnalysis(r: PlaygroundResult) {
     setAnalysisResult(r);
+    // Drop the previous run's cards so they can't linger over a new upload
+    // while the explorer refetches.
+    setAnalysisFront(null);
     setAnalysisNonce((n) => n + 1);
     requestAnimationFrame(() =>
       analysisRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
     );
   }
+
+  // Stable identity: ScenarioExplorer keeps this in its front-fetch effect
+  // deps, so a new function each render would refetch in a loop.
+  const handleAnalysisFront = useCallback((f: ParetoFront) => {
+    setAnalysisFront(f);
+  }, []);
 
   // Load the just-finished run into the Analysis section without the
   // download→re-upload roundtrip. Same parse path as a manual upload.
@@ -1012,7 +1050,8 @@ export default function OptimizePage() {
 
         {/* ── Body: live progress while running, else the config grid ── */}
         {running ? (
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+          <div className="flex flex-col gap-6">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
             {runParams && (
               <div className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4 lg:w-72 lg:shrink-0">
                 <p className="text-sm font-medium text-foreground">
@@ -1069,10 +1108,16 @@ export default function OptimizePage() {
                 nGen={progress?.nGen ?? nGen}
                 objectives={liveObjectives}
                 history={progressHistory}
-                liveFront={liveFront}
                 isMOO={optType === "MOO"}
               />
             </div>
+            </div>
+            {/* Pareto front spans the full width, below the params + cards row */}
+            <LiveParetoFront
+              objectives={liveObjectives}
+              liveFront={liveFront}
+              isMOO={optType === "MOO"}
+            />
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
@@ -1807,10 +1852,12 @@ export default function OptimizePage() {
             </p>
           </div>
           <UploadResult onLoaded={loadAnalysis} />
+          {analysisFront && <BestValues front={analysisFront} />}
           {analysisResult && (
             <ScenarioExplorer
               key={analysisNonce}
               source={{ mode: "playground", result: analysisResult }}
+              onFrontLoaded={handleAnalysisFront}
             />
           )}
         </div>

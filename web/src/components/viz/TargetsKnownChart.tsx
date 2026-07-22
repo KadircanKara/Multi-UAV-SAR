@@ -15,7 +15,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { useChartColors } from "@/hooks/useChartColors";
+import { axisStyles, useChartColors } from "@/hooks/useChartColors";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -34,6 +34,7 @@ interface Props {
 
 export default function TargetsKnownChart({ rows }: Props) {
   const colors = useChartColors();
+  const ax = axisStyles(colors);
 
   if (!rows.length) return null;
 
@@ -79,22 +80,22 @@ export default function TargetsKnownChart({ rows }: Props) {
             <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} />
             <XAxis
               dataKey="step"
-              tick={{ fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis }}
+              tick={ax.tick}
               tickLine={false}
-              axisLine={{ stroke: colors.grid }}
+              axisLine={ax.axisLine}
               label={{
                 value: "STEP",
                 position: "insideBottom",
                 offset: -4,
-                style: { fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis },
+                style: ax.label,
               }}
             />
             <YAxis
               allowDecimals={false}
               domain={[0, totalTargets]}
-              tick={{ fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis }}
+              tick={ax.tick}
               tickLine={false}
-              axisLine={{ stroke: colors.grid }}
+              axisLine={ax.axisLine}
             />
             <RechartsTooltip
               contentStyle={{
@@ -103,7 +104,7 @@ export default function TargetsKnownChart({ rows }: Props) {
                 fontFamily: "var(--font-mono)",
                 fontSize: 11,
               }}
-              labelStyle={{ color: colors.axis }}
+              labelStyle={{ color: colors.foreground }}
             />
             <Legend
               verticalAlign="top"

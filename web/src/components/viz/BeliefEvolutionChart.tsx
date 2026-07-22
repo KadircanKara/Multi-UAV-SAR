@@ -20,7 +20,7 @@ import {
   ReferenceLine,
   ResponsiveContainer,
 } from "recharts";
-import { useChartColors } from "@/hooks/useChartColors";
+import { axisStyles, useChartColors } from "@/hooks/useChartColors";
 import {
   Select,
   SelectContent,
@@ -46,6 +46,7 @@ interface Props {
 
 export default function BeliefEvolutionChart({ rows }: Props) {
   const colors = useChartColors();
+  const ax = axisStyles(colors);
   // The user's pick, NOT the resolved cell: holding the pick means a later
   // compare run with a different target set falls back to its own first target
   // instead of plotting a cell that is no longer a target.
@@ -118,21 +119,21 @@ export default function BeliefEvolutionChart({ rows }: Props) {
             <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} />
             <XAxis
               dataKey="step"
-              tick={{ fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis }}
+              tick={ax.tick}
               tickLine={false}
-              axisLine={{ stroke: colors.grid }}
+              axisLine={ax.axisLine}
               label={{
                 value: "STEP",
                 position: "insideBottom",
                 offset: -4,
-                style: { fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis },
+                style: ax.label,
               }}
             />
             <YAxis
               domain={[0, 1]}
-              tick={{ fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis }}
+              tick={ax.tick}
               tickLine={false}
-              axisLine={{ stroke: colors.grid }}
+              axisLine={ax.axisLine}
               tickFormatter={(v: number) => v.toFixed(1)}
             />
             <RechartsTooltip
@@ -142,7 +143,7 @@ export default function BeliefEvolutionChart({ rows }: Props) {
                 fontFamily: "var(--font-mono)",
                 fontSize: 11,
               }}
-              labelStyle={{ color: colors.axis }}
+              labelStyle={{ color: colors.foreground }}
             />
             <Legend
               verticalAlign="top"

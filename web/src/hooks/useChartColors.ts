@@ -19,6 +19,8 @@ export interface ChartColors {
   series: string[];
   grid: string;
   axis: string;
+  /** --foreground — full-contrast text, for labels that must not look faded. */
+  foreground: string;
   tooltipBg: string;
   tooltipBorder: string;
   reference: string;
@@ -35,10 +37,43 @@ const FALLBACKS: ChartColors = {
   ],
   grid:          "hsl(214 32% 91%)",  // --border
   axis:          "hsl(215 16% 47%)",  // --muted-foreground
+  foreground:    "hsl(222 47% 11%)",  // --foreground
   tooltipBg:     "hsl(0 0% 100%)",    // --card
   tooltipBorder: "hsl(214 32% 91%)",  // --border
   reference:     "hsl(243 75% 59%)",  // --chart-1
 };
+
+/**
+ * Add an alpha channel to an `hsl(H S% L%)` token string → `hsl(H S% L% / a)`.
+ * The `${color}1a` hex-suffix trick only works on hex colors; on the hsl()
+ * strings this hook returns it produced invalid CSS (a black cursor fill in
+ * light mode, an invisible cursor stroke). Use this instead.
+ */
+export function alpha(hslColor: string, a: number): string {
+  return hslColor.replace(/\)\s*$/, ` / ${a})`);
+}
+
+/**
+ * Shared Recharts axis styling — bold ticks/labels on --foreground, axis lines
+ * on --muted-foreground. Spread into XAxis/YAxis props so every chart restyles
+ * from one place instead of eight hand-copied blocks.
+ */
+export function axisStyles(colors: ChartColors) {
+  return {
+    tick: {
+      fontFamily: "var(--font-mono)",
+      fontSize: 11,
+      fill: colors.foreground,
+    },
+    axisLine: { stroke: colors.axis },
+    label: {
+      fontFamily: "var(--font-mono)",
+      fontSize: 12,
+      fontWeight: 600,
+      fill: colors.foreground,
+    },
+  };
+}
 
 export function useChartColors(): ChartColors {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -59,9 +94,18 @@ export function useChartColors(): ChartColors {
       );
       const grid          = read("--border",           FALLBACKS.grid);
       const axis          = read("--muted-foreground",  FALLBACKS.axis);
+      const foreground    = read("--foreground",        FALLBACKS.foreground);
       const tooltipBg     = read("--card",              FALLBACKS.tooltipBg);
       const tooltipBorder = read("--border",            FALLBACKS.tooltipBorder);
-      return { series, grid, axis, tooltipBg, tooltipBorder, reference: series[0]! };
+      return {
+        series,
+        grid,
+        axis,
+        foreground,
+        tooltipBg,
+        tooltipBorder,
+        reference: series[0]!,
+      };
     }
 
     setColors(resolve());

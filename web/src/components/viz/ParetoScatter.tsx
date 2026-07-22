@@ -25,7 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useChartColors } from "@/hooks/useChartColors";
+import { alpha, axisStyles, useChartColors } from "@/hooks/useChartColors";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -80,6 +80,14 @@ interface TooltipPayload {
   };
 }
 
+// Percentage Connectivity is stored as a 0–1 fraction; the readout shows it as
+// a percentage (matching the optimizer cards, live progress, and the 3D hover).
+function fmtTooltipVal(k: string, v: unknown): string {
+  if (typeof v !== "number") return "—";
+  if (k === "Percentage Connectivity") return `${(v * 100).toFixed(1)}%`;
+  return v.toFixed(4);
+}
+
 function ScatterTooltip({ active, payload }: { active?: boolean; payload?: TooltipPayload[] }) {
   if (!active || !payload?.length) return null;
   const d = payload[0]?.payload;
@@ -90,7 +98,7 @@ function ScatterTooltip({ active, payload }: { active?: boolean; payload?: Toolt
       <p className="text-primary font-semibold mb-1">SOL #{d.index}</p>
       {Object.entries(d.objectives_abs).map(([k, v]) => (
         <p key={k} className="text-foreground tabular-nums">
-          {k}: {typeof v === "number" ? v.toFixed(4) : "—"}
+          {k}: {fmtTooltipVal(k, v)}
         </p>
       ))}
     </div>
@@ -101,6 +109,7 @@ function ScatterTooltip({ active, payload }: { active?: boolean; payload?: Toolt
 
 export default function ParetoScatter({ front, selectedIndex, onSelectIndex }: Props) {
   const colors = useChartColors();
+  const ax = axisStyles(colors);
   const objectives = front.objectives;
 
   const [xObj, setXObj] = useState<string>(objectives[0] ?? "");
@@ -188,11 +197,11 @@ export default function ParetoScatter({ front, selectedIndex, onSelectIndex }: P
                 value: xObj + (xIsMax ? " (max)" : ""),
                 position: "insideBottom",
                 offset: -2,
-                style: { fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis, textAnchor: "middle" },
+                style: { ...ax.label, textAnchor: "middle" },
               }}
-              tick={{ fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis }}
+              tick={ax.tick}
               tickLine={false}
-              axisLine={{ stroke: colors.grid }}
+              axisLine={ax.axisLine}
             />
             <YAxis
               dataKey="yVal"
@@ -205,16 +214,16 @@ export default function ParetoScatter({ front, selectedIndex, onSelectIndex }: P
                 angle: -90,
                 position: "insideLeft",
                 offset: 12,
-                style: { fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis, textAnchor: "middle" },
+                style: { ...ax.label, textAnchor: "middle" },
               }}
-              tick={{ fontFamily: "var(--font-mono)", fontSize: 10, fill: colors.axis }}
+              tick={ax.tick}
               tickLine={false}
-              axisLine={{ stroke: colors.grid }}
+              axisLine={ax.axisLine}
             />
             <ZAxis type="number" dataKey="size" range={[SIZE_DEFAULT, SIZE_SELECTED]} />
             <RechartsTooltip
               content={<ScatterTooltip />}
-              cursor={{ stroke: `${colors.reference}66` }}
+              cursor={{ stroke: alpha(colors.reference, 0.4) }}
             />
             <Scatter
               data={pointData}

@@ -43,6 +43,11 @@ const ParetoScatter = dynamic(
   { ssr: false, loading: () => <ChartSkeleton height="h-72" /> }
 );
 
+const ParetoScatter3D = dynamic(
+  () => import("@/components/viz/ParetoScatter3D"),
+  { ssr: false, loading: () => <ChartSkeleton height="h-96" /> }
+);
+
 const BeliefEvolutionChart = dynamic(
   () => import("@/components/viz/BeliefEvolutionChart"),
   { ssr: false, loading: () => <ChartSkeleton height="h-64" /> }
@@ -568,6 +573,33 @@ export default function ScenarioExplorer({
               </CardContent>
             </Card>
           </div>
+
+          {/* 3D view of the same front — only meaningful from 3 objectives up,
+              so 2-objective scenarios keep the 2D plot alone. */}
+          {front.result_kind !== "single" && front.objectives.length >= 3 && (
+            <Card className="mt-4">
+              <CardHeader>
+                <CardTitle
+                  className="text-xs font-semibold tracking-widest uppercase text-primary font-display"
+                  style={{ fontFamily: "var(--font-display)" }}
+                >
+                  PARETO FRONT · 3D
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ParetoScatter3D
+                  objectives={front.objectives}
+                  points={front.solutions.map((s) => ({
+                    index: s.index,
+                    values: s.objectives_abs,
+                  }))}
+                  polarities={front.polarities}
+                  selectedIndex={selectedIndex}
+                  onSelectIndex={handleSelectIndex}
+                />
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         {/* ── MERGING TAB ────────────────────────────────────────────── */}

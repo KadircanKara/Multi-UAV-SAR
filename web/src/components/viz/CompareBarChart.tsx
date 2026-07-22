@@ -18,7 +18,7 @@ import {
   Tooltip as RechartsTooltip,
   ResponsiveContainer,
 } from "recharts";
-import { useChartColors } from "@/hooks/useChartColors";
+import { alpha, axisStyles, useChartColors } from "@/hooks/useChartColors";
 import { cn } from "@/lib/utils";
 
 // ─── Palette: theme tokens first, then generated distinct hues ────────────────
@@ -94,6 +94,7 @@ export default function CompareBarChart({
   heightClass = "h-56",
 }: CompareBarChartProps) {
   const colors = useChartColors();
+  const ax = axisStyles(colors);
   const palette = buildPalette(colors.series, points.length);
 
   // Fit the y-axis to the value range (with padding) so differences read clearly.
@@ -129,31 +130,23 @@ export default function CompareBarChart({
             <XAxis
               dataKey="label"
               type="category"
-              tick={{
-                fontFamily: "var(--font-mono)",
-                fontSize: 10,
-                fill: colors.axis,
-              }}
+              tick={ax.tick}
               tickLine={false}
-              axisLine={{ stroke: colors.grid }}
+              axisLine={ax.axisLine}
             />
             <YAxis
               domain={yDomain ?? ["auto", "auto"]}
               tickFormatter={(v: number) =>
                 Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1)
               }
-              tick={{
-                fontFamily: "var(--font-mono)",
-                fontSize: 10,
-                fill: colors.axis,
-              }}
+              tick={ax.tick}
               tickLine={false}
-              axisLine={{ stroke: colors.grid }}
+              axisLine={ax.axisLine}
               width={60}
             />
             <RechartsTooltip
               content={<BarTooltip metric={metric} />}
-              cursor={{ fill: `${colors.reference}1a` }}
+              cursor={{ fill: alpha(colors.reference, 0.1) }}
             />
             <Bar dataKey="value" isAnimationActive={false}>
               {points.map((p, i) => (
