@@ -8,12 +8,6 @@ from app.rootpath import REPO_ROOT  # importing the module triggers its sys.path
 
 RESULTS_ROOT: str = os.path.join(REPO_ROOT, "Results")
 
-# CORS origins for the future Next.js dev server
-CORS_ORIGINS: list[str] = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
-
 
 def _int_env(name: str, default: int) -> int:
     """Read an int from the environment, falling back to a default."""
@@ -21,6 +15,26 @@ def _int_env(name: str, default: int) -> int:
     if raw is None or raw.strip() == "":
         return default
     return int(raw)
+
+
+def _csv_env(name: str, default: list[str]) -> list[str]:
+    """Read a comma-separated list from the environment, falling back to a default."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+# ── CORS origins ────────────────────────────────────────────────────────────
+# Defaults cover the local Next.js dev server; a deployed frontend origin must
+# be supplied via env, e.g. SAR_CORS_ORIGINS=https://sar.example.com.
+CORS_ORIGINS: list[str] = _csv_env(
+    "SAR_CORS_ORIGINS",
+    [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+)
 
 
 # ── Deploy-safety: per-run parameter caps ───────────────────────────────────
@@ -38,6 +52,14 @@ MAX_N_GEN: int = _int_env("SAR_MAX_N_GEN", 1000)
 # e.g. "10/minute", "100/hour". Override for a public deploy via
 # SAR_OPTIMIZE_RATE_LIMIT.
 OPTIMIZE_RATE_LIMIT: str = os.environ.get("SAR_OPTIMIZE_RATE_LIMIT", "30/minute")
+
+# Per-IP throttle on the sensing-replay family (POST /api/replay, /api/compare,
+# /api/playback, /api/comparison, /api/comparison/time). These run full sensing
+# simulations synchronously in the request handler, so they need their own
+# budget: lighter than an optimizer run (hence a higher default than
+# OPTIMIZE_RATE_LIMIT) but far too heavy to leave unthrottled. Override via
+# SAR_REPLAY_RATE_LIMIT.
+REPLAY_RATE_LIMIT: str = os.environ.get("SAR_REPLAY_RATE_LIMIT", "60/minute")
 
 # ── Deploy-safety: request body size cap ────────────────────────────────────
 # Upper bound on request body size (bytes), enforced via the Content-Length

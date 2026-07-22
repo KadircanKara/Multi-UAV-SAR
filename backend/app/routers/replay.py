@@ -4,8 +4,10 @@ POST /api/compare/{scenario}  — multi-config comparison table.
 """
 import app.rootpath  # must come before any root-module import
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
+from app import settings
+from app.ratelimit import limiter
 from app.schemas import ReplayRequest, CompareRequest
 from app.selector_service import _SelectorNotFound, StrategyUnavailableError
 from app.replay_service import run_replay, run_compare
@@ -23,7 +25,8 @@ def _unprocessable(detail: str) -> HTTPException:
 
 
 @router.post("/api/replay/{scenario}")
-def post_replay(scenario: str, body: ReplayRequest) -> dict:
+@limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
+def post_replay(request: Request, scenario: str, body: ReplayRequest) -> dict:
     """
     Run a single sensing replay for one solution of *scenario*.
 
@@ -47,7 +50,8 @@ def post_replay(scenario: str, body: ReplayRequest) -> dict:
 
 
 @router.post("/api/compare/{scenario}")
-def post_compare(scenario: str, body: CompareRequest) -> dict:
+@limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
+def post_compare(request: Request, scenario: str, body: CompareRequest) -> dict:
     """
     Run a sensing replay per config and return a comparison table.
 

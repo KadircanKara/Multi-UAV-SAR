@@ -118,6 +118,20 @@ Open **http://localhost:3000**. The frontend talks to the backend at `http://loc
 
 > The pre-computed mission results live under `Results/`. The Optimizer page lets you generate new ones; saved runs become browsable in the Mission Browser.
 
+### Production notes
+
+- **Run exactly ONE backend worker.** Optimizer job state (and the rate limiter) is per-process; with `--workers N` a run started in one worker 404s when polled from another. `uvicorn` defaults to one worker — never add `--workers`, and don't use `--reload` in production (it kills in-flight optimizer runs on any file change).
+- **Behind a reverse proxy / load balancer**, restore real client IPs or the per-IP rate limit degrades to one shared bucket (and naive `X-Forwarded-For` trust makes it spoofable):
+
+  ```bash
+  PYTHONPATH="$PWD/backend:$PWD" uvicorn app.main:app --host 0.0.0.0 --port 8000 \
+      --proxy-headers --forwarded-allow-ips=<proxy IP/CIDR>
+  ```
+
+- **CORS**: set `SAR_CORS_ORIGINS` to the deployed frontend origin (comma-separated list), e.g. `SAR_CORS_ORIGINS=https://sar.example.com`. The default only allows the localhost dev server.
+- **Frontend API base**: `NEXT_PUBLIC_API_BASE` is inlined at `next build` time — set it in the build environment, not just at runtime.
+- **Tighten the compute caps** for a public deploy via `SAR_MAX_DRONES`, `SAR_MAX_GRID_SIZE`, `SAR_MAX_POP_SIZE`, `SAR_MAX_N_GEN`, and the throttles `SAR_OPTIMIZE_RATE_LIMIT` / `SAR_REPLAY_RATE_LIMIT` (see `backend/app/settings.py`).
+
 ---
 
 ## Project layout

@@ -1,8 +1,10 @@
 """POST /api/comparison — compare scenarios across ALL objectives."""
 import app.rootpath  # must come before any root-module import
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
+from app import settings
+from app.ratelimit import limiter
 from app.schemas import (
     ComparisonRequest,
     ComparisonResponse,
@@ -16,7 +18,8 @@ router = APIRouter()
 
 
 @router.post("/api/comparison", response_model=ComparisonResponse)
-def post_comparison(body: ComparisonRequest) -> dict:
+@limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
+def post_comparison(request: Request, body: ComparisonRequest) -> dict:
     """
     Compare the given scenarios across every objective — including objectives a
     model did not optimise (computed from the solution objects via
@@ -39,7 +42,8 @@ def post_comparison(body: ComparisonRequest) -> dict:
 
 
 @router.post("/api/comparison/time", response_model=TimeComparisonResponse)
-def post_comparison_time(body: TimeComparisonRequest) -> dict:
+@limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
+def post_comparison_time(request: Request, body: TimeComparisonRequest) -> dict:
     """
     Compare sensing-replay time metrics across scenarios under one shared
     sensing config. For each scenario a single solution is chosen via the given

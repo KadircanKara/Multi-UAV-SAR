@@ -44,7 +44,8 @@ class _ReplayReq(BaseModel):
 class _CompareReq(BaseModel):
     result: PlaygroundResult
     index: int
-    configs: list[SensingConfigModel]
+    # Same cost-multiplier cap as CompareRequest.configs (one replay per entry).
+    configs: list[SensingConfigModel] = Field(..., min_length=1, max_length=8)
     labels: Optional[list[str]] = None
 
 class _PlaybackReq(BaseModel):

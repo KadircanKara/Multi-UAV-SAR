@@ -27,8 +27,9 @@ app = FastAPI(
     title="Multi-UAV-SAR API",
     default_response_class=ORJSONResponse,
 )
-# Per-IP rate limiting. Routes opt in via @limiter.limit(...); the expensive
-# optimizer-start endpoint is throttled in routers/optimize.py.
+# Per-IP rate limiting. Routes opt in via @limiter.limit(...): the optimizer
+# start (routers/optimize.py), the sensing-replay family (routers/replay.py,
+# playback.py, comparison.py), and the playground (routers/playground.py).
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -61,7 +62,7 @@ async def _validation_exception_handler(request: Request, exc: RequestValidation
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

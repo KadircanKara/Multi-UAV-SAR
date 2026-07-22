@@ -21,6 +21,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app  # noqa: E402  (imports after sys.path setup intentional)
+from app.ratelimit import limiter  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -28,3 +29,13 @@ def client() -> TestClient:
     """FastAPI TestClient for the whole test session."""
     with TestClient(app) as c:
         yield c
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Empty the shared per-IP buckets before each test. All tests hit the
+    limiter from the same client address, so without this, suites that hammer
+    a throttled endpoint (replay/playback/compare/comparison) would trip 429s
+    across test boundaries."""
+    limiter.reset()
+    yield

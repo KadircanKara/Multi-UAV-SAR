@@ -6,8 +6,10 @@ targets-known curve — all aligned to a single step axis.
 """
 import app.rootpath  # must come before any root-module import
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
+from app import settings
+from app.ratelimit import limiter
 from app.schemas import PlaybackRequest
 from app.selector_service import _SelectorNotFound, StrategyUnavailableError
 from app.playback_service import build_playback
@@ -25,7 +27,8 @@ def _unprocessable(detail: str) -> HTTPException:
 
 
 @router.post("/api/playback/{scenario}")
-def post_playback(scenario: str, body: PlaybackRequest) -> dict:
+@limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
+def post_playback(request: Request, scenario: str, body: PlaybackRequest) -> dict:
     """
     Build the animation playback payload for one solution of *scenario*.
 
