@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { axisStyles, useChartColors } from "@/hooks/useChartColors";
+import { isPercentObjective, percentString, percentTick } from "@/lib/objective-format";
 import ParetoScatter3D from "@/components/viz/ParetoScatter3D";
 
 /** One sampled generation: the optimal (absolute) value of each objective. */
@@ -47,7 +48,7 @@ const POLARITY: Record<string, number> = {
 
 function fmtVal(obj: string, v: number | undefined): string {
   if (v == null || Number.isNaN(v)) return "—";
-  if (obj === "Percentage Connectivity") return `${(v * 100).toFixed(1)}%`;
+  if (isPercentObjective(obj)) return percentString(v);
   if (Math.abs(v) >= 100) return Math.round(v).toLocaleString();
   return v.toFixed(2);
 }
@@ -260,6 +261,7 @@ function ParetoLive({
               name={xObj}
               domain={["auto", "auto"]}
               tick={ax.tick}
+              tickFormatter={isPercentObjective(xObj) ? percentTick : undefined}
               axisLine={ax.axisLine}
               tickLine={ax.axisLine}
               label={{
@@ -276,6 +278,7 @@ function ParetoLive({
               domain={["auto", "auto"]}
               width={72}
               tick={ax.tick}
+              tickFormatter={isPercentObjective(yObj) ? percentTick : undefined}
               axisLine={ax.axisLine}
               tickLine={ax.axisLine}
               label={{

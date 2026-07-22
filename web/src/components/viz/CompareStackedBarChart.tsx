@@ -19,6 +19,7 @@ import {
 } from "recharts";
 import { alpha, axisStyles, useChartColors } from "@/hooks/useChartColors";
 import { cn } from "@/lib/utils";
+import { isPercentObjective, percentString, percentTick } from "@/lib/objective-format";
 import type { StackedRow } from "@/components/compare/buildStackedBars";
 
 // Palette: theme tokens first, then golden-angle hues (mirrors ParameterEffectChart).
@@ -52,12 +53,15 @@ function StackedTooltip({
   active,
   payload,
   label,
+  metric,
 }: {
   active?: boolean;
   payload?: TooltipEntry[];
   label?: string;
+  metric: string;
 }) {
   if (!active || !payload?.length) return null;
+  const pct = isPercentObjective(metric);
   return (
     <div className="rounded border border-border bg-popover px-3 py-2 text-xs shadow-lg">
       <p className="mb-1 font-semibold text-primary">{label}</p>
@@ -68,7 +72,12 @@ function StackedTooltip({
             style={{ backgroundColor: e.color }}
             aria-hidden="true"
           />
-          {e.name}: {e.value != null ? Number(e.value).toFixed(4) : "—"}
+          {e.name}:{" "}
+          {e.value == null
+            ? "—"
+            : pct
+              ? percentString(Number(e.value))
+              : Number(e.value).toFixed(4)}
         </p>
       ))}
     </div>
@@ -144,7 +153,11 @@ export default function CompareStackedBarChart({
             />
             <YAxis
               tickFormatter={(v: number) =>
-                Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1)
+                isPercentObjective(metric)
+                  ? percentTick(v)
+                  : Math.abs(v) >= 100
+                    ? v.toFixed(0)
+                    : v.toFixed(1)
               }
               tick={ax.tick}
               tickLine={false}
@@ -152,7 +165,7 @@ export default function CompareStackedBarChart({
               width={56}
             />
             <RechartsTooltip
-              content={<StackedTooltip />}
+              content={<StackedTooltip metric={metric} />}
               cursor={{ fill: alpha(colors.reference, 0.1) }}
             />
             {models.map((m, i) => (

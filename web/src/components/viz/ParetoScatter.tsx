@@ -26,6 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { alpha, axisStyles, useChartColors } from "@/hooks/useChartColors";
+import { isPercentObjective, percentString, percentTick } from "@/lib/objective-format";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -45,7 +46,13 @@ function SingleObjectiveReadout({ front }: { front: ParetoFront }) {
   const sol = front.solutions[0];
   if (!sol) return null;
   const objName = front.objectives[0] ?? "objective";
-  const val = sol.objectives_abs[objName];
+  const rawVal = sol.objectives_abs[objName];
+  const val =
+    rawVal != null && isPercentObjective(objName)
+      ? percentString(rawVal)
+      : rawVal != null
+        ? rawVal.toFixed(4)
+        : "—";
   const isMax = front.polarities[objName] === -1;
 
   return (
@@ -60,7 +67,7 @@ function SingleObjectiveReadout({ front }: { front: ParetoFront }) {
         )}
       </p>
       <p className="font-mono text-2xl tabular-nums text-foreground">
-        {val != null ? val.toFixed(4) : "—"}
+        {val}
       </p>
       <p className="text-xs text-muted-foreground">
         Solution index {sol.index}
@@ -84,7 +91,7 @@ interface TooltipPayload {
 // a percentage (matching the optimizer cards, live progress, and the 3D hover).
 function fmtTooltipVal(k: string, v: unknown): string {
   if (typeof v !== "number") return "—";
-  if (k === "Percentage Connectivity") return `${(v * 100).toFixed(1)}%`;
+  if (isPercentObjective(k)) return percentString(v);
   return v.toFixed(4);
 }
 
@@ -193,6 +200,7 @@ export default function ParetoScatter({ front, selectedIndex, onSelectIndex }: P
               name={xObj}
               height={52}
               tickMargin={8}
+              tickFormatter={isPercentObjective(xObj) ? percentTick : undefined}
               label={{
                 value: xObj + (xIsMax ? " (max)" : ""),
                 position: "insideBottom",
@@ -209,6 +217,7 @@ export default function ParetoScatter({ front, selectedIndex, onSelectIndex }: P
               name={yObj}
               width={72}
               tickMargin={8}
+              tickFormatter={isPercentObjective(yObj) ? percentTick : undefined}
               label={{
                 value: yObj + (yIsMax ? " (max)" : ""),
                 angle: -90,

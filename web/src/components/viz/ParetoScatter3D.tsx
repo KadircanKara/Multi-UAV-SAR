@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/select";
 import { useChartColors } from "@/hooks/useChartColors";
 import { useCanvasDPR } from "@/hooks/useCanvasDPR";
+import { isPercentObjective, percentString, percentTick } from "@/lib/objective-format";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -81,7 +82,7 @@ function fmt(value: number): string {
 // show it as a percentage (matching the optimizer cards and live progress).
 function fmtReadout(obj: string, value: number): string {
   if (!Number.isFinite(value)) return "—";
-  if (obj === "Percentage Connectivity") return `${(value * 100).toFixed(1)}%`;
+  if (isPercentObjective(obj)) return percentString(value);
   return fmt(value);
 }
 
@@ -134,15 +135,20 @@ function extentOf(points: Point3D[], obj: string): Extent {
     if (v > max) max = v;
   }
   if (!Number.isFinite(min) || !Number.isFinite(max)) return { min: 0, max: 1 };
+  let lo = min;
+  let hi = max;
   // A degenerate axis (one solution, or every solution identical) would divide
   // by zero. Pad it relative to the value so the ticks stay in a sane range —
   // an absolute pad would print negative ticks on a 0–1 objective and identical
   // ones on a four-digit objective.
   if (min === max) {
     const pad = Math.abs(min) > 0 ? Math.abs(min) * 0.05 : 0.5;
-    return { min: min - pad, max: max + pad };
+    lo = min - pad;
+    hi = max + pad;
   }
-  return { min, max };
+  // A percentage objective caps at 100% — keep the degenerate pad inside [0, 1].
+  if (isPercentObjective(obj)) return { min: Math.max(0, lo), max: Math.min(1, hi) };
+  return { min: lo, max: hi };
 }
 
 function norm(v: number, e: Extent): number {
@@ -310,7 +316,7 @@ export default function ParetoScatter3D({
         const ty = p.sy + uy;
         if (collides(tx, ty)) continue;
         placed.push({ x: tx, y: ty });
-        ctx.fillText(fmt(value), tx, ty);
+        ctx.fillText(isPercentObjective(obj) ? percentTick(value) : fmt(value), tx, ty);
       }
 
       // Axis name, further out along the same outward normal. Anchor it away

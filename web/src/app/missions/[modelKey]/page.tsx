@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { commLabel } from "@/lib/comm";
+import { isPercentObjective, percentString } from "@/lib/objective-format";
 import type {
   ParameterEffectChartProps,
   EffectPoint,
@@ -160,8 +161,9 @@ function findScenario(
 
 // ─── Format objective value ───────────────────────────────────────────────────
 
-function fmtObj(v: number | null | undefined): string {
+function fmtObj(obj: string, v: number | null | undefined): string {
   if (v == null) return "—";
+  if (isPercentObjective(obj)) return percentString(v);
   return v.toFixed(2);
 }
 
@@ -1208,7 +1210,7 @@ export default function ModelPage() {
                         >
                           {tbvMeaningless(obj, s.n_visits)
                             ? "—"
-                            : fmtObj(s.objective_stats[obj]?.best)}
+                            : fmtObj(obj, s.objective_stats[obj]?.best)}
                         </TableCell>
                       ))}
                     </TableRow>

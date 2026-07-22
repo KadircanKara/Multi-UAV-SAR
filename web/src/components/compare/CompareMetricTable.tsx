@@ -18,6 +18,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { isPercentObjective, percentString } from "@/lib/objective-format";
 import type {
   CompareMetric,
   CompareEntity,
@@ -111,7 +112,11 @@ export default function CompareMetricTable({
                         : "text-foreground"
                     )}
                   >
-                    {v == null ? "—" : v.toFixed(2)}
+                    {v == null
+                      ? "—"
+                      : isPercentObjective(m.name)
+                        ? percentString(v)
+                        : v.toFixed(2)}
                     {notOptimized && v != null && (
                       <sup
                         className="ml-0.5 text-muted-foreground/60"

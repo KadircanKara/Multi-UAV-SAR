@@ -21,6 +21,12 @@ import {
 } from "recharts";
 import { alpha, axisStyles, useChartColors } from "@/hooks/useChartColors";
 import { cn } from "@/lib/utils";
+import {
+  clampObjectiveDomain,
+  isPercentObjective,
+  percentString,
+  percentTick,
+} from "@/lib/objective-format";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -103,15 +109,25 @@ function EffectTooltip({
           style={{ color: entry.color }}
         >
           {(singleSeriesKey ? objective : entry.name) ?? objective}:{" "}
-          {entry.value != null ? Number(entry.value).toFixed(4) : "—"}
+          {entry.value == null
+            ? "—"
+            : isPercentObjective(objective)
+              ? percentString(Number(entry.value))
+              : Number(entry.value).toFixed(4)}
         </p>
       ))}
       {singleSeriesKey &&
         row[`min_${singleSeriesKey}`] != null &&
         row[`max_${singleSeriesKey}`] != null && (
           <p className="text-muted-foreground tabular-nums">
-            range: {Number(row[`min_${singleSeriesKey}`]).toFixed(4)} –{" "}
-            {Number(row[`max_${singleSeriesKey}`]).toFixed(4)}
+            range:{" "}
+            {isPercentObjective(objective)
+              ? percentString(Number(row[`min_${singleSeriesKey}`]))
+              : Number(row[`min_${singleSeriesKey}`]).toFixed(4)}{" "}
+            –{" "}
+            {isPercentObjective(objective)
+              ? percentString(Number(row[`max_${singleSeriesKey}`]))
+              : Number(row[`max_${singleSeriesKey}`]).toFixed(4)}
           </p>
         )}
     </div>
@@ -172,7 +188,8 @@ export default function ParameterEffectChart({
     const hi = Math.max(...bests);
     const span = hi - lo;
     const pad = span > 0 ? span * 0.12 : Math.max(Math.abs(hi) * 0.1, 1);
-    yDomain = [lo - pad, hi + pad];
+    // Percentage Connectivity caps at 100% — never let padding overshoot it.
+    yDomain = clampObjectiveDomain(objective, [lo - pad, hi + pad]);
   }
 
   const betterHint = polarity === -1 ? "higher is better" : "lower is better";
@@ -228,7 +245,11 @@ export default function ParameterEffectChart({
             <YAxis
               domain={yDomain ?? ["auto", "auto"]}
               tickFormatter={(v: number) =>
-                Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1)
+                isPercentObjective(objective)
+                  ? percentTick(v)
+                  : Math.abs(v) >= 100
+                    ? v.toFixed(0)
+                    : v.toFixed(1)
               }
               tick={ax.tick}
               tickLine={false}

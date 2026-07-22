@@ -20,6 +20,12 @@ import {
 } from "recharts";
 import { alpha, axisStyles, useChartColors } from "@/hooks/useChartColors";
 import { cn } from "@/lib/utils";
+import {
+  clampObjectiveDomain,
+  isPercentObjective,
+  percentString,
+  percentTick,
+} from "@/lib/objective-format";
 
 // ─── Palette: theme tokens first, then generated distinct hues ────────────────
 // (copied from ParameterEffectChart's buildPalette golden-angle helper)
@@ -79,7 +85,12 @@ function BarTooltip({
     <div className="rounded border border-border bg-popover px-3 py-2 font-mono text-xs shadow-lg">
       <p className="text-primary font-semibold mb-1">{label}</p>
       <p className="tabular-nums text-foreground">
-        {metric}: {value != null ? Number(value).toFixed(4) : "—"}
+        {metric}:{" "}
+        {value == null
+          ? "—"
+          : isPercentObjective(metric)
+            ? percentString(Number(value))
+            : Number(value).toFixed(4)}
       </p>
     </div>
   );
@@ -107,7 +118,8 @@ export default function CompareBarChart({
     const hi = Math.max(...values);
     const span = hi - lo;
     const pad = span > 0 ? span * 0.12 : Math.max(Math.abs(hi) * 0.1, 1);
-    yDomain = [lo - pad, hi + pad];
+    // Percentage Connectivity caps at 100% — never let padding overshoot it.
+    yDomain = clampObjectiveDomain(metric, [lo - pad, hi + pad]);
   }
 
   const betterHint = polarity === -1 ? "higher is better" : "lower is better";
@@ -137,7 +149,11 @@ export default function CompareBarChart({
             <YAxis
               domain={yDomain ?? ["auto", "auto"]}
               tickFormatter={(v: number) =>
-                Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1)
+                isPercentObjective(metric)
+                  ? percentTick(v)
+                  : Math.abs(v) >= 100
+                    ? v.toFixed(0)
+                    : v.toFixed(1)
               }
               tick={ax.tick}
               tickLine={false}

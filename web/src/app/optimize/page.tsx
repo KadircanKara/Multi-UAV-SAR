@@ -31,6 +31,7 @@ import type {
   ScenarioConfig,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { isPercentObjective, percentString } from "@/lib/objective-format";
 import type { ProgressPoint } from "@/components/optimize/LiveProgress";
 import { UploadResult, parseRunJson } from "@/components/playground/UploadResult";
 import ScenarioExplorer from "@/components/explore/ScenarioExplorer";
@@ -93,6 +94,14 @@ const OBJECTIVES: ObjectiveSpec[] = [
   { name: "Mean Disconnected Time", polarity: 1, unit: "steps" },
   { name: "Max Mean TBV", polarity: 1, unit: "s", tbv: true },
 ];
+
+/** Max Mean TBV is the only objective undefined (0) at n_visits = 1. */
+const isTbvObjective = (name: string): boolean =>
+  Boolean(OBJECTIVES.find((o) => o.name === name)?.tbv);
+
+/** The warning shown when Max Mean TBV is unavailable (n_visits = 1). */
+const TBV_DISABLED_HINT =
+  "Max Mean TBV needs n_visits ≥ 2 (it is 0 at n_visits = 1). Increase n_visits in the scenario.";
 
 const SOO_METHODS = ["GA", "WS"] as const;
 const MOO_METHODS = ["NSGA2", "NSGA3", "MOEAD"] as const;
@@ -289,7 +298,7 @@ function sumWeights(weights: Record<string, number>, objs: string[]): number {
  *  agree with the live-progress view (which already scales ×100). */
 function fmtObjValue(obj: string, n: number | null | undefined): string {
   if (n == null || Number.isNaN(n)) return "—";
-  if (obj === "Percentage Connectivity") return `${(n * 100).toFixed(1)}%`;
+  if (isPercentObjective(obj)) return percentString(n);
   return n.toFixed(2);
 }
 
@@ -330,7 +339,10 @@ function ObjectiveChip({
         selected
           ? "border-chart-1/40 bg-chart-1/10 text-chart-1"
           : "border-border bg-card text-muted-foreground hover:border-foreground/20 hover:text-foreground",
-        disabled && "cursor-not-allowed opacity-40 hover:border-border hover:text-muted-foreground"
+        // pointer-events-none lets the Tooltip wrapper span catch hover even
+        // though the button itself is disabled.
+        disabled &&
+          "pointer-events-none cursor-not-allowed opacity-40 hover:border-border hover:text-muted-foreground"
       )}
     >
       {spec.name}
@@ -338,14 +350,6 @@ function ObjectiveChip({
         {spec.polarity === -1 ? "↑" : "↓"}
       </span>
     </button>
-  );
-}
-
-function InlineWarning({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
-      {children}
-    </p>
   );
 }
 
@@ -573,6 +577,9 @@ export default function OptimizePage() {
 
   // ── Objective toggle (respects single vs multi select). ──
   function toggleObjective(name: string) {
+    // Defensive: the disabled chip already blocks this, but never let Max Mean
+    // TBV be selected while degenerate (n_visits = 1).
+    if (isTbvObjective(name) && tbvDisabled) return;
     const single = isSingleSelect(optType, method);
     if (single) {
       setSelected([name]);
@@ -610,11 +617,19 @@ export default function OptimizePage() {
     ? selected.length === 1
     : selected.length >= 2;
 
-  const tbvSelected = selected.some(
-    (n) => OBJECTIVES.find((o) => o.name === n)?.tbv
-  );
-  const tbvWarning =
-    tbvSelected && scenario != null && scenario.n_visits < 2;
+  // Max Mean TBV is identically 0 at n_visits = 1, so it's not a meaningful
+  // objective there: the chip is disabled and, if it was already selected,
+  // dropped from the selection by the effect below.
+  const tbvDisabled = scenario != null && scenario.n_visits < 2;
+
+  useEffect(() => {
+    if (!tbvDisabled || !selected.some(isTbvObjective)) return;
+    const next = OBJECTIVES.map((o) => o.name).filter(
+      (n) => selected.includes(n) && !isTbvObjective(n)
+    );
+    setSelected(next);
+    if (needsWeights(optType, method)) setWeights(equalWeights(next));
+  }, [tbvDisabled, selected, optType, method]);
 
   // A cleared number input coerces to 0/NaN; gate the run so we never POST an
   // invalid constraint (max_mission_time must be > 0; min_connectivity ∈ [0,1]).
@@ -1201,16 +1216,39 @@ export default function OptimizePage() {
               <div className="flex flex-wrap gap-2">
                 {OBJECTIVES.map((spec) => {
                   const sel = selected.includes(spec.name);
-                  // In single-select, clicking another chip swaps the selection,
-                  // so chips stay clickable; never hard-disabled here.
+                  // Max Mean TBV is degenerate (0) at n_visits = 1 — disable the
+                  // chip there and explain why on hover. (The effect above also
+                  // drops it from the selection.) Other chips are never disabled.
+                  const chipDisabled = Boolean(spec.tbv) && tbvDisabled;
+                  if (!chipDisabled) {
+                    return (
+                      <ObjectiveChip
+                        key={spec.name}
+                        spec={spec}
+                        selected={sel}
+                        disabled={false}
+                        onToggle={() => toggleObjective(spec.name)}
+                      />
+                    );
+                  }
                   return (
-                    <ObjectiveChip
-                      key={spec.name}
-                      spec={spec}
-                      selected={sel}
-                      disabled={false}
-                      onToggle={() => toggleObjective(spec.name)}
-                    />
+                    <Tooltip key={spec.name}>
+                      <TooltipTrigger asChild>
+                        {/* Span wrapper: the disabled button can't emit hover
+                            events, so the span is the tooltip trigger. */}
+                        <span className="inline-flex cursor-not-allowed" tabIndex={0}>
+                          <ObjectiveChip
+                            spec={spec}
+                            selected={sel}
+                            disabled
+                            onToggle={() => toggleObjective(spec.name)}
+                          />
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs">
+                        {TBV_DISABLED_HINT}
+                      </TooltipContent>
+                    </Tooltip>
                   );
                 })}
               </div>
@@ -1221,13 +1259,6 @@ export default function OptimizePage() {
                     ? "Select exactly one objective."
                     : "Select at least two objectives."}
                 </p>
-              )}
-
-              {tbvWarning && (
-                <InlineWarning>
-                  Max Mean TBV needs n_visits ≥ 2 (it is 0 at n_visits = 1).
-                  Increase n_visits in the scenario below.
-                </InlineWarning>
               )}
 
               {/* Weighted-sum weights */}

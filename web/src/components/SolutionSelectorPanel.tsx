@@ -10,6 +10,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import type { ParetoFront, SolutionDetail } from "@/lib/types";
 import { sourceSelect, type ExplorerSource } from "@/lib/source";
+import { isPercentObjective, percentString } from "@/lib/objective-format";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -42,7 +43,11 @@ function DetailCard({ detail }: { detail: SolutionDetail }) {
           <React.Fragment key={k}>
             <dt className="text-muted-foreground/70 truncate">{k}</dt>
             <dd className="text-foreground">
-              {typeof v === "number" ? v.toFixed(4) : "—"}
+              {typeof v !== "number"
+                ? "—"
+                : isPercentObjective(k)
+                  ? percentString(v)
+                  : v.toFixed(4)}
             </dd>
           </React.Fragment>
         ))}
