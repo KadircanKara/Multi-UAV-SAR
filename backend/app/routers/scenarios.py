@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from PathInfo import PathInfo, default_scenario
 
 from app import models_registry
+from app.model_aliases import to_display
 from app.schemas import (
     ScenarioConfig,
     ScenarioDerived,
@@ -53,6 +54,7 @@ def validate_scenario(req: ScenarioValidateRequest) -> ScenarioValidateResponse:
                 detail=f"model_key '{req.model_key}' is not a known model",
             )
         info.model = model
-        scenario_str = str(info)
+        # str(info) embeds the storage Exp (TCDT); present the display form.
+        scenario_str = to_display(str(info))
 
     return ScenarioValidateResponse(valid=True, derived=derived, scenario_str=scenario_str)

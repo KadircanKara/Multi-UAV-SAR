@@ -7,6 +7,7 @@ import app.rootpath  # must come before any root-module import
 from fastapi import APIRouter, HTTPException
 
 from app.library_service import get_scenario, list_scenarios
+from app.model_aliases import to_display
 from app.optimizer_service import read_run_config
 from app.schemas import ScenarioDetail, ScenarioSummary
 
@@ -38,4 +39,11 @@ def get_library_scenario_config(scenario: str) -> dict:
     Returned verbatim (the sidecar's own shape) — the frontend types it as RunConfig;
     no strict response_model so the nested record isn't duplicated as a Pydantic tree."""
     cfg = read_run_config(scenario)
-    return cfg if cfg is not None else {"recorded": False}
+    if cfg is None:
+        return {"recorded": False}
+    # Sidecars store the storage identifiers (…TCDT…); present the display form.
+    cfg = dict(cfg)
+    for key in ("scenario_name", "model_key"):
+        if isinstance(cfg.get(key), str):
+            cfg[key] = to_display(cfg[key])
+    return cfg

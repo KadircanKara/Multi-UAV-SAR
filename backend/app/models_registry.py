@@ -22,6 +22,7 @@ from typing import Optional
 
 import app.rootpath  # noqa: F401
 from app import settings
+from app.model_aliases import to_storage
 from PathOptimizationModel import AVAILABLE_MODELS
 
 _lock = threading.Lock()
@@ -78,13 +79,18 @@ def custom_models() -> dict:
 
 
 def get_model(key: str) -> Optional[dict]:
-    """Return the model dict for *key* (preset first, then custom), or None."""
+    """Return the model dict for *key* (preset first, then custom), or None.
+
+    Accepts the display alias for TBV (``TCDV`` → ``TCDT``) so a display key
+    from a route/body still resolves the seeded model."""
+    key = to_storage(key)
     if key in AVAILABLE_MODELS:
         return AVAILABLE_MODELS[key]
     return _load().get(key)
 
 
 def known(key: str) -> bool:
+    key = to_storage(key)
     return key in AVAILABLE_MODELS or key in _load()
 
 

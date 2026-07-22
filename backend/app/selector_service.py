@@ -20,6 +20,7 @@ import pandas as pd
 import app.rootpath  # side-effect: inserts repo root into sys.path
 from app import settings, models_registry
 from app.library_service import _is_safe_scenario_name, resolve_model_key
+from app.model_aliases import to_display, to_storage
 
 from PathOptimizationModel import AVAILABLE_MODELS
 from PathFuncDict import model_metric_info
@@ -79,8 +80,10 @@ def _resolve_model_key(scenario: str, model_key: Optional[str]) -> str:
     """
     Resolve *model_key* (or auto-derive it) and validate it exists.
 
-    Raises _SelectorNotFound for unknown keys.
+    Raises _SelectorNotFound for unknown keys. Returns the STORAGE key.
     """
+    scenario = to_storage(scenario)
+    model_key = to_storage(model_key)
     if model_key:
         if not models_registry.known(model_key):
             raise _SelectorNotFound(f"Unknown model_key {model_key!r}")
@@ -137,6 +140,10 @@ def get_selector(scenario: str, model_key: Optional[str] = None) -> SolutionSele
     Raises:
         _SelectorNotFound — scenario name unsafe, unknown model, or missing pickles.
     """
+    # Normalize display aliases (…TCDV…) to storage (…TCDT…) so file lookups and
+    # the selector cache key both use the real on-disk names.
+    scenario = to_storage(scenario)
+    model_key = to_storage(model_key)
     if not _is_safe_scenario_name(scenario):
         raise _SelectorNotFound(f"Unsafe or invalid scenario name: {scenario!r}")
     resolved = _resolve_model_key(scenario, model_key)
@@ -268,10 +275,12 @@ def build_front(scenario: str, model_key: Optional[str] = None) -> dict:
     Raises _SelectorNotFound on bad scenario / missing pickles (→ 404).
     """
     selector = get_selector(scenario, model_key)
-    resolved = _resolve_model_key(scenario, model_key)
+    resolved = _resolve_model_key(scenario, model_key)  # storage key
     out = build_front_from_selector(selector)
-    out["scenario"] = scenario
-    out["model_key"] = resolved
+    # Emit the display form (…TCDV…) so the explorer badge / title show the
+    # TBV "V" code. to_display yields the display form for storage OR display input.
+    out["scenario"] = to_display(scenario)
+    out["model_key"] = to_display(resolved)
     return out
 
 

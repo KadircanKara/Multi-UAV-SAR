@@ -18,6 +18,7 @@ from typing import Optional
 
 import app.rootpath  # noqa: F401  (repo root on sys.path)
 from app import settings
+from app.model_aliases import to_display, to_storage
 
 from PathOptimizationModel import (
     AVAILABLE_MODELS,
@@ -170,6 +171,8 @@ def _exists(scenario_name: str) -> bool:
 
 def read_run_config(scenario_name: str) -> Optional[dict]:
     """Return the persisted RunConfig sidecar for a mission, or None if absent."""
+    # Display (…TCDV…) names from the API must hit the real …TCDT… sidecars.
+    scenario_name = to_storage(scenario_name)
     path = os.path.join(settings.RESULTS_ROOT, "Metadata", f"{scenario_name}.json")
     # Defence-in-depth: never read outside RESULTS_ROOT (mirrors library_service).
     root = os.path.abspath(settings.RESULTS_ROOT) + os.sep
@@ -195,8 +198,8 @@ def check_config(
         max_mean_tbv)
     scenario_name = scenario_name_for(model_dict, scenario_dict)
     return {
-        "scenario_name": scenario_name,
-        "model_key": model_key,
+        "scenario_name": to_display(scenario_name),
+        "model_key": to_display(model_key),
         "exists": _exists(scenario_name),
         "seeded": model_key in AVAILABLE_MODELS and _exists(scenario_name),
     }
@@ -335,7 +338,7 @@ def serialize_finished_run(run_id: str) -> dict:
             run_config = json.load(fh)
 
     return serialize_run(solutions, F_df, job["model_dict"], run_config,
-                          model_key=job["model_key"])
+                          model_key=to_display(job["model_key"]))
 
 
 def start_run(
@@ -382,10 +385,22 @@ def start_run(
             "model_dict": model_dict,
         }
     return {
-        "run_id": run_id, "scenario_name": scenario_name,
-        "model_key": model_key, "exists": _exists(scenario_name),
+        "run_id": run_id, "scenario_name": to_display(scenario_name),
+        "model_key": to_display(model_key), "exists": _exists(scenario_name),
         "seeded": model_key in AVAILABLE_MODELS and _exists(scenario_name),
     }
+
+
+def _displayify_done(result: dict) -> dict:
+    """Rewrite a done payload's front identifiers to the display form (TCDT→TCDV).
+    The worker/job state keeps storage names; only the API response is aliased."""
+    front = result.get("front")
+    if isinstance(front, dict):
+        front = dict(front)
+        front["scenario"] = to_display(front.get("scenario"))
+        front["model_key"] = to_display(front.get("model_key"))
+        result["front"] = front
+    return result
 
 
 def get_status(run_id: str) -> dict:
@@ -399,7 +414,7 @@ def get_status(run_id: str) -> dict:
             dj = _disk_job(run_id)
             scen = dj["scenario_name"] if dj else None
             result["exists_in_library"] = _exists(scen) if scen else False
-            return result
+            return _displayify_done(result)
         raise RunNotFoundError(f"Unknown run_id {run_id!r}")
     fut = job["future"]
     if fut.done():
@@ -408,7 +423,7 @@ def get_status(run_id: str) -> dict:
             return {"state": "failed", "error": str(exc)}
         result = dict(fut.result())
         result["exists_in_library"] = _exists(job["scenario_name"])
-        return result
+        return _displayify_done(result)
     # still running — read the worker's status file for gen progress + live front
     try:
         with open(os.path.join(job["run_dir"], "status.json")) as fh:
@@ -501,4 +516,5 @@ def save_run(run_id: str, overwrite: bool) -> dict:
     except Exception:
         pass
 
-    return {"scenario_name": scenario_name, "model_key": job["model_key"]}
+    return {"scenario_name": to_display(scenario_name),
+            "model_key": to_display(job["model_key"])}

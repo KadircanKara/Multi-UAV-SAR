@@ -26,6 +26,7 @@ from app.library_service import (
     resolve_model_key,
 )
 from app import models_registry, replay_service, selector_service
+from app.model_aliases import to_display, to_storage
 from app.selector_service import (
     _SelectorNotFound,
     StrategyUnavailableError,
@@ -132,6 +133,10 @@ def _scenario_stats(scenario: str) -> Optional[dict]:
     Returns None if the scenario cannot be resolved / loaded (so the caller can
     skip it rather than fail the whole comparison).
     """
+    # Normalize a display alias (…TCDV…) to storage so resolve/parse operate on
+    # the real on-disk name; outputs are displayified again below.
+    scenario = to_storage(scenario)
+
     try:
         selector = get_selector(scenario)
     except _SelectorNotFound:
@@ -164,8 +169,8 @@ def _scenario_stats(scenario: str) -> Optional[dict]:
             comm_range_value = None
 
     return {
-        "scenario": scenario,
-        "model_key": model_key,
+        "scenario": to_display(scenario),
+        "model_key": to_display(model_key),
         "type": model["Type"],
         "algorithm": model["Alg"],
         "optimized_objectives": _optimized_objective_names(model),

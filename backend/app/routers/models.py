@@ -9,6 +9,7 @@ from PathOptimizationModel import (
 
 from app import models_registry
 from app.library_service import model_grid
+from app.model_aliases import to_display
 from app.schemas import ModelGrid, ModelInfo
 
 router = APIRouter()
@@ -40,6 +41,9 @@ def get_models() -> list[dict]:
         _custom_model_info(key, model)
         for key, model in models_registry.custom_models().items()
     )
+    # Show the TBV "V" display code (TCDT→TCDV) in the model name.
+    for row in rows:
+        row["name"] = to_display(row.get("name"))
     return rows
 
 

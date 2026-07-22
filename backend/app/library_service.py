@@ -15,6 +15,7 @@ import pandas as pd
 
 import app.rootpath  # side-effect: inserts repo root into sys.path
 from app import settings, models_registry
+from app.model_aliases import to_display, to_storage
 from PathOptimizationModel import AVAILABLE_MODELS
 
 
@@ -267,10 +268,12 @@ def list_scenarios() -> list[dict]:
 
         params = meta["params"]
 
-        # Build row — flat fields for ScenarioSummary
+        # Build row — flat fields for ScenarioSummary. Both identifiers are
+        # displayified (TCDT→TCDV) so the UI shows the TBV "V" code; inbound
+        # requests normalize back to storage before touching disk.
         row: dict = {
-            "scenario": scenario,
-            "model_key": meta["model_key"],
+            "scenario": to_display(scenario),
+            "model_key": to_display(meta["model_key"]),
             "type": meta["model_dict"]["Type"],
             "algorithm": meta["model_dict"]["Alg"],
             "objectives": meta["objectives"],
@@ -337,6 +340,10 @@ def model_grid(model_key: str) -> Optional[dict]:
     # Lazy import to avoid circular; selector_service imports library_service,
     # so we import at call-time not at module load.
     from app.selector_service import get_polarities  # noqa: PLC0415
+
+    # A display key (TCDV) may arrive from the route; normalize to storage so the
+    # `resolved != model_key` filter below matches resolve_model_key's output.
+    model_key = to_storage(model_key)
 
     if not models_registry.known(model_key):
         return None
@@ -428,7 +435,7 @@ def model_grid(model_key: str) -> Optional[dict]:
         )
 
         row: dict = {
-            "scenario": scenario,
+            "scenario": to_display(scenario),
             "number_of_drones": number_of_drones,
             "comm_range": comm_range_raw,
             "comm_range_value": comm_range_value,
@@ -456,7 +463,7 @@ def model_grid(model_key: str) -> Optional[dict]:
     rows.sort(key=_sort_key)
 
     return {
-        "model_key": model_key,
+        "model_key": to_display(model_key),
         "type": model_dict["Type"],
         "algorithm": model_dict["Alg"],
         "objectives": list(model_dict["F"]),
@@ -470,6 +477,10 @@ def get_scenario(scenario: str) -> Optional[dict]:
     Return a detailed dict for a single scenario, or None if pickles are missing,
     the scenario name is unsafe, or the scenario cannot be resolved.
     """
+    # A display scenario (…TCDV…) may arrive from the client; normalize to the
+    # storage form so filesystem lookups hit the real …TCDT… pickles.
+    scenario = to_storage(scenario)
+
     # Security: reject path-traversal attempts before any filesystem access
     if not _is_safe_scenario_name(scenario):
         return None
@@ -486,7 +497,7 @@ def get_scenario(scenario: str) -> Optional[dict]:
 
     # Build ModelInfo-compatible sub-dict
     model_info = {
-        "name": meta["model_key"],
+        "name": to_display(meta["model_key"]),
         "type": model_dict["Type"],
         "algorithm": model_dict["Alg"],
         "objectives": meta["objectives"],
@@ -494,7 +505,7 @@ def get_scenario(scenario: str) -> Optional[dict]:
     }
 
     return {
-        "scenario": scenario,
+        "scenario": to_display(scenario),
         "model": model_info,
         "n_solutions": meta["n_solutions"],
         "result_kind": meta["result_kind"],
