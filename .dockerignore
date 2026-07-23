@@ -1,0 +1,29 @@
+# Keep the backend build context tiny: the image needs only the root *.py
+# modules, backend/, and requirements.lock. Everything heavy stays out —
+# Results/ (1.7G) is provisioned at runtime, never baked into the image.
+.git
+.venv
+venv
+env
+web
+Results
+Results_BACKUP
+Figures
+docs
+tests
+scripts
+__pycache__
+**/__pycache__
+*.pyc
+*.pkl
+scratch_*.log
+skills-lock.json
+.pytest_cache
+.github
+.dockerignore
+docker-compose.yml
+.claude
+CLAUDE.md
+.mcp.json
+.agents
+.DS_Store

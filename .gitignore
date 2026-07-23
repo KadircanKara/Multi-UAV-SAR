@@ -45,3 +45,6 @@ backend/scripts/verify_results/
 
 # Local dev-server logs
 /scratch_*.log
+
+# docker compose env overrides (deploy-specific, never committed)
+/.env

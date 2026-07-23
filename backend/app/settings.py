@@ -6,7 +6,12 @@ import os
 
 from app.rootpath import REPO_ROOT  # importing the module triggers its sys.path side-effect
 
-RESULTS_ROOT: str = os.path.join(REPO_ROOT, "Results")
+# Where the seeded mission data (Objectives/, Solutions/, Metadata/) lives.
+# Defaults to the in-repo Results/ tree; point SAR_RESULTS_ROOT elsewhere when
+# the data is provisioned outside the checkout (e.g. a Docker volume mount).
+RESULTS_ROOT: str = os.path.abspath(
+    os.environ.get("SAR_RESULTS_ROOT") or os.path.join(REPO_ROOT, "Results")
+)
 
 
 def _int_env(name: str, default: int) -> int:
