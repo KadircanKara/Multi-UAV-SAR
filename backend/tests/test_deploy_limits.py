@@ -177,12 +177,16 @@ def test_optimize_is_rate_limited(client, monkeypatch):
     ("/api/comparison/time", {"scenarios": ["no_such_scenario"], "config": {}}),
 ])
 def test_replay_family_is_rate_limited(client, monkeypatch, path, body):
-    """Every sensing-replay endpoint carries the per-IP throttle. With the limit
-    at 1/minute, the second schema-valid request 429s before the handler runs
-    (the scenario doesn't need to exist — the first request's 404 proves the
-    handler was reached, the second's 429 proves the limiter fired first)."""
+    """Every sensing-replay / comparison endpoint carries a per-IP throttle. With
+    the limit at 1/minute, the second schema-valid request 429s before the handler
+    runs (the scenario doesn't need to exist — the first request's 404 proves the
+    handler was reached, the second's 429 proves the limiter fired first).
+
+    The comparison endpoints have their own, tighter limit (COMPARISON_RATE_LIMIT)
+    since one request fans out to many operations, so both are pinned here."""
     from app import settings
     monkeypatch.setattr(settings, "REPLAY_RATE_LIMIT", "1/minute", raising=False)
+    monkeypatch.setattr(settings, "COMPARISON_RATE_LIMIT", "1/minute", raising=False)
     client.app.state.limiter.reset()
     r1 = client.post(path, json=body)
     assert r1.status_code == 404, r1.text
