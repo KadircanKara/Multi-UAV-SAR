@@ -192,6 +192,12 @@ def read_run_config(scenario_name: str) -> Optional[dict]:
     """Return the persisted RunConfig sidecar for a mission, or None if absent."""
     # Display (…TCDV…) names from the API must hit the real …TCDT… sidecars.
     scenario_name = to_storage(scenario_name)
+    # Parity with the other scenario paths: reject traversal / unsafe names before
+    # building a path. The abspath containment check below already contains this,
+    # so it is defence-in-depth (mirrors library_service._is_safe_scenario_name).
+    from app.library_service import _is_safe_scenario_name
+    if not _is_safe_scenario_name(scenario_name):
+        return None
     path = os.path.join(settings.RESULTS_ROOT, "Metadata", f"{scenario_name}.json")
     # Defence-in-depth: never read outside RESULTS_ROOT (mirrors library_service).
     root = os.path.abspath(settings.RESULTS_ROOT) + os.sep
@@ -333,6 +339,20 @@ def _on_run_finished(_future) -> None:
             else:
                 logger.info("run %s finished after %.1fs", run_id, dur)
         _dispatch_locked()
+        _evict_finished_locked()
+
+
+def _evict_finished_locked() -> None:
+    """Bound the in-memory _jobs registry. Entries are added in start_run and
+    otherwise never removed, so a long-lived server leaks one dict per run
+    forever. Keep the newest settings.OPTIMIZE_RUN_KEEP FINISHED (non-pending)
+    entries and drop the older ones; pending (waiting/running) jobs are always
+    kept. Safe because get_status falls back to _disk_status and export/save fall
+    back to _disk_job for any run no longer in _jobs. Caller holds _lock; _jobs
+    preserves insertion order, so the slice keeps the most recent."""
+    finished = [rid for rid, j in _jobs.items() if not _is_pending(j)]
+    for rid in finished[:-settings.OPTIMIZE_RUN_KEEP]:
+        _jobs.pop(rid, None)
 
 
 def _n_gen_from_dir(run_dir: str) -> Optional[int]:
@@ -533,10 +553,19 @@ def serialize_finished_run(run_id: str) -> dict:
     job = _ready_job(run_id)
 
     run_dir = job["run_dir"]
-    F_df = pd.read_pickle(os.path.join(run_dir, "Objectives.pkl"))
+    # The janitor sweeps .runs on a timer, so a run's dir can vanish between the
+    # _ready_job lookup and these reads (or the _jobs entry can outlive the dir).
+    # Turn the resulting FileNotFoundError/OSError into a clean 404 instead of
+    # letting it escape as an uncaught 500.
+    try:
+        F_df = pd.read_pickle(os.path.join(run_dir, "Objectives.pkl"))
+        raw_solutions = pd.read_pickle(os.path.join(run_dir, "Solutions.pkl"))
+    except (FileNotFoundError, OSError) as exc:
+        raise RunNotFoundError(
+            f"Run {run_id!r} is no longer available (its data was cleaned up)."
+        ) from exc
     if int(F_df.shape[0]) < 1:
         raise EmptyRunError("Run found no feasible solutions; nothing to export.")
-    raw_solutions = pd.read_pickle(os.path.join(run_dir, "Solutions.pkl"))
     # Normalise rows: SolutionObjects rows can be 1-element numpy arrays
     # (mirrors selector_service._load_selector).
     solutions = [s[0] if isinstance(s, np.ndarray) else s for s in list(raw_solutions)]

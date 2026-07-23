@@ -45,7 +45,8 @@ router = APIRouter()
 
 
 @router.post("/api/optimize/check", response_model=OptimizeCheckResponse)
-def post_optimize_check(body: OptimizeConfig) -> dict:
+@limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
+def post_optimize_check(request: Request, body: OptimizeConfig) -> dict:
     """Existence pre-check: does a run for this configuration already exist?"""
     return check_config(
         body.optimization_type, body.method, body.objectives,

@@ -4,11 +4,12 @@ POST /api/scenarios/validate  — validates scenario + derives PathInfo quantiti
 """
 import app.rootpath  # must come before any root-module import
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from PathInfo import PathInfo, default_scenario
 
 from app import models_registry, settings
 from app.model_aliases import to_display
+from app.ratelimit import limiter
 from app.schemas import (
     ScenarioConfig,
     ScenarioDerived,
@@ -26,7 +27,8 @@ def get_default_scenario() -> ScenarioConfig:
 
 
 @router.post("/api/scenarios/validate", response_model=ScenarioValidateResponse)
-def validate_scenario(req: ScenarioValidateRequest) -> ScenarioValidateResponse:
+@limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
+def validate_scenario(request: Request, req: ScenarioValidateRequest) -> ScenarioValidateResponse:
     """
     Validate a scenario config by constructing PathInfo and extracting
     derived quantities.  Optionally produces a scenario_str if model_key

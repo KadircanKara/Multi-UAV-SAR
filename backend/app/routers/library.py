@@ -4,18 +4,21 @@ GET  /api/library/{scenario} — detail for one precomputed scenario.
 """
 import app.rootpath  # must come before any root-module import
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
+from app import settings
 from app.library_service import get_scenario, list_scenarios
 from app.model_aliases import to_display
 from app.optimizer_service import read_run_config
+from app.ratelimit import limiter
 from app.schemas import ScenarioDetail, ScenarioSummary
 
 router = APIRouter()
 
 
 @router.get("/api/library", response_model=list[ScenarioSummary])
-def get_library() -> list[dict]:
+@limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
+def get_library(request: Request) -> list[dict]:
     """Return all precomputed scenarios found in Results/."""
     return list_scenarios()
 

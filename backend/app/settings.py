@@ -3,6 +3,7 @@ Central settings/constants for the backend.
 All paths are absolute so they never depend on CWD.
 """
 import os
+import sys
 
 from app.rootpath import REPO_ROOT  # importing the module triggers its sys.path side-effect
 
@@ -18,11 +19,25 @@ LOG_LEVEL: str = os.environ.get("SAR_LOG_LEVEL", "INFO").upper()
 
 
 def _int_env(name: str, default: int) -> int:
-    """Read an int from the environment, falling back to a default."""
+    """Read an int from the environment, falling back to a default.
+
+    A malformed value (e.g. ``SAR_OPTIMIZE_WORKERS=2x``) must NOT crash the
+    process at import — a single typo would otherwise turn every container start
+    into a restart loop. Fall back to the default and warn instead. Logging is
+    not configured this early (main.py sets it up after settings import), so the
+    warning goes to stderr."""
     raw = os.environ.get(name)
     if raw is None or raw.strip() == "":
         return default
-    return int(raw)
+    try:
+        return int(raw)
+    except ValueError:
+        print(
+            f"WARNING: environment variable {name}={raw!r} is not a valid "
+            f"integer; falling back to default {default}.",
+            file=sys.stderr,
+        )
+        return default
 
 
 def _csv_env(name: str, default: list[str]) -> list[str]:
@@ -104,6 +119,18 @@ COMPARISON_RATE_LIMIT: str = os.environ.get("SAR_COMPARISON_RATE_LIMIT", "10/min
 # than piling more CPU-bound work behind the ones already running. Override via
 # SAR_COMPARISON_CONCURRENCY (a 2-core box wants 1-2).
 COMPARISON_CONCURRENCY: int = max(1, _int_env("SAR_COMPARISON_CONCURRENCY", 2))
+
+# How many heavy single-mission reads may execute concurrently, server-wide
+# (across all clients). Covers the endpoints that unpickle a selector to answer
+# one request — the front / capabilities / select trio, plus a single sensing
+# replay or playback. One large seeded scenario costs ~160 MB once loaded, so
+# without a ceiling a burst of concurrent reads drives the selector cache past
+# the container memory limit and OOMs it. The per-IP rate limit meters how OFTEN
+# a client asks, not how many run at once (slowapi is a fixed-window counter, so
+# a whole window's worth can arrive simultaneously). Excess requests get a fast
+# 503 rather than all loading at once. Override via SAR_HEAVY_CONCURRENCY (a
+# 2-core / small-RAM box wants 2-3).
+HEAVY_CONCURRENCY: int = max(1, _int_env("SAR_HEAVY_CONCURRENCY", 3))
 
 # ── Deploy-safety: request body size cap ────────────────────────────────────
 # Upper bound on request body size (bytes), enforced via the Content-Length

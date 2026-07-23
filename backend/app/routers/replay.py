@@ -7,6 +7,7 @@ import app.rootpath  # must come before any root-module import
 from fastapi import APIRouter, HTTPException, Request
 
 from app import settings
+from app.concurrency import BusyError, heavy_slot
 from app.ratelimit import limiter
 from app.schemas import ReplayRequest, CompareRequest
 from app.selector_service import _SelectorNotFound, StrategyUnavailableError
@@ -24,6 +25,10 @@ def _unprocessable(detail: str) -> HTTPException:
     return HTTPException(status_code=422, detail=detail)
 
 
+def _busy(exc: BusyError) -> HTTPException:
+    return HTTPException(status_code=503, detail=str(exc))
+
+
 @router.post("/api/replay/{scenario}")
 @limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
 def post_replay(request: Request, scenario: str, body: ReplayRequest) -> dict:
@@ -32,15 +37,19 @@ def post_replay(request: Request, scenario: str, body: ReplayRequest) -> dict:
 
     404 — scenario not found / model unknown / pickles missing.
     422 — index out of range, bad sensing config (p<=q, grid bounds, etc.).
+    503 — the server already has its share of heavy reads running.
     """
     try:
-        return run_replay(
-            scenario=scenario,
-            model_key=body.model_key or None,
-            index=body.index,
-            cfg_dict=body.config.to_cfg_dict(),
-            label=body.label,
-        )
+        with heavy_slot():
+            return run_replay(
+                scenario=scenario,
+                model_key=body.model_key or None,
+                index=body.index,
+                cfg_dict=body.config.to_cfg_dict(),
+                label=body.label,
+            )
+    except BusyError as exc:
+        raise _busy(exc) from exc
     except _SelectorNotFound as exc:
         raise _not_found(scenario) from exc
     except StrategyUnavailableError as exc:
@@ -57,15 +66,19 @@ def post_compare(request: Request, scenario: str, body: CompareRequest) -> dict:
 
     404 — scenario not found / model unknown / pickles missing.
     422 — empty configs, index out of range, bad sensing config.
+    503 — the server already has its share of heavy reads running.
     """
     try:
-        return run_compare(
-            scenario=scenario,
-            model_key=body.model_key or None,
-            index=body.index,
-            cfg_dicts=[c.to_cfg_dict() for c in body.configs],
-            labels=body.labels,
-        )
+        with heavy_slot():
+            return run_compare(
+                scenario=scenario,
+                model_key=body.model_key or None,
+                index=body.index,
+                cfg_dicts=[c.to_cfg_dict() for c in body.configs],
+                labels=body.labels,
+            )
+    except BusyError as exc:
+        raise _busy(exc) from exc
     except _SelectorNotFound as exc:
         raise _not_found(scenario) from exc
     except StrategyUnavailableError as exc:

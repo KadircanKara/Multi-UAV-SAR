@@ -51,6 +51,14 @@
 		X-Content-Type-Options nosniff
 		X-Frame-Options DENY
 		Referrer-Policy strict-origin-when-cross-origin
+		# Content-Security-Policy. Everything is same-origin behind this proxy
+		# (API under /api, the Next.js app for the rest), so default-src 'self'
+		# covers scripts, styles, images, fetches and fonts. The two 'unsafe-inline'
+		# grants are what a Next.js app needs without per-request nonces: it emits
+		# inline hydration <script> blocks and inline <style>. img/font also allow
+		# data: URIs (next/image blur placeholders, inlined fonts). frame-ancestors
+		# 'none' backs up X-Frame-Options; object-src 'none' kills plugin embeds.
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
 		-Server
 	}
 
