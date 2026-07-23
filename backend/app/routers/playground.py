@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app import settings
+from app.concurrency import BusyError, heavy_slot
 from app.ratelimit import limiter
 from app.playground_schema import PlaygroundResult
 from app.playground_reconstruct import (
@@ -23,6 +24,10 @@ router = APIRouter()
 
 def _unprocessable(detail: str) -> HTTPException:
     return HTTPException(status_code=422, detail=detail)
+
+
+def _busy(exc: BusyError) -> HTTPException:
+    return HTTPException(status_code=503, detail=str(exc))
 
 
 class _FrontReq(BaseModel):
@@ -75,8 +80,16 @@ def _heavy_solution(result: PlaygroundResult, index: int):
 @limiter.limit(lambda: settings.OPTIMIZE_RATE_LIMIT)
 def playground_front(request: Request, body: _FrontReq) -> dict:
     """Rebuild a PlaygroundResult upload into a SolutionSelector and return
-    the same Pareto-front payload shape as GET /api/fronts/{scenario}."""
-    return selector_service.build_front_from_selector(reconstruct_selector(body.result))
+    the same Pareto-front payload shape as GET /api/fronts/{scenario}.
+
+    503 — the server already has its share of heavy reads running.
+    """
+    try:
+        with heavy_slot():
+            return selector_service.build_front_from_selector(
+                reconstruct_selector(body.result))
+    except BusyError as exc:
+        raise _busy(exc) from exc
 
 
 @router.post("/api/playground/select")
@@ -87,11 +100,15 @@ def playground_select(request: Request, body: _SelectReq) -> dict:
 
     422 — unknown strategy, wrong result_kind, missing required argument,
     or index out of range (by_index).
+    503 — the server already has its share of heavy reads running.
     """
-    sel = reconstruct_selector(body.result)
     try:
-        return selector_service.select_from_selector(
-            sel, body.strategy, body.objective_name, body.weights, body.index)
+        with heavy_slot():
+            sel = reconstruct_selector(body.result)
+            return selector_service.select_from_selector(
+                sel, body.strategy, body.objective_name, body.weights, body.index)
+    except BusyError as exc:
+        raise _busy(exc) from exc
     except StrategyUnavailableError as exc:
         raise _unprocessable(str(exc)) from exc
 
@@ -102,10 +119,15 @@ def playground_replay(request: Request, body: _ReplayReq) -> dict:
     """Run a single sensing replay for one solution of an uploaded result.
 
     422 — index out of range, bad sensing config (p<=q, grid bounds, etc.).
+    503 — the server already has its share of heavy reads running.
     """
-    sol = _heavy_solution(body.result, body.index)
     try:
-        return replay_service.run_replay_for_solution(sol, body.config.to_cfg_dict(), body.label)
+        with heavy_slot():
+            sol = _heavy_solution(body.result, body.index)
+            return replay_service.run_replay_for_solution(
+                sol, body.config.to_cfg_dict(), body.label)
+    except BusyError as exc:
+        raise _busy(exc) from exc
     except ValueError as exc:
         raise _unprocessable(str(exc)) from exc
 
@@ -116,11 +138,15 @@ def playground_compare(request: Request, body: _CompareReq) -> dict:
     """Run a replay per config for one solution and return a comparison table.
 
     422 — index out of range, empty configs, bad sensing config.
+    503 — the server already has its share of heavy reads running.
     """
-    sol = _heavy_solution(body.result, body.index)
     try:
-        return replay_service.run_compare_for_solution(
-            sol, [c.to_cfg_dict() for c in body.configs], body.labels)
+        with heavy_slot():
+            sol = _heavy_solution(body.result, body.index)
+            return replay_service.run_compare_for_solution(
+                sol, [c.to_cfg_dict() for c in body.configs], body.labels)
+    except BusyError as exc:
+        raise _busy(exc) from exc
     except ValueError as exc:
         raise _unprocessable(str(exc)) from exc
 
@@ -138,11 +164,15 @@ def playground_playback(request: Request, body: _PlaybackReq) -> dict:
 
     422 — index out of range, bad sensing config, degenerate replay (zero-
     length step axis after alignment).
+    503 — the server already has its share of heavy reads running.
     """
-    sol = _heavy_solution(body.result, body.index)
     try:
-        out = playback_service.build_playback_for_solution(
-            sol, body.config.to_cfg_dict(), body.stride)
+        with heavy_slot():
+            sol = _heavy_solution(body.result, body.index)
+            out = playback_service.build_playback_for_solution(
+                sol, body.config.to_cfg_dict(), body.stride)
+    except BusyError as exc:
+        raise _busy(exc) from exc
     except ValueError as exc:
         raise _unprocessable(str(exc)) from exc
     out["scenario"] = ""
@@ -161,5 +191,11 @@ def playground_comparison(request: Request, body: _CompareObjReq) -> dict:
     recomputing them (reconstructed playground solutions are "light" and have
     no cached objectives — recomputing would be slow and could diverge from
     the values the file was exported with).
+
+    503 — the server already has its share of heavy reads running.
     """
-    return comparison_service.compare_objectives_from_results(body.results)
+    try:
+        with heavy_slot():
+            return comparison_service.compare_objectives_from_results(body.results)
+    except BusyError as exc:
+        raise _busy(exc) from exc

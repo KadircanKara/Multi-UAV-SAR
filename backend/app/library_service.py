@@ -202,6 +202,22 @@ def _objectives_sig() -> tuple:
         return (d, None)
 
 
+def _bust_scenario_memos() -> None:
+    """Drop the list/grid memoized caches wholesale.
+
+    The _objectives_sig signature only moves when a pickle is CREATED or DELETED
+    in Objectives/ (that bumps the directory mtime). An in-place OVERWRITE of an
+    existing pickle — possible only under ALLOW_LIBRARY_SAVE=1 via save_run —
+    keeps the same filename, so the directory mtime may not change and the memo
+    would keep serving the old stats. save_run calls this explicitly after
+    copying the new pickles in, mirroring its _load_selector.cache_clear()."""
+    with _cache_lock:
+        _list_cache["key"] = None
+        _list_cache["value"] = None
+        _grid_cache["key"] = None
+        _grid_cache["value"] = {}
+
+
 # ---------------------------------------------------------------------------
 # Private shared helper
 # ---------------------------------------------------------------------------
@@ -285,12 +301,14 @@ def list_scenarios() -> list[dict]:
     sig = _objectives_sig()
     with _cache_lock:
         if _list_cache["key"] == sig and _list_cache["value"] is not None:
-            return _list_cache["value"]
+            # Return a shallow copy so a caller mutating the list (append/sort)
+            # cannot corrupt the shared cached value for the next request.
+            return list(_list_cache["value"])
     rows = _scan_scenarios()
     with _cache_lock:
         _list_cache["key"] = sig
         _list_cache["value"] = rows
-    return rows
+    return list(rows)
 
 
 def _scan_scenarios() -> list[dict]:

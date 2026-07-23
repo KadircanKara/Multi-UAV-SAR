@@ -827,5 +827,14 @@ def save_run(run_id: str, overwrite: bool) -> dict:
     except Exception:
         pass
 
+    # Also bust the library list/grid memos: they key on the Objectives/ dir
+    # mtime, which an in-place OVERWRITE of an existing pickle may not move, so
+    # without this an overwrite would keep serving stale list/grid stats.
+    try:
+        from app.library_service import _bust_scenario_memos
+        _bust_scenario_memos()
+    except Exception:
+        pass
+
     return {"scenario_name": to_display(scenario_name),
             "model_key": to_display(job["model_key"])}

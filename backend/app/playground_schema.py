@@ -14,7 +14,12 @@ from app import settings
 from app.schemas import ScenarioConfig
 
 MAX_SOLUTIONS = 2000
-MAX_PATH_LEN = 100_000
+# A legal total path is at most grid_size**2 * n_visits * number_of_drones cells
+# (grid 8 -> 64*3*16 ~ 3072). 5000 sits well above any legal path yet 20x below
+# the old ceiling, which let a ~400KB upload force reconstruct_solution(full=True)
+# to allocate a time_slots x nodes x nodes connectivity matrix (~231 MB) plus long
+# O(path) loops in PathSolution.do_connectivity_calculations — a cheap OOM/CPU DoS.
+MAX_PATH_LEN = 5000
 
 
 class PlaygroundSolution(BaseModel):
@@ -105,4 +110,18 @@ class PlaygroundResult(BaseModel):
                     raise ValueError(
                         f"solution {sol.index}: start_point {sp} out of range "
                         f"[0, {len(sol.path)})")
+            # start_points slice the flat path into one contiguous sub-tour per
+            # drone (path[sp[i]:sp[i+1]]), so they must begin at 0 and strictly
+            # increase. Out of order or not starting at 0 (e.g. [1, 0]) yields an
+            # empty sub-tour; reconstruction then indexes drone_path[0] and raises
+            # IndexError deep in PathSolution -> uncaught 500. Reject cleanly here.
+            if sol.start_points[0] != 0:
+                raise ValueError(
+                    f"solution {sol.index}: start_points must begin at 0 "
+                    f"(got {sol.start_points[0]})")
+            for a, b in zip(sol.start_points, sol.start_points[1:]):
+                if b <= a:
+                    raise ValueError(
+                        f"solution {sol.index}: start_points must be strictly "
+                        f"increasing (got {sol.start_points})")
         return self

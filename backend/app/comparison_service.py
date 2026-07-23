@@ -25,7 +25,7 @@ from app.library_service import (
     parse_scenario_params,
     resolve_model_key,
 )
-from app import models_registry, replay_service, selector_service
+from app import models_registry, replay_service, selector_service, settings
 from app.model_aliases import to_display, to_storage
 from app.selector_service import (
     _SelectorNotFound,
@@ -198,8 +198,15 @@ def compare_objectives(scenarios: list[str]) -> dict:
             seen.add(s)
             ordered.append(s)
 
+    # Bound the per-request heavy work: each distinct scenario is a ~160 MB
+    # selector unpickle, so process at most COMPARISON_MAX_SCENARIOS of them and
+    # surface the overflow in ``skipped`` (partial + honest, not silently cut).
+    cap = max(1, settings.COMPARISON_MAX_SCENARIOS)
+    overflow = ordered[cap:]
+    ordered = ordered[:cap]
+
     results: list[dict] = []
-    skipped: list[str] = []
+    skipped: list[str] = list(overflow)
     for scenario in ordered:
         stats = _scenario_stats(scenario)
         if stats is None:
@@ -387,8 +394,15 @@ def compare_time_metrics(
             seen.add(s)
             ordered.append(s)
 
+    # Bound the per-request heavy work: each distinct scenario is a full sensing
+    # replay, so process at most COMPARISON_MAX_SCENARIOS of them and surface the
+    # overflow in ``skipped`` (partial + honest, not silently cut).
+    cap = max(1, settings.COMPARISON_MAX_SCENARIOS)
+    overflow = ordered[cap:]
+    ordered = ordered[:cap]
+
     results: list[dict] = []
-    skipped: list[str] = []
+    skipped: list[str] = list(overflow)
     for scenario in ordered:
         try:
             row = _time_metrics_for_scenario(

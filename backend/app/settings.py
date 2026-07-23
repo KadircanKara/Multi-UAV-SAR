@@ -120,6 +120,17 @@ COMPARISON_RATE_LIMIT: str = os.environ.get("SAR_COMPARISON_RATE_LIMIT", "10/min
 # SAR_COMPARISON_CONCURRENCY (a 2-core box wants 1-2).
 COMPARISON_CONCURRENCY: int = max(1, _int_env("SAR_COMPARISON_CONCURRENCY", 2))
 
+# How many DISTINCT scenarios one comparison request may actually process. The
+# schema caps (360 / 144) bound the request BODY, but the frontend can legitimately
+# send every real scenario name (216 today), and each distinct one is a ~160 MB
+# selector unpickle / full replay — so one request could force ~1.8 GB of serial
+# work even while the concurrency slot bounds how many requests run at once. This
+# bounds the per-request work: the comparison services process at most this many
+# distinct scenarios and report the remainder in the response's ``skipped`` list
+# (partial + honest, never silently truncated). Override via
+# SAR_COMPARISON_MAX_SCENARIOS.
+COMPARISON_MAX_SCENARIOS: int = max(1, _int_env("SAR_COMPARISON_MAX_SCENARIOS", 60))
+
 # How many heavy single-mission reads may execute concurrently, server-wide
 # (across all clients). Covers the endpoints that unpickle a selector to answer
 # one request — the front / capabilities / select trio, plus a single sensing
