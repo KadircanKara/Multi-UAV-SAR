@@ -59,6 +59,7 @@ services:
       # Bound the temp .runs/ tree so it cannot fill the volume.
       SAR_OPTIMIZE_RUN_KEEP: ${SAR_OPTIMIZE_RUN_KEEP:-40}
       SAR_RUN_PURGE_INTERVAL_SECONDS: ${SAR_RUN_PURGE_INTERVAL_SECONDS:-900}
+      SAR_LOG_LEVEL: ${SAR_LOG_LEVEL:-INFO}
     restart: unless-stopped
     # Give in-flight runs and the shutdown sweep a defined window before SIGKILL,
     # so a deploy does not truncate a run pickle mid-write.

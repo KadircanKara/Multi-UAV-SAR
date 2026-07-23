@@ -16,11 +16,15 @@ only inside the worker child process (`optimizer_worker`).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
+import time
 import uuid
 from concurrent.futures import ProcessPoolExecutor
 from typing import Optional
+
+logger = logging.getLogger("sar.optimizer")
 
 import app.rootpath  # noqa: F401  (repo root on sys.path)
 from app import settings
@@ -305,6 +309,7 @@ def _dispatch_locked() -> None:
             continue
         future = _get_executor().submit(*job.pop("submit_args"))
         job["future"] = future
+        job["started_at"] = time.time()
         busy += 1
         # Set last: the callback re-enters this function, and it must see the
         # job as dispatched so it isn't submitted twice.
@@ -312,8 +317,21 @@ def _dispatch_locked() -> None:
 
 
 def _on_run_finished(_future) -> None:
-    """A worker freed up — give it to whoever is next. Runs in the pool's thread."""
+    """A worker freed up — log the outcome and give the slot to whoever is next.
+    Runs in the pool's callback thread."""
     with _lock:
+        run_id = next(
+            (rid for rid, j in _jobs.items() if j.get("future") is _future), None)
+        if run_id is not None:
+            job = _jobs[run_id]
+            dur = time.time() - job.get("started_at", time.time())
+            if _future.cancelled():
+                logger.info("run %s cancelled after %.1fs", run_id, dur)
+            elif _future.exception() is not None:
+                logger.error("run %s failed after %.1fs: %s",
+                             run_id, dur, _future.exception())
+            else:
+                logger.info("run %s finished after %.1fs", run_id, dur)
         _dispatch_locked()
 
 
@@ -589,6 +607,7 @@ def start_run(
             with open(os.path.join(run_dir, "status.json"), "w") as fh:
                 json.dump({"state": "running", "gen": 0, "n_gen": int(n_gen)}, fh)
         except OSError as exc:
+            logger.error("run storage unwritable under %s: %s", run_dir, exc)
             raise StorageUnavailableError(
                 "The server could not write run storage. Try again shortly."
             ) from exc
@@ -606,6 +625,10 @@ def start_run(
         }
         _dispatch_locked()
         position = _queue_position(run_id)
+    logger.info(
+        "run %s queued (model=%s scenario=%s, position=%s)",
+        run_id, model_key, scenario_name, position if position is not None else "running",
+    )
     return {
         "run_id": run_id, "scenario_name": to_display(scenario_name),
         "model_key": to_display(model_key), "exists": _exists(scenario_name),

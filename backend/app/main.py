@@ -6,6 +6,7 @@ are importable everywhere before the routers are loaded.
 """
 import app.rootpath  # side-effect: inserts repo root into sys.path
 
+import logging
 import math
 
 from fastapi import FastAPI, Request
@@ -19,6 +20,14 @@ from slowapi.errors import RateLimitExceeded
 from app import settings
 from app.limits import BodySizeLimitMiddleware
 from app.ratelimit import limiter
+
+# Configure logging once, at import. Without this the app ran silent: a failed
+# run or an unhandled 500 left no server-side trace at all.
+logging.basicConfig(
+    level=settings.LOG_LEVEL,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger("sar")
 from app.routers import (
     fronts, library, models, scenarios, replay, playback, comparison, optimize,
     playground,
@@ -139,6 +148,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Log any exception a route lets escape, with method + path, before it becomes an
+# opaque 500. Re-raised unchanged, so the response is exactly as before — this is
+# purely so a server-side 500 leaves a trace to debug from.
+@app.middleware("http")
+async def _log_unhandled(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception:
+        logger.exception("unhandled error on %s %s", request.method, request.url.path)
+        raise
 
 
 # Bound the request body regardless of framing. Added AFTER CORS so it sits

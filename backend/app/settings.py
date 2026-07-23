@@ -13,6 +13,9 @@ RESULTS_ROOT: str = os.path.abspath(
     os.environ.get("SAR_RESULTS_ROOT") or os.path.join(REPO_ROOT, "Results")
 )
 
+# Root log level (SAR_LOG_LEVEL). Names or numbers; INFO in production.
+LOG_LEVEL: str = os.environ.get("SAR_LOG_LEVEL", "INFO").upper()
+
 
 def _int_env(name: str, default: int) -> int:
     """Read an int from the environment, falling back to a default."""
