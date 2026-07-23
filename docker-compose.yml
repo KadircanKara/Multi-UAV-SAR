@@ -20,6 +20,16 @@ services:
       SAR_CORS_ORIGINS: ${SAR_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       SAR_OPTIMIZE_RATE_LIMIT: ${SAR_OPTIMIZE_RATE_LIMIT:-30/minute}
       SAR_REPLAY_RATE_LIMIT: ${SAR_REPLAY_RATE_LIMIT:-60/minute}
+      # Optimizer pool: one child process per concurrent run, each pinning one
+      # core. Keep at or below (cores - 1) so replays keep a core to run on.
+      SAR_OPTIMIZE_WORKERS: ${SAR_OPTIMIZE_WORKERS:-2}
+      SAR_OPTIMIZE_QUEUE_MAX: ${SAR_OPTIMIZE_QUEUE_MAX:-8}
+      SAR_OPTIMIZE_MAX_PER_CLIENT: ${SAR_OPTIMIZE_MAX_PER_CLIENT:-2}
+      # Per-run cost ceilings — these bound how long one run holds a worker.
+      # n_visits is the biggest multiplier of the three.
+      SAR_MAX_N_VISITS: ${SAR_MAX_N_VISITS:-3}
+      SAR_MAX_POP_SIZE: ${SAR_MAX_POP_SIZE:-300}
+      SAR_MAX_N_GEN: ${SAR_MAX_N_GEN:-1000}
       # Behind a proxy/ALB set this to the proxy IP/CIDR; never '*'.
       FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
     restart: unless-stopped

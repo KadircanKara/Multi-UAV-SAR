@@ -2,14 +2,17 @@
 Optimizer endpoints — configure + run an optimization (background + poll).
 
   POST /api/optimize/check  — config → {scenario_name, model_key, exists, seeded}
-  POST /api/optimize        — start a run → {run_id, scenario_name, model_key, exists, seeded}
-  GET  /api/optimize/{id}   — poll: running (gen X/Y) | done (front) | failed
+  POST /api/optimize        — queue a run → {run_id, …, queued, queue_position}
+  GET  /api/optimize/{id}   — poll: queued (place in line) | running (gen X/Y)
+                                    | done (front) | cancelled | failed
   GET  /api/optimize/{id}/export — download a finished run as Playground JSON
 """
 import app.rootpath  # must come before any root-module import
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import ORJSONResponse
+
+from slowapi.util import get_remote_address
 
 from app import settings
 from app.ratelimit import limiter
@@ -29,7 +32,8 @@ from app.optimizer_service import (
     request_stop,
     save_run,
     serialize_finished_run,
-    RunInProgressError,
+    QueueFullError,
+    ClientLimitError,
     RunNotFoundError,
     RunNotReadyError,
     AlreadyExistsError,
@@ -52,7 +56,8 @@ def post_optimize_check(body: OptimizeConfig) -> dict:
 @router.post("/api/optimize", response_model=OptimizeStartResponse)
 @limiter.limit(lambda: settings.OPTIMIZE_RATE_LIMIT)
 def post_optimize(request: Request, body: OptimizeConfig) -> dict:
-    """Start a run in the worker process. 409 if a run is already in flight.
+    """Queue a run on the worker pool; it starts at once if a worker is free.
+    409 when the queue is full or the caller already holds its share of slots.
     Per-IP rate limited (settings.OPTIMIZE_RATE_LIMIT) → 429 when exceeded."""
     try:
         return start_run(
@@ -60,8 +65,9 @@ def post_optimize(request: Request, body: OptimizeConfig) -> dict:
             body.pop_size, body.n_gen, body.seed, body.scenario.to_scenario_dict(),
             body.max_mission_time, body.min_connectivity, body.max_mean_tbv,
             body.gen_strategy, body.early_stop_patience, body.early_stop_threshold,
+            client_key=get_remote_address(request),
         )
-    except RunInProgressError as exc:
+    except (QueueFullError, ClientLimitError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 

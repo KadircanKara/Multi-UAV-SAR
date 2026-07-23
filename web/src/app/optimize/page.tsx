@@ -115,8 +115,14 @@ const OPT_TYPE_ITEM_CLS =
   "data-[state=on]:text-chart-1 data-[state=on]:hover:bg-chart-1/10 " +
   "data-[state=on]:hover:text-chart-1";
 
+// These mirror the backend's default deploy caps (SAR_MAX_POP_SIZE /
+// SAR_MAX_N_GEN in settings.py) and must be kept in step with them — a slider
+// that outruns the cap just produces a 422 on a value the UI itself offered.
+// They are sized for convergence: with the constraints active, smaller runs
+// frequently fail to converge at all. A deployment that tightens the env vars
+// further will reject values these sliders allow; the API is the authority.
 const POP_MIN = 10;
-const POP_MAX = 500;
+const POP_MAX = 300;
 const POP_DEFAULT = 100;
 const NGEN_MIN = 5;
 const NGEN_MAX = 1000;
@@ -473,6 +479,9 @@ export default function OptimizePage() {
   );
   const [result, setResult] = useState<OptimizeFront | null>(null);
   const [stopping, setStopping] = useState(false);
+  // Place in the waiting line while every optimizer worker is busy; null once
+  // this run has a worker of its own.
+  const [queuePosition, setQueuePosition] = useState<number | null>(null);
   // Live progress (while running): sampled best-per-objective history + front.
   const [progressHistory, setProgressHistory] = useState<ProgressPoint[]>([]);
   const [liveFront, setLiveFront] = useState<Record<string, number>[] | null>(
@@ -805,7 +814,15 @@ export default function OptimizePage() {
       }
       inFlight = false;
 
+      if (status.state === "queued") {
+        // Waiting for a worker: no generations yet, just a place in line.
+        setQueuePosition(status.queue_position ?? null);
+        if (status.n_gen != null) setProgress({ gen: 0, nGen: status.n_gen });
+        return;
+      }
+
       if (status.state === "running") {
+        setQueuePosition(null);
         const g = status.gen ?? 0;
         if (g < lastGen) return; // out-of-order / stale tick — ignore
         lastGen = g;
@@ -825,8 +842,15 @@ export default function OptimizePage() {
       setRunning(false);
       setProgress(null);
       setStopping(false);
+      setQueuePosition(null);
       if (status.state === "done" && status.front) {
         setResult(status.front);
+      } else if (status.state === "cancelled") {
+        // Left the queue before it ever started, so there is no partial front
+        // to show — and it isn't a failure.
+        toast.info("Optimization cancelled", {
+          description: "The run was removed from the queue before it started.",
+        });
       } else if (status.state === "failed") {
         // The worker's raw exception isn't user-actionable (and can carry
         // internal paths), so show a friendly, generic hint instead.
@@ -874,13 +898,17 @@ export default function OptimizePage() {
       }
       if (!mountedRef.current) return; // unmounted during the await — don't poll
       setRunId(res.run_id);
+      setQueuePosition(res.queued ? res.queue_position : null);
       beginPoll(res.run_id);
     } catch (err: unknown) {
       setRunning(false);
       setProgress(null);
+      setQueuePosition(null);
       const msg = err instanceof Error ? err.message : String(err);
       if (err instanceof ApiError && err.status === 409) {
-        toast.error("A run is already in progress");
+        // The server explains which limit was hit (queue full vs. your own
+        // runs), and its wording is already user-facing.
+        toast.error("Can't start another run yet", { description: msg });
       } else {
         toast.error("Failed to start optimization", { description: msg });
       }
@@ -1020,7 +1048,11 @@ export default function OptimizePage() {
               size="lg"
               className="min-w-[220px] flex-1 sm:flex-none"
             >
-              {running ? "Running…" : "Run optimization"}
+              {!running
+                ? "Run optimization"
+                : queuePosition != null
+                  ? "Queued…"
+                  : "Running…"}
             </Button>
             {running && runId && (
               <Button
@@ -1029,10 +1061,28 @@ export default function OptimizePage() {
                 variant="outline"
                 size="lg"
               >
-                {stopping ? "Stopping…" : "Stop"}
+                {stopping
+                  ? "Stopping…"
+                  : queuePosition != null
+                    ? "Leave queue"
+                    : "Stop"}
               </Button>
             )}
-            {running && progress ? (
+            {running && queuePosition != null ? (
+              <div className="flex min-w-[220px] flex-1 flex-col gap-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">
+                    Waiting for a free worker…
+                  </span>
+                  <span className="tabular-nums text-foreground">
+                    {queuePosition === 1
+                      ? "Next in queue"
+                      : `#${queuePosition} in queue`}
+                  </span>
+                </div>
+                <Progress value={0} />
+              </div>
+            ) : running && progress ? (
               <div className="flex min-w-[220px] flex-1 flex-col gap-1.5">
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-muted-foreground">Solving…</span>

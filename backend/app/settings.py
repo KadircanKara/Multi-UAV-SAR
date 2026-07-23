@@ -49,8 +49,19 @@ CORS_ORIGINS: list[str] = _csv_env(
 # a public deploy, e.g. SAR_MAX_DRONES=8 SAR_MAX_N_GEN=200 SAR_MAX_POP_SIZE=100.
 MAX_DRONES: int = _int_env("SAR_MAX_DRONES", 16)
 MAX_GRID_SIZE: int = _int_env("SAR_MAX_GRID_SIZE", 8)
-MAX_POP_SIZE: int = _int_env("SAR_MAX_POP_SIZE", 500)
+# pop_size x n_gen set how long one run holds a worker, and so how long everyone
+# queued behind it waits — but they are sized for CONVERGENCE, not for latency.
+# With the constraints active, a run much below these rarely converges at all
+# (the path-adjacency speed constraint alone needs ~pop 100 to find any feasible
+# solution), so cutting them to bound the worst case just yields fast garbage.
+# Lower them only for a demo where an unconverged front is acceptable.
+MAX_POP_SIZE: int = _int_env("SAR_MAX_POP_SIZE", 300)
 MAX_N_GEN: int = _int_env("SAR_MAX_N_GEN", 1000)
+# The largest multiplier a caller can reach: path length — and so the cost of
+# every objective evaluation — scales with n_visits. The UI only ever offers
+# 1-3; left uncapped, n_visits=100 made a single generation take 10 minutes and
+# a full run over a week. Nothing else here bounds it.
+MAX_N_VISITS: int = _int_env("SAR_MAX_N_VISITS", 3)
 
 # ── Deploy-safety: rate limit ───────────────────────────────────────────────
 # Per-IP throttle on POST /api/optimize (the compute trigger). slowapi syntax,
@@ -72,6 +83,24 @@ REPLAY_RATE_LIMIT: str = os.environ.get("SAR_REPLAY_RATE_LIMIT", "60/minute")
 # Playground upload (2000 solutions x 100k-int paths) ballooning into
 # gigabytes of memory. Override via SAR_MAX_UPLOAD_BYTES.
 MAX_UPLOAD_BYTES: int = _int_env("SAR_MAX_UPLOAD_BYTES", 25 * 1024 * 1024)
+
+# ── Optimizer queue ─────────────────────────────────────────────────────────
+# Each in-flight run is one child process that saturates exactly ONE core, so
+# OPTIMIZE_WORKERS is really "how many cores are you willing to give away".
+# Keep it at (cores - 1) or below, leaving a core for the API itself — the
+# replay/comparison endpoints run their sensing sims in the server process and
+# go unresponsive if the pool takes every core. Default 2 suits a 2-4 core box.
+OPTIMIZE_WORKERS: int = max(1, _int_env("SAR_OPTIMIZE_WORKERS", 2))
+
+# Total runs the server will hold at once (running + waiting). Past this the
+# API returns 409 rather than growing an unbounded backlog: a queue longer than
+# people will actually wait through is worse than a clear refusal.
+OPTIMIZE_QUEUE_MAX: int = max(1, _int_env("SAR_OPTIMIZE_QUEUE_MAX", 8))
+
+# How many of those slots one client (IP) may hold. Without this a single
+# caller fills the queue and everyone else sees a permanently full server.
+OPTIMIZE_MAX_PER_CLIENT: int = max(1, _int_env("SAR_OPTIMIZE_MAX_PER_CLIENT", 2))
+
 
 # ── Memoryless optimizer ────────────────────────────────────────────────────
 # When False (default), the deployed optimizer never persists a run to the

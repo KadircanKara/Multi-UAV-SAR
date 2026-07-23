@@ -160,6 +160,10 @@ export interface OptimizeStartResponse {
   model_key: string;
   exists: boolean;
   seeded: boolean;
+  /** True when every worker was busy and the run is waiting its turn. */
+  queued: boolean;
+  /** 1-based place in the waiting line (1 = next); null once it starts. */
+  queue_position: number | null;
 }
 
 export interface OptimizeCheckResponse {
@@ -170,7 +174,9 @@ export interface OptimizeCheckResponse {
 }
 
 export interface OptimizeStatus {
-  state: "running" | "done" | "failed";
+  state: "queued" | "running" | "done" | "failed" | "cancelled";
+  /** 1-based place in the waiting line while state is "queued". */
+  queue_position?: number | null;
   gen?: number;
   n_gen?: number;
   front?: OptimizeFront;

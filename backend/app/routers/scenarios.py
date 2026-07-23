@@ -51,6 +51,14 @@ def validate_scenario(req: ScenarioValidateRequest) -> ScenarioValidateResponse:
                 f"cap of {settings.MAX_DRONES}"
             ),
         )
+    if req.scenario.n_visits > settings.MAX_N_VISITS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"n_visits {req.scenario.n_visits} exceeds the cap of "
+                f"{settings.MAX_N_VISITS}"
+            ),
+        )
 
     # Pydantic already validated ScenarioConfig; if PathInfo raises, surface it.
     try:
