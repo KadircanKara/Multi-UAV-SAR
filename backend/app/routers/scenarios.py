@@ -7,7 +7,7 @@ import app.rootpath  # must come before any root-module import
 from fastapi import APIRouter, HTTPException
 from PathInfo import PathInfo, default_scenario
 
-from app import models_registry
+from app import models_registry, settings
 from app.model_aliases import to_display
 from app.schemas import (
     ScenarioConfig,
@@ -32,6 +32,26 @@ def validate_scenario(req: ScenarioValidateRequest) -> ScenarioValidateResponse:
     derived quantities.  Optionally produces a scenario_str if model_key
     is supplied.
     """
+    # Deploy caps, mirroring OptimizeConfig._enforce_deploy_caps: PathInfo
+    # allocates grid_size²-shaped structures, so validation of an uncapped
+    # scenario is itself a memory/CPU amplifier.
+    if req.scenario.grid_size > settings.MAX_GRID_SIZE:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"grid_size {req.scenario.grid_size} exceeds the cap of "
+                f"{settings.MAX_GRID_SIZE}"
+            ),
+        )
+    if req.scenario.number_of_drones > settings.MAX_DRONES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"number_of_drones {req.scenario.number_of_drones} exceeds the "
+                f"cap of {settings.MAX_DRONES}"
+            ),
+        )
+
     # Pydantic already validated ScenarioConfig; if PathInfo raises, surface it.
     try:
         info = PathInfo(req.scenario.to_scenario_dict())

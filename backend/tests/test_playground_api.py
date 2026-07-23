@@ -1,9 +1,14 @@
 import copy
 
+import pytest
+
 from app.playground_export import serialize_run
 from app.selector_service import get_selector
 
 SEEDED = "MOO_NSGA2_TCD_g_8_a_50_n_4_v_2.5_r_2_nvisits_1"
+
+# Every test builds its payload by exporting the seeded scenario above.
+pytestmark = pytest.mark.needs_seed_data
 
 def _payload():
     sel = get_selector(SEEDED)

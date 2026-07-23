@@ -18,7 +18,9 @@ class ScenarioConfig(BaseModel):
     max_drone_speed: float = Field(default=2.5, gt=0)
     # comm_cell_range may be a non-integer (e.g. sqrt(8) ≈ 2.828…) in some scenarios
     comm_cell_range: Union[int, float] = Field(default=2, gt=0)
-    n_visits: int = Field(default=2, ge=1)
+    # le=100 is a sanity/deploy bound: path length scales with n_visits, and the
+    # project's real scenarios use single digits.
+    n_visits: int = Field(default=2, ge=1, le=100)
     target_positions: list[int] = Field(default_factory=lambda: [12])
     th: float = Field(default=0.9, gt=0, lt=1)
     detection_probability: float = Field(default=0.7, gt=0, lt=1)
@@ -34,12 +36,17 @@ class ScenarioConfig(BaseModel):
     @model_validator(mode="after")
     def validate_target_positions(self) -> "ScenarioConfig":
         if not self.target_positions:
-            raise ValueError("target_positions must not be empty")
+            raise ValueError("Enter at least one target cell.")
         max_cell = self.grid_size**2
+        if len(self.target_positions) > max_cell:
+            raise ValueError(
+                f"You listed {len(self.target_positions)} target cells, but this "
+                f"grid only has {max_cell}."
+            )
         for t in self.target_positions:
             if not (0 <= t < max_cell):
                 raise ValueError(
-                    f"target position {t} is out of range [0, {max_cell})"
+                    f"Cell {t} is out of range — valid cells are 0 to {max_cell - 1}."
                 )
         return self
 
@@ -181,9 +188,14 @@ class SensingConfigModel(BaseModel):
         lt=1.0,
         description="Belief threshold B ∈ (0, 1)",
     )
+    # max_length: the sensing loop does a per-cell, per-step membership scan
+    # over this list, so its LENGTH (not just its values) is a cost multiplier.
+    # 256 covers a full grid even at env-raised sizes (16×16); real scenarios
+    # use a handful.
     target_locations: list[int] = Field(
         default_factory=lambda: [12],
         min_length=1,
+        max_length=256,
         description="Non-empty list of 0-indexed grid cell ids",
     )
 
@@ -192,7 +204,7 @@ class SensingConfigModel(BaseModel):
     def validate_merge_topology(cls, v: str) -> str:
         allowed = {"none", "onboard", "gcs"}
         if v not in allowed:
-            raise ValueError(f"merge_topology must be one of {sorted(allowed)}, got {v!r}")
+            raise ValueError("Merge topology must be none, onboard, or gcs.")
         return v
 
     @field_validator("time_model")
@@ -200,7 +212,7 @@ class SensingConfigModel(BaseModel):
     def validate_time_model(cls, v: str) -> str:
         allowed = {"discrete", "realtime"}
         if v not in allowed:
-            raise ValueError(f"time_model must be one of {sorted(allowed)}, got {v!r}")
+            raise ValueError("Time model must be discrete or realtime.")
         return v
 
     def to_cfg_dict(self) -> dict:
@@ -507,7 +519,10 @@ class ReplayRequest(BaseModel):
 class CompareRequest(BaseModel):
     model_key: Optional[str] = None
     index: int
-    configs: list[SensingConfigModel]
+    # One full sensing replay runs per config, serially in the request handler,
+    # so the list length is the request's cost multiplier. The web client sends
+    # at most 3 (the merge topologies); 8 leaves headroom.
+    configs: list[SensingConfigModel] = Field(..., min_length=1, max_length=8)
     labels: Optional[list[str]] = None
 
 

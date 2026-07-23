@@ -118,6 +118,55 @@ Open **http://localhost:3000**. The frontend talks to the backend at `http://loc
 
 > The pre-computed mission results live under `Results/`. The Optimizer page lets you generate new ones; saved runs become browsable in the Mission Browser.
 
+### Production notes
+
+- **Run exactly ONE backend worker.** Optimizer job state (and the rate limiter) is per-process; with `--workers N` a run started in one worker 404s when polled from another. `uvicorn` defaults to one worker — never add `--workers`, and don't use `--reload` in production (it kills in-flight optimizer runs on any file change).
+- **Behind a reverse proxy / load balancer**, restore real client IPs or the per-IP rate limit degrades to one shared bucket (and naive `X-Forwarded-For` trust makes it spoofable):
+
+  ```bash
+  PYTHONPATH="$PWD/backend:$PWD" uvicorn app.main:app --host 0.0.0.0 --port 8000 \
+      --proxy-headers --forwarded-allow-ips=<proxy IP/CIDR>
+  ```
+
+- **CORS**: set `SAR_CORS_ORIGINS` to the deployed frontend origin (comma-separated list), e.g. `SAR_CORS_ORIGINS=https://sar.example.com`. The default only allows the localhost dev server.
+- **Frontend API base**: `NEXT_PUBLIC_API_BASE` is inlined at `next build` time — set it in the build environment, not just at runtime.
+- **Tighten the compute caps** for a public deploy via `SAR_MAX_DRONES`, `SAR_MAX_GRID_SIZE`, `SAR_MAX_POP_SIZE`, `SAR_MAX_N_GEN`, and the throttles `SAR_OPTIMIZE_RATE_LIMIT` / `SAR_REPLAY_RATE_LIMIT` (see `backend/app/settings.py`).
+- **Pinned installs**: reproducible environments (Docker, CI) install from `requirements.lock` (exact pins, Python 3.11). `requirements.txt` remains the loose human-readable spec; regenerate the lock after changing it.
+
+### Docker
+
+Both services ship Dockerfiles; `docker-compose.yml` wires them into a production-shaped stack:
+
+```bash
+docker compose up --build
+# frontend on :3000, backend on :8000
+```
+
+Or build/run individually:
+
+```bash
+# backend — build from the REPO ROOT (imports the flat research modules)
+docker build -f backend/Dockerfile -t sar-backend .
+docker run -p 8000:8000 -v "$PWD/Results:/app/Results" \
+    -e SAR_CORS_ORIGINS=https://sar.example.com sar-backend
+
+# frontend — the API URL is BAKED IN at build time, pass it as a build arg
+docker build --build-arg NEXT_PUBLIC_API_BASE=https://api.example.com -t sar-web web
+docker run -p 3000:3000 sar-web
+```
+
+Deploy checklist:
+
+- **Mission data is not in the image.** Provision `Results/` (Objectives/, Solutions/, Metadata/) onto the host — e.g. `aws s3 sync s3://<bucket>/Results ./Results` or `rsync` — and mount it at `/app/Results` (or point `SAR_RESULTS_ROOT` at it). The mount must be **writable**: the app writes temp run dirs under `Results/.runs`. The container user is uid 1000.
+- **Behind a proxy/ALB**, set `FORWARDED_ALLOW_IPS=<proxy IP/CIDR>` on the backend container (uvicorn reads it natively; default trusts only `127.0.0.1`, never use `*`).
+- **The backend image runs exactly one uvicorn worker by design** — scale by CPU on a bigger instance, not by worker count or replicas (job state is per-process).
+- Compose reads overrides (`SAR_CORS_ORIGINS`, `NEXT_PUBLIC_API_BASE`, rate limits) from a local `.env` file next to `docker-compose.yml` (gitignored).
+- `GET /api/health` is the health/target-group check endpoint (the backend image declares it as its `HEALTHCHECK`).
+
+### CI
+
+`.github/workflows/ci.yml` runs on pushes to `main` and all PRs: backend + root test suite (`pytest tests backend/tests` — data-dependent tests skip when the seeded `Results/` tree is absent), the frontend production build, and both Docker image builds.
+
 ---
 
 ## Project layout

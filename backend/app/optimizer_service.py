@@ -206,6 +206,11 @@ def check_config(
 
 
 # ─── Run registry + executor ──────────────────────────────────────────────────
+# This registry is PER-PROCESS state: the API must be served by exactly ONE
+# server worker (uvicorn --workers 1, the default). With N workers, a run
+# started in one worker 404s when polled/stopped from another (disk recovery in
+# _disk_status only covers finished runs), and the single-run guard and rate
+# limiter fragment into N independent copies. See README "Production notes".
 
 _executor: Optional[ProcessPoolExecutor] = None
 _jobs: dict[str, dict] = {}

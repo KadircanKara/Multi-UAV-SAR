@@ -77,7 +77,7 @@ export default function CompareMetricTable({
                 className="font-mono text-xs tracking-wider text-muted-foreground"
               >
                 {m.name}
-                <span className="ml-1 normal-case tracking-normal text-muted-foreground/70">
+                <span className="ml-1 normal-case tracking-normal text-muted-foreground">
                   ({m.polarity === -1 ? "↑" : "↓"})
                 </span>
               </TableHead>
@@ -119,7 +119,7 @@ export default function CompareMetricTable({
                         : v.toFixed(2)}
                     {notOptimized && v != null && (
                       <sup
-                        className="ml-0.5 text-muted-foreground/60"
+                        className="ml-0.5 text-muted-foreground"
                         title="computed, not optimized by this model"
                       >
                         *

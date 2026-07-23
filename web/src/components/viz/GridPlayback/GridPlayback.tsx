@@ -156,7 +156,7 @@ export default function GridPlayback({ source, front, selectedIndex }: Props) {
       setPayload(raw as unknown as PlaybackPayload);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      toast.error("PLAYBACK LOAD FAILED", { description: msg });
+      toast.error("Couldn't load playback", { description: msg });
     } finally {
       setLoadingPayload(false);
     }

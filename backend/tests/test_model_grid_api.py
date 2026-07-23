@@ -1,6 +1,7 @@
 """Tests for GET /api/models/{model_key}/grid."""
 import math
 import time
+import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -30,11 +31,13 @@ def test_valid_model_no_seeded_scenarios_404(client):
 # Happy-path: TCD_MOO_NSGA2
 # ---------------------------------------------------------------------------
 
+@pytest.mark.needs_seed_data
 def test_tcd_moo_nsga2_grid_status(client):
     resp = _get_grid(client, "TCD_MOO_NSGA2")
     assert resp.status_code == 200
 
 
+@pytest.mark.needs_seed_data
 def test_tcd_moo_nsga2_grid_top_level_fields(client):
     data = _get_grid(client, "TCD_MOO_NSGA2").json()
     assert data["model_key"] == "TCD_MOO_NSGA2"
@@ -50,6 +53,7 @@ def test_tcd_moo_nsga2_grid_top_level_fields(client):
     assert len(data["scenarios"]) > 0
 
 
+@pytest.mark.needs_seed_data
 def test_tcd_moo_nsga2_scenario_row_schema(client):
     data = _get_grid(client, "TCD_MOO_NSGA2").json()
     for row in data["scenarios"]:
@@ -70,6 +74,7 @@ def test_tcd_moo_nsga2_scenario_row_schema(client):
             assert "best" in stat
 
 
+@pytest.mark.needs_seed_data
 def test_tcd_moo_nsga2_scenario_row_values(client):
     data = _get_grid(client, "TCD_MOO_NSGA2").json()
     for row in data["scenarios"]:
@@ -93,6 +98,7 @@ def test_tcd_moo_nsga2_scenario_row_values(client):
         assert 0 < conn_stat["best"] <= 1.0
 
 
+@pytest.mark.needs_seed_data
 def test_tcd_moo_nsga2_polarity_aware_best(client):
     """
     For Mission Time (polarity +1 = minimize):  best == min.
@@ -110,6 +116,7 @@ def test_tcd_moo_nsga2_polarity_aware_best(client):
         )
 
 
+@pytest.mark.needs_seed_data
 def test_tcd_moo_nsga2_sorted(client):
     """Scenarios must be sorted by (number_of_drones, comm_range_value, n_visits)."""
     data = _get_grid(client, "TCD_MOO_NSGA2").json()
@@ -129,6 +136,7 @@ def test_tcd_moo_nsga2_sorted(client):
 # Parameter-effect sanity: more drones ⟹ mission time non-increasing
 # ---------------------------------------------------------------------------
 
+@pytest.mark.needs_seed_data
 def test_more_drones_better_or_equal_mission_time(client):
     """
     Holding comm_range_value ≈ 2.0 and n_visits == 2 fixed,
@@ -169,6 +177,7 @@ def test_more_drones_better_or_equal_mission_time(client):
 # Cheap endpoint: only Objectives pickles should be loaded (structural)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.needs_seed_data
 def test_grid_is_cheap(client):
     """
     The endpoint must NOT load heavy Solution pickles.

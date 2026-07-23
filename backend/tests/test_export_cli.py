@@ -3,8 +3,12 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SEEDED = "MOO_NSGA2_TCD_g_8_a_50_n_4_v_2.5_r_2_nvisits_1"
+
+pytestmark = pytest.mark.needs_seed_data
 
 
 def test_cli_exports_valid_playground_json(tmp_path):

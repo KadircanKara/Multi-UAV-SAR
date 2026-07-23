@@ -35,19 +35,24 @@ class SensingConfig:
             raise ValueError(f"merge_topology {self.merge_topology!r} not in {VALID_MERGE_TOPOLOGIES}")
         if self.time_model not in VALID_TIME_MODELS:
             raise ValueError(f"time_model {self.time_model!r} not in {VALID_TIME_MODELS}")
+        _prob_labels = {
+            "detection_prob": "Detection probability",
+            "false_alarm_prob": "False-alarm probability",
+            "belief_threshold": "Belief threshold",
+        }
         for name in ("detection_prob", "false_alarm_prob", "belief_threshold"):
             v = getattr(self, name)
             if not (0.0 < v < 1.0):
-                raise ValueError(f"{name} must be in (0, 1), got {v}")
+                raise ValueError(f"{_prob_labels[name]} must be between 0 and 1 (got {v}).")
         if self.detection_prob <= self.false_alarm_prob:
             raise ValueError(
-                f"detection_prob ({self.detection_prob}) must be strictly greater than "
-                f"false_alarm_prob ({self.false_alarm_prob}); p <= q inverts the Bayesian update"
+                f"Detection probability ({self.detection_prob}) must be higher than the "
+                f"false-alarm probability ({self.false_alarm_prob})."
             )
         if not self.target_locations:
-            raise ValueError("target_locations must not be empty")
+            raise ValueError("Enter at least one target cell.")
         if not all(isinstance(t, (int, np.integer)) for t in self.target_locations):
-            raise ValueError(f"target_locations must be integer cell ids, got {self.target_locations!r}")
+            raise ValueError("Target cells must be whole numbers.")
 
     @classmethod
     def from_info(cls, info, **overrides):
@@ -64,7 +69,11 @@ class SensingConfig:
         if n_cells is not None:
             bad = [t for t in cfg.target_locations if not (0 <= t < n_cells)]
             if bad:
-                raise ValueError(f"target_locations {bad} outside grid (0..{n_cells - 1})")
+                span = f"valid cells are 0 to {n_cells - 1}"
+                if len(bad) == 1:
+                    raise ValueError(f"Cell {bad[0]} is out of range — {span}.")
+                listed = ", ".join(str(b) for b in bad)
+                raise ValueError(f"Cells {listed} are out of range — {span}.")
         return cfg
 
 

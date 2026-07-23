@@ -162,7 +162,7 @@ function OfflinePanel({ message }: { message: string }) {
         Start the API on :8000 then reload.
       </p>
       {message && (
-        <p className="mt-2 text-xs text-muted-foreground/70 break-all">
+        <p className="mt-2 text-xs text-muted-foreground break-all">
           {message}
         </p>
       )}
@@ -415,7 +415,7 @@ function TimeMetricsTab({
       setData(res);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      toast.error("TIME COMPARISON FAILED", { description: msg });
+      toast.error("Couldn't compare time metrics", { description: msg });
     } finally {
       setRunning(false);
     }

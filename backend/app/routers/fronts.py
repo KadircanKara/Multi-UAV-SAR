@@ -21,7 +21,7 @@ router = APIRouter()
 
 
 def _not_found(scenario: str, detail: str = None) -> HTTPException:
-    msg = detail or f"Scenario {scenario!r} not found or pickles missing"
+    msg = detail or f"We couldn't find saved data for scenario {scenario}."
     return HTTPException(status_code=404, detail=msg)
 
 
@@ -38,7 +38,7 @@ def get_front(
     try:
         return build_front(scenario, model_key or None)
     except _SelectorNotFound as exc:
-        raise _not_found(scenario, str(exc)) from exc
+        raise _not_found(scenario) from exc
 
 
 @router.get("/api/fronts/{scenario}/capabilities")
@@ -54,7 +54,7 @@ def get_front_capabilities(
     try:
         return get_capabilities(scenario, model_key or None)
     except _SelectorNotFound as exc:
-        raise _not_found(scenario, str(exc)) from exc
+        raise _not_found(scenario) from exc
 
 
 @router.post("/api/fronts/{scenario}/select", response_model=SelectResponse)
@@ -78,6 +78,6 @@ def select_solution(
             index=body.index,
         )
     except _SelectorNotFound as exc:
-        raise _not_found(scenario, str(exc)) from exc
+        raise _not_found(scenario) from exc
     except StrategyUnavailableError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

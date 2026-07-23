@@ -1,5 +1,6 @@
-# Multi-UAV-SAR — runtime dependencies
-# Pin exact versions after first successful `pip install` in a clean venv.
+# Multi-UAV-SAR — runtime dependencies (loose, human-readable spec).
+# Reproducible installs (Docker, CI) use requirements.lock — exact pins frozen
+# from the working venv. Regenerate the lock after changing this file.
 pymoo>=0.6.1,<0.7
 numpy>=1.24,<2.0   # pymoo 0.6.x compiled ops are not yet numpy>=2.0 safe; confirm in venv
 scipy>=1.10

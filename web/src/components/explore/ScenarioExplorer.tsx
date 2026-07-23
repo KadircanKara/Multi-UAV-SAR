@@ -90,7 +90,7 @@ function OfflinePanel({ message }: { message: string }) {
         Start the API on :8000 then reload.
       </p>
       {message && (
-        <p className="mt-2 text-xs text-muted-foreground/70 break-all">
+        <p className="mt-2 text-xs text-muted-foreground break-all">
           {message}
         </p>
       )}
@@ -184,7 +184,7 @@ function MergingTab({ source, selectedIndex }: MergingTabProps) {
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      toast.error("COMPARE FAILED", { description: msg });
+      toast.error("Comparison failed", { description: msg });
     } finally {
       setComparing(false);
     }

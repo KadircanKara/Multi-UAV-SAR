@@ -94,7 +94,7 @@ function OfflineBanner({ message }: { message: string }) {
         Start the API on port 8000, then reload.
       </p>
       {message && (
-        <p className="mt-1 truncate text-xs text-muted-foreground/70">{message}</p>
+        <p className="mt-1 truncate text-xs text-muted-foreground">{message}</p>
       )}
     </div>
   );
