@@ -1,4 +1,5 @@
 """Tests for POST /api/comparison — cross-model objective comparison."""
+import pytest
 
 ALL_OBJECTIVES = [
     "Mission Time",
@@ -30,6 +31,7 @@ def _compare(client, scenarios):
 # Happy path
 # ---------------------------------------------------------------------------
 
+@pytest.mark.needs_seed_data
 def test_compare_two_models_status_and_shape(client):
     a = _scenario_with(client, "TCD_MOO_NSGA2", 2)
     b = _scenario_with(client, "TCDT_MOO_NSGA2", 2)
@@ -46,6 +48,7 @@ def test_compare_two_models_status_and_shape(client):
     assert [s["scenario"] for s in data["scenarios"]] == [a, b]
 
 
+@pytest.mark.needs_seed_data
 def test_every_scenario_reports_all_objectives(client):
     a = _scenario_with(client, "TCD_MOO_NSGA2", 2)
     b = _scenario_with(client, "TCDT_MOO_NSGA2", 2)
@@ -58,6 +61,7 @@ def test_every_scenario_reports_all_objectives(client):
             assert stat["best"] is not None
 
 
+@pytest.mark.needs_seed_data
 def test_unoptimized_objective_is_still_computed(client):
     """The core capability: TCD does NOT optimise Max Mean TBV, yet it must be
     reported (computed from the solution objects) so it can be compared to
@@ -74,6 +78,7 @@ def test_unoptimized_objective_is_still_computed(client):
 # n_visits == 1 → Max Mean TBV is undefined (null)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.needs_seed_data
 def test_tbv_is_null_at_n_visits_1(client):
     sc = _scenario_with(client, "TCD_MOO_NSGA2", 1)
     assert sc, "expected a seeded TCD n_visits=1 scenario"
@@ -89,6 +94,7 @@ def test_tbv_is_null_at_n_visits_1(client):
 # Skipping + error cases
 # ---------------------------------------------------------------------------
 
+@pytest.mark.needs_seed_data
 def test_unknown_scenario_is_skipped_not_fatal(client):
     good = _scenario_with(client, "TCD_MOO_NSGA2", 2)
     data = _compare(client, [good, "totally_bogus_scenario"]).json()
@@ -111,6 +117,7 @@ def test_too_many_scenarios_returns_422(client):
     assert resp.status_code == 422
 
 
+@pytest.mark.needs_seed_data
 def test_duplicates_collapsed(client):
     sc = _scenario_with(client, "TCD_MOO_NSGA2", 2)
     data = _compare(client, [sc, sc]).json()
@@ -148,6 +155,7 @@ def _compare_time(client, scenarios, config=None, strategy="balanced", **extra):
     return client.post("/api/comparison/time", json=body)
 
 
+@pytest.mark.needs_seed_data
 def test_compare_time_happy_path(client):
     a = _scenario_with(client, "TCD_MOO_NSGA2", 2)
     b = _scenario_with(client, "TCDT_MOO_NSGA2", 2)
@@ -165,6 +173,7 @@ def test_compare_time_happy_path(client):
         assert set(s["metric_values"].keys()) == set(TIME_METRICS)
 
 
+@pytest.mark.needs_seed_data
 def test_compare_time_best_without_objective_is_422(client):
     a = _scenario_with(client, "TCD_MOO_NSGA2", 2)
     assert a
@@ -172,6 +181,7 @@ def test_compare_time_best_without_objective_is_422(client):
     assert resp.status_code == 422
 
 
+@pytest.mark.needs_seed_data
 def test_compare_time_best_skips_model_without_that_objective(client):
     """'best' on an objective a given scenario's model did not optimize must skip
     that scenario, not fail the whole multi-scenario comparison."""
@@ -187,6 +197,7 @@ def test_compare_time_best_skips_model_without_that_objective(client):
     assert tc in data["skipped"]
 
 
+@pytest.mark.needs_seed_data
 def test_compare_time_bad_config_is_422(client):
     a = _scenario_with(client, "TCD_MOO_NSGA2", 2)
     assert a
@@ -195,6 +206,7 @@ def test_compare_time_bad_config_is_422(client):
     assert resp.status_code == 422
 
 
+@pytest.mark.needs_seed_data
 def test_compare_time_bogus_scenario_is_skipped(client):
     good = _scenario_with(client, "TCD_MOO_NSGA2", 2)
     assert good
@@ -215,6 +227,7 @@ def test_compare_time_empty_scenarios_returns_422(client):
     assert resp.status_code == 422
 
 
+@pytest.mark.needs_seed_data
 def test_compare_time_single_result_model_uses_lone_solution(client):
     """Single-solution models (MTSP) have no Pareto front, so a front strategy
     like 'balanced' must fall back to the one solution rather than 422."""

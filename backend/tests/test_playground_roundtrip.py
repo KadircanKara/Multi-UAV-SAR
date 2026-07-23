@@ -1,4 +1,5 @@
 from app.playground_schema import PlaygroundResult
+import pytest
 
 def _min_payload():
     return {
@@ -50,6 +51,7 @@ def _seeded_selector():
     return scenario, get_selector(scenario)
 
 
+@pytest.mark.needs_seed_data
 def test_serialize_run_matches_schema():
     from app.playground_export import serialize_run
 
@@ -69,6 +71,7 @@ def test_serialize_run_matches_schema():
     }
 
 
+@pytest.mark.needs_seed_data
 def test_objectives_equal_raw_objective_values():
     """The serialized `objectives` dict is exactly PathFuncDict.objective_values(sol)
     output (unsigned); polarity/TBV-nulling is applied downstream, not here."""
@@ -80,6 +83,7 @@ def test_objectives_equal_raw_objective_values():
         assert payload["solutions"][i]["objectives"] == objective_values(sol)
 
 
+@pytest.mark.needs_seed_data
 def test_reconstruct_selector_shapes():
     from app.playground_export import serialize_run
     from app.playground_schema import PlaygroundResult
@@ -93,6 +97,7 @@ def test_reconstruct_selector_shapes():
     assert rebuilt.solutions[0].info.number_of_drones == sel.solutions[0].info.number_of_drones
 
 
+@pytest.mark.needs_seed_data
 def test_reconstructed_front_matches_seeded():
     """The reconstructed (upload -> rebuild) front must match the seeded
     build_front output byte-for-byte on objectives + objectives_signed."""
@@ -116,6 +121,7 @@ def test_reconstructed_front_matches_seeded():
     assert rebuilt_signed == seeded_signed
 
 
+@pytest.mark.needs_seed_data
 def test_replay_for_reconstructed_solution():
     from app.playground_export import serialize_run
     from app.playground_schema import PlaygroundResult
@@ -136,6 +142,7 @@ def test_replay_for_reconstructed_solution():
                 "cell_occupancy_probabilities"]).issubset(out.keys())
 
 
+@pytest.mark.needs_seed_data
 def test_serialize_run_uses_explicit_model_key():
     from app.playground_export import serialize_run
     _sc, sel = _seeded_selector()  # sel.model is an AVAILABLE_MODELS dict (no "model_key")

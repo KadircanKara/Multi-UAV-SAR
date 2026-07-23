@@ -1,5 +1,6 @@
 """Tests for the Optimizer endpoints (POST /api/optimize[/check], GET /api/optimize/{id})."""
 import time
+import pytest
 
 BASE_SCENARIO = {"number_of_drones": 4, "n_visits": 2}
 
@@ -49,6 +50,7 @@ def test_purge_stale_runs_removes_old_only(tmp_path, monkeypatch):
 
 # ─── check / model synthesis ──────────────────────────────────────────────────
 
+@pytest.mark.needs_seed_data
 def test_check_preset_combo_resolves_and_exists(client):
     # MOO NSGA2 over TCD's objective set == preset TCD_MOO_NSGA2 (seeded on EC2).
     resp = client.post("/api/optimize/check", json=_cfg(
