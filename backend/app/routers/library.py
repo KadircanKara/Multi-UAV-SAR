@@ -24,7 +24,8 @@ def get_library(request: Request) -> list[dict]:
 
 
 @router.get("/api/library/{scenario}", response_model=ScenarioDetail)
-def get_library_scenario(scenario: str) -> dict:
+@limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
+def get_library_scenario(request: Request, scenario: str) -> dict:
     """Return detail for a single precomputed scenario; 404 if not found."""
     detail = get_scenario(scenario)
     if detail is None:
@@ -36,7 +37,8 @@ def get_library_scenario(scenario: str) -> dict:
 
 
 @router.get("/api/library/{scenario}/config")
-def get_library_scenario_config(scenario: str) -> dict:
+@limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
+def get_library_scenario_config(request: Request, scenario: str) -> dict:
     """Read-only optimizer run-config for a mission, or {recorded: false} if none.
 
     Returned verbatim (the sidecar's own shape) — the frontend types it as RunConfig;

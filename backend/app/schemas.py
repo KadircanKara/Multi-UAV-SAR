@@ -23,9 +23,15 @@ class ScenarioConfig(BaseModel):
     # a grid of a billion cells must never reach PathInfo however the deploy
     # cap is tuned. Cell count — and every per-cell scan — grows as grid_size².
     grid_size: int = Field(default=8, ge=1, le=64)
-    cell_side_length: Union[int, float] = Field(default=50, gt=0)
+    # le=1000 is a safety ceiling: cell_side_length scales the per-leg distance,
+    # which drives the realtime sub-sample count in Time.get_real_paths — a huge
+    # value would explode that allocation (OOM). Real scenarios use 50.
+    cell_side_length: Union[int, float] = Field(default=50, gt=0, le=1000)
     number_of_drones: int = Field(default=4, ge=1)
-    max_drone_speed: float = Field(default=2.5, gt=0)
+    # ge=0.1 is a safety floor: max_drone_speed divides the per-leg distance to
+    # size the realtime sub-sample count in Time.get_real_paths — a near-zero
+    # speed would explode that allocation (OOM). Real scenarios use 2.5.
+    max_drone_speed: float = Field(default=2.5, ge=0.1)
     # comm_cell_range may be a non-integer (e.g. sqrt(8) ≈ 2.828…) in some scenarios
     comm_cell_range: Union[int, float] = Field(default=2, gt=0)
     # le=100 is a sanity/deploy bound: path length scales with n_visits, and the

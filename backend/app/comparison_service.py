@@ -15,6 +15,7 @@ never imports PathAlgorithm / PathUnitTest / main.
 from __future__ import annotations
 
 import math
+import time
 from typing import Optional
 
 import app.rootpath  # side-effect: inserts repo root into sys.path
@@ -205,9 +206,22 @@ def compare_objectives(scenarios: list[str]) -> dict:
     overflow = ordered[cap:]
     ordered = ordered[:cap]
 
+    # Wall-clock budget: the count cap bounds how many scenarios are attempted,
+    # but a cold selector cache costs ~50x a warm one per scenario, so bound the
+    # request's CPU by elapsed time too. Anything not reached is reported in
+    # ``skipped`` (partial + honest), so it stays consistent with the overflow.
+    budget = settings.COMPARISON_TIME_BUDGET_SECONDS
+    start = time.monotonic()
+
     results: list[dict] = []
     skipped: list[str] = list(overflow)
-    for scenario in ordered:
+    for i, scenario in enumerate(ordered):
+        # Checked at the top of the loop, but skipped on the first iteration so at
+        # least one scenario always runs (elapsed is ~0 there anyway) — the
+        # all-skipped 404 then reflects genuinely unloadable input, not the budget.
+        if i > 0 and time.monotonic() - start > budget:
+            skipped.extend(ordered[i:])
+            break
         stats = _scenario_stats(scenario)
         if stats is None:
             skipped.append(scenario)
@@ -401,9 +415,22 @@ def compare_time_metrics(
     overflow = ordered[cap:]
     ordered = ordered[:cap]
 
+    # Wall-clock budget across the per-scenario replays (see compare_objectives).
+    # Each scenario here is a full sensing replay, so the elapsed-time bound is
+    # the one that actually keeps a cold-cache request from pinning a core for
+    # minutes; the unreached remainder is reported in ``skipped``.
+    budget = settings.COMPARISON_TIME_BUDGET_SECONDS
+    start = time.monotonic()
+
     results: list[dict] = []
     skipped: list[str] = list(overflow)
-    for scenario in ordered:
+    for i, scenario in enumerate(ordered):
+        # Top-of-loop check, skipped on the first iteration so at least one
+        # scenario always runs (keeps the all-skipped 404 tied to unloadable
+        # input, not to the budget).
+        if i > 0 and time.monotonic() - start > budget:
+            skipped.extend(ordered[i:])
+            break
         try:
             row = _time_metrics_for_scenario(
                 scenario, cfg_dict, strategy, objective_name, weights

@@ -6,6 +6,16 @@ from statistics import median_low
 from copy import deepcopy
 from math import inf, atan2, cos, sin, hypot
 
+# Safety ceiling on the per-step sub-sample count in get_real_paths (below). That
+# count is ceil(max_leg_distance / max_drone_speed) and drives a linspace
+# allocation per drone that is accumulated across every step, so an unbounded
+# value (a tiny speed or a huge cell side length) explodes memory and can OOM the
+# process. Legitimate inputs stay tiny — leg distance is bounded by
+# grid_size (<=8) x cell_side_length and real speeds are >= 2.5, so the real
+# maximum observed is ~29 — this ceiling is orders of magnitude above anything a
+# valid scenario reaches and never alters legitimate output.
+_MAX_REALTIME_STEPS = 5000
+
 def isCoordinateDiscrete(x, y, sol: PathSolution, atol=None):
     """True iff (x, y) lies on a grid cell center, within float tolerance.
 
@@ -262,6 +272,14 @@ def get_real_paths(sol:PathSolution):
         next_x_coords, next_y_coords = np.array([sol.get_coords(x) for x in next_cells]).T
         dists = np.array([sol.info.D[current_cells[j], next_cells[j]] for j in range(sol.info.number_of_drones)])
         dt = ceil(np.max(dists)/info.max_drone_speed)
+        # Backstop against an OOM from a pathological scenario (tiny speed / huge
+        # cell): cap the sub-sample count that follows. dt is already >= 0 (ceil of
+        # a non-negative), and dt == 0 is a legitimate no-op step (a stationary
+        # transition — happens routinely once drones have returned to base), so
+        # only the upper bound is clamped; forcing dt >= 1 would inject a duplicate
+        # column and perturb the nvisits/TBV counts. Legit dt is tiny (<<
+        # _MAX_REALTIME_STEPS), so this never changes valid output.
+        dt = min(dt, _MAX_REALTIME_STEPS)
         x_mid = np.array([np.linspace(current_x_coords[j], next_x_coords[j], dt) for j in range(info.number_of_drones)])
         y_mid = np.array([np.linspace(current_y_coords[j], next_y_coords[j], dt) for j in range(info.number_of_drones)])
         real_time_x_matrix = np.hstack((real_time_x_matrix, x_mid))

@@ -21,7 +21,8 @@ import os
 import threading
 import time
 import uuid
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import Future, ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from typing import Optional
 
 logger = logging.getLogger("sar.optimizer")
@@ -251,6 +252,25 @@ def _get_executor() -> ProcessPoolExecutor:
     return _executor
 
 
+def _rebuild_executor_locked() -> None:
+    """Discard a dead pool so the next _get_executor() builds a fresh one.
+
+    A worker death (OOM on a big run, a native crash) breaks the whole pool:
+    every in-flight future resolves with BrokenProcessPool and every subsequent
+    submit raises it too. Left alone the optimizer is wedged until the container
+    restarts — queued runs never start and new /api/optimize calls 500. Setting
+    _executor to None makes _get_executor() spawn a replacement on the next
+    submit. Caller holds _lock; shutting the dead pool down is best-effort."""
+    global _executor
+    dead = _executor
+    _executor = None
+    if dead is not None:
+        try:
+            dead.shutdown(wait=False)
+        except Exception:
+            pass
+
+
 def _is_waiting(job: dict) -> bool:
     """True while a run is in the line, not yet handed to a pool worker."""
     return job.get("future") is None and not job.get("cancelled") and "submit_args" in job
@@ -313,7 +333,31 @@ def _dispatch_locked() -> None:
             return
         if not _is_waiting(job):
             continue
-        future = _get_executor().submit(*job.pop("submit_args"))
+        # Peek submit_args (don't pop yet): a broken pool makes submit raise, and
+        # the args are needed to retry onto the rebuilt pool.
+        try:
+            future = _get_executor().submit(*job["submit_args"])
+        except BrokenProcessPool:
+            # A worker died and poisoned the pool. Rebuild it and retry this
+            # submit once onto the fresh pool.
+            _rebuild_executor_locked()
+            try:
+                future = _get_executor().submit(*job["submit_args"])
+            except BrokenProcessPool as exc:
+                # Still unrecoverable — fail this run cleanly instead of wedging
+                # the queue or letting it escape start_run as a 500. A resolved
+                # failed future reports "failed" through the normal status path
+                # (fut.done() + exception). No done-callback is attached: the
+                # future is already resolved, so the callback would run inline and
+                # its _evict_finished_locked() would mutate _jobs mid-iteration —
+                # the outer loop below already drives the remaining waiting runs.
+                logger.error("run submit failed (pool unrecoverable): %s", exc)
+                failed: Future = Future()
+                failed.set_exception(exc)
+                job.pop("submit_args", None)
+                job["future"] = failed
+                continue
+        job.pop("submit_args", None)
         job["future"] = future
         job["started_at"] = time.time()
         busy += 1
@@ -338,6 +382,16 @@ def _on_run_finished(_future) -> None:
                              run_id, dur, _future.exception())
             else:
                 logger.info("run %s finished after %.1fs", run_id, dur)
+        # Give the freed slot to the next run. Do NOT rebuild the pool here even
+        # when this future carries a BrokenProcessPool: a worker death resolves
+        # EVERY in-flight future that way, so this callback fires once per dead
+        # future, and an unconditional rebuild would tear down a pool an earlier
+        # callback already rebuilt — orphaning the run just dispatched onto it.
+        # Rebuilding is the submit path's job precisely because it is idempotent:
+        # the first submit onto the dead pool (inside _dispatch_locked) rebuilds
+        # exactly once, and every later submit in the same lock-held sweep lands
+        # on the fresh pool. An empty queue simply lets the dead pool linger until
+        # the next start_run's submit rebuilds it.
         _dispatch_locked()
         _evict_finished_locked()
 
@@ -705,7 +759,16 @@ def get_status(run_id: str) -> dict:
             elif fut.done():
                 exc = fut.exception()
                 if exc is not None:
-                    return {"state": "failed", "error": str(exc)}
+                    # Never surface internal error text: this 200 body bypasses
+                    # the frontend's 5xx suppression, so log the real cause
+                    # server-side and hand the client a generic message. Reporting
+                    # a failure is a read — it must NOT rebuild the pool. A worker
+                    # death resolves many futures at once, so many concurrent polls
+                    # would race to rebuild and thrash the fresh pool; rebuilding is
+                    # the submit path's idempotent job.
+                    logger.error("run %s failed: %s", run_id, exc)
+                    return {"state": "failed",
+                            "error": "The optimization failed. Please try again."}
                 result = dict(fut.result())
                 result["exists_in_library"] = _exists(job["scenario_name"])
                 return _displayify_done(result)

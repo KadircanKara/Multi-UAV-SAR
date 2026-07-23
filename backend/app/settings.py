@@ -129,7 +129,17 @@ COMPARISON_CONCURRENCY: int = max(1, _int_env("SAR_COMPARISON_CONCURRENCY", 2))
 # distinct scenarios and report the remainder in the response's ``skipped`` list
 # (partial + honest, never silently truncated). Override via
 # SAR_COMPARISON_MAX_SCENARIOS.
-COMPARISON_MAX_SCENARIOS: int = max(1, _int_env("SAR_COMPARISON_MAX_SCENARIOS", 60))
+COMPARISON_MAX_SCENARIOS: int = max(1, _int_env("SAR_COMPARISON_MAX_SCENARIOS", 40))
+
+# Per-request WALL-CLOCK budget (seconds) for the comparison fan-out. The count
+# cap above bounds how MANY scenarios are attempted, but a warm selector cache
+# and a cold one differ by ~50x per scenario, so a count that is quick when
+# cached can still pin a core for minutes on a cold start. The services track
+# elapsed time across the per-scenario loop and stop once this budget is spent,
+# reporting the unprocessed remainder in ``skipped`` — so one request's CPU is
+# bounded regardless of cache warmth. At least the first scenario always runs.
+# Override via SAR_COMPARISON_TIME_BUDGET_SECONDS.
+COMPARISON_TIME_BUDGET_SECONDS: int = max(1, _int_env("SAR_COMPARISON_TIME_BUDGET_SECONDS", 15))
 
 # How many heavy single-mission reads may execute concurrently, server-wide
 # (across all clients). Covers the endpoints that unpickle a selector to answer
