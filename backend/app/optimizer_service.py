@@ -312,14 +312,20 @@ def _on_run_finished(_future) -> None:
         _dispatch_locked()
 
 
-def _seeded_n_gen(job: dict) -> Optional[int]:
-    """The run's target generation count, read from the status file seeded at
-    submit time — lets a queued run show "0 / N" before its worker starts."""
+def _n_gen_from_dir(run_dir: str) -> Optional[int]:
+    """Target generation count from a run dir's seeded status file — lets a
+    queued run show "0 / N" before its worker starts. run_dir is immutable for
+    the life of a job, so this is safe to read without the lock."""
     try:
-        with open(os.path.join(job["run_dir"], "status.json")) as fh:
+        with open(os.path.join(run_dir, "status.json")) as fh:
             return json.load(fh).get("n_gen")
     except Exception:
         return None
+
+
+def _seeded_n_gen(job: dict) -> Optional[int]:
+    """As _n_gen_from_dir, keyed on a job dict."""
+    return _n_gen_from_dir(job["run_dir"])
 
 
 def _protected_run_ids() -> set:
@@ -475,6 +481,30 @@ def _purge_stale_runs(
     return purged
 
 
+def _ready_job(run_id: str) -> dict:
+    """Return the job for a run that has FINISHED SUCCESSFULLY, or raise.
+
+    The in-memory lookup runs under _lock so the dispatch window (future popped
+    to None before the real future is set) cannot be mistaken for 'finished' —
+    which would send a reader at a result pickle the worker has not written yet.
+    Falls back to an on-disk done run (finished by construction). Raises
+    RunNotFoundError if unknown, RunNotReadyError if not finished-ok."""
+    with _lock:
+        job = _jobs.get(run_id)
+        if job is not None:
+            fut = job.get("future")
+            if (fut is None or not fut.done()
+                    or fut.cancelled() or fut.exception() is not None):
+                raise RunNotReadyError("Run has not finished successfully.")
+            return dict(job)
+    disk = _disk_job(run_id)
+    if disk is None:
+        raise RunNotFoundError(f"Unknown run_id {run_id!r}")
+    if _awaiting_result(disk):
+        raise RunNotReadyError("Run has not finished successfully.")
+    return disk
+
+
 def serialize_finished_run(run_id: str) -> dict:
     """Serialize a finished run's on-disk artifacts to the Playground JSON schema.
     Reuses playground_export.serialize_run; embeds the full resolved model_key."""
@@ -482,11 +512,7 @@ def serialize_finished_run(run_id: str) -> dict:
     import pandas as pd
     from app.playground_export import serialize_run
 
-    job = _jobs.get(run_id) or _disk_job(run_id)
-    if job is None:
-        raise RunNotFoundError(f"Unknown run_id {run_id!r}")
-    if _awaiting_result(job):
-        raise RunNotReadyError("Run has not finished successfully.")
+    job = _ready_job(run_id)
 
     run_dir = job["run_dir"]
     F_df = pd.read_pickle(os.path.join(run_dir, "Objectives.pkl"))
@@ -589,8 +615,43 @@ def _displayify_done(result: dict) -> dict:
 
 def get_status(run_id: str) -> dict:
     """Poll a run: queued (with its place in line), running (with gen X/Y),
-    done (with the front), cancelled, or failed."""
-    job = _jobs.get(run_id)
+    done (with the front), cancelled, or failed.
+
+    The job-state classification runs under _lock so it cannot observe a job
+    mid-dispatch (submit_args popped, future not yet set) — that window would
+    otherwise crash on ``None.cancelled()``. File reads for the running/queued
+    progress happen after the lock is released, so a slow disk never stalls
+    dispatch."""
+    waiting = False
+    queue_position = None
+    run_dir = None
+    with _lock:
+        job = _jobs.get(run_id)
+        if job is not None:
+            if job.get("cancelled"):
+                # Left the line before a worker picked it up, so there is no
+                # partial front to hand back — distinct from a run that failed.
+                return {"state": "cancelled"}
+            fut = job.get("future")
+            # future is None both while the run waits in line AND during the
+            # brief dispatch window; either way it has not started, so report it
+            # as queued rather than touching a None future.
+            if _is_waiting(job) or fut is None:
+                waiting = True
+                queue_position = _queue_position(run_id)
+                run_dir = job["run_dir"]
+            elif fut.cancelled():
+                return {"state": "cancelled"}
+            elif fut.done():
+                exc = fut.exception()
+                if exc is not None:
+                    return {"state": "failed", "error": str(exc)}
+                result = dict(fut.result())
+                result["exists_in_library"] = _exists(job["scenario_name"])
+                return _displayify_done(result)
+            else:
+                run_dir = job["run_dir"]
+
     if job is None:
         # Recover a finished run from disk after a restart that wiped _jobs.
         disk = _disk_status(run_id)
@@ -601,26 +662,14 @@ def get_status(run_id: str) -> dict:
             result["exists_in_library"] = _exists(scen) if scen else False
             return _displayify_done(result)
         raise RunNotFoundError(f"Unknown run_id {run_id!r}")
-    if job.get("cancelled"):
-        # Left the line before a worker picked it up, so there is no partial
-        # front to hand back — distinct from a run that failed.
-        return {"state": "cancelled"}
-    if _is_waiting(job):
-        return {"state": "queued", "queue_position": _queue_position(run_id),
-                "n_gen": _seeded_n_gen(job)}
-    fut = job["future"]
-    if fut.cancelled():
-        return {"state": "cancelled"}
-    if fut.done():
-        exc = fut.exception()
-        if exc is not None:
-            return {"state": "failed", "error": str(exc)}
-        result = dict(fut.result())
-        result["exists_in_library"] = _exists(job["scenario_name"])
-        return _displayify_done(result)
+
+    if waiting:
+        return {"state": "queued", "queue_position": queue_position,
+                "n_gen": _n_gen_from_dir(run_dir)}
+
     # on a worker — read its status file for gen progress + live front
     try:
-        with open(os.path.join(job["run_dir"], "status.json")) as fh:
+        with open(os.path.join(run_dir, "status.json")) as fh:
             s = json.load(fh)
         return {
             "state": "running",
@@ -675,14 +724,7 @@ def save_run(run_id: str, overwrite: bool) -> dict:
     AlreadyExistsError if the scenario exists and overwrite is False."""
     import shutil
 
-    job = _jobs.get(run_id)
-    if job is None:
-        # Recover a finished run from its on-disk meta after a restart.
-        job = _disk_job(run_id)
-        if job is None:
-            raise RunNotFoundError(f"Unknown run_id {run_id!r}")
-    if _awaiting_result(job):
-        raise RunNotReadyError("Run has not finished successfully.")
+    job = _ready_job(run_id)
 
     scenario_name = job["scenario_name"]
 
