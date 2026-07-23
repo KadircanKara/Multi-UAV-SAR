@@ -87,6 +87,21 @@ OPTIMIZE_RATE_LIMIT: str = os.environ.get("SAR_OPTIMIZE_RATE_LIMIT", "30/minute"
 # SAR_REPLAY_RATE_LIMIT.
 REPLAY_RATE_LIMIT: str = os.environ.get("SAR_REPLAY_RATE_LIMIT", "60/minute")
 
+# Per-IP throttle on the two comparison endpoints (POST /api/comparison,
+# /api/comparison/time). These fan ONE request out to up to 360 / 144 heavy
+# per-scenario operations (selector unpickles / full sensing replays), so a
+# request here is far more expensive than a single replay and gets its own,
+# tighter budget. Override via SAR_COMPARISON_RATE_LIMIT.
+COMPARISON_RATE_LIMIT: str = os.environ.get("SAR_COMPARISON_RATE_LIMIT", "10/minute")
+
+# How many comparison requests may execute concurrently, server-wide (across all
+# clients). The fan-out runs synchronously in the request threadpool; without a
+# ceiling, a few parallel comparisons saturate every core and churn the selector
+# cache toward the container memory limit. Excess requests get a fast 503 rather
+# than piling more CPU-bound work behind the ones already running. Override via
+# SAR_COMPARISON_CONCURRENCY (a 2-core box wants 1-2).
+COMPARISON_CONCURRENCY: int = max(1, _int_env("SAR_COMPARISON_CONCURRENCY", 2))
+
 # ── Deploy-safety: request body size cap ────────────────────────────────────
 # Upper bound on request body size (bytes), enforced via the Content-Length
 # header by a middleware in main.py. Guards against a schema-valid worst-case

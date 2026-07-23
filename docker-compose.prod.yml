@@ -54,6 +54,8 @@ services:
       SAR_MAX_N_GEN: ${SAR_MAX_N_GEN:-1000}
       SAR_OPTIMIZE_RATE_LIMIT: ${SAR_OPTIMIZE_RATE_LIMIT:-30/minute}
       SAR_REPLAY_RATE_LIMIT: ${SAR_REPLAY_RATE_LIMIT:-60/minute}
+      SAR_COMPARISON_RATE_LIMIT: ${SAR_COMPARISON_RATE_LIMIT:-10/minute}
+      SAR_COMPARISON_CONCURRENCY: ${SAR_COMPARISON_CONCURRENCY:-2}
     restart: unless-stopped
     logging: *logging
     deploy:
