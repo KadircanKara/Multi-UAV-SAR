@@ -33,15 +33,54 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
+      # Unset on purpose: exercises the same-origin (relative URL) build that
+      # production ships.
       - run: npm run build
-        env:
-          NEXT_PUBLIC_API_BASE: http://localhost:8000
 
+  # Pull requests only prove the images build. Pushes to main additionally
+  # publish them, so the server pulls a tested artifact instead of compiling on
+  # a box with barely enough RAM to do it.
   docker-images:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # Provided automatically by Actions — no secret to configure.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image names
+        id: names
+        run: |
+          repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "backend=ghcr.io/$repo/backend" >> "$GITHUB_OUTPUT"
+          echo "web=ghcr.io/$repo/web" >> "$GITHUB_OUTPUT"
+
       - name: Build backend image
-        run: docker build -f backend/Dockerfile -t sar-backend .
+        run: |
+          docker build -f backend/Dockerfile \
+            -t "${{ steps.names.outputs.backend }}:latest" \
+            -t "${{ steps.names.outputs.backend }}:${{ github.sha }}" .
+
+      # No NEXT_PUBLIC_API_BASE: the image defaults to same-origin relative
+      # URLs, which is what the production stack serves. Baking a domain in
+      # here would make the artifact environment-specific.
       - name: Build web image
-        run: docker build --build-arg NEXT_PUBLIC_API_BASE=http://localhost:8000 -t sar-web web
+        run: |
+          docker build \
+            -t "${{ steps.names.outputs.web }}:latest" \
+            -t "${{ steps.names.outputs.web }}:${{ github.sha }}" web
+
+      - name: Push images
+        if: github.event_name == 'push'
+        run: |
+          docker push --all-tags "${{ steps.names.outputs.backend }}"
+          docker push --all-tags "${{ steps.names.outputs.web }}"

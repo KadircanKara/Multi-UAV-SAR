@@ -63,6 +63,16 @@ MAX_N_GEN: int = _int_env("SAR_MAX_N_GEN", 1000)
 # a full run over a week. Nothing else here bounds it.
 MAX_N_VISITS: int = _int_env("SAR_MAX_N_VISITS", 3)
 
+# ── Memory: cached scenarios ────────────────────────────────────────────────
+# How many scenarios selector_service keeps unpickled in memory at once. This is
+# the app's largest memory consumer by a wide margin: one large seeded scenario
+# occupies ~160 MB once loaded (a 60 MB pickle expands ~2.7x), so the default 8
+# can pin over a gigabyte. Combined with the optimizer pool, that is what sets
+# the instance size — lower it on a small box, raise it if you have RAM spare
+# and want fewer cold loads (a cache miss costs ~3-5 s).
+SELECTOR_CACHE_SIZE: int = max(1, _int_env("SAR_SELECTOR_CACHE_SIZE", 8))
+
+
 # ── Deploy-safety: rate limit ───────────────────────────────────────────────
 # Per-IP throttle on POST /api/optimize (the compute trigger). slowapi syntax,
 # e.g. "10/minute", "100/hour". Override for a public deploy via

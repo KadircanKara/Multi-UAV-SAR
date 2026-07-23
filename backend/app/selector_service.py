@@ -97,7 +97,7 @@ def _resolve_model_key(scenario: str, model_key: Optional[str]) -> str:
     return resolved
 
 
-@functools.lru_cache(maxsize=8)
+@functools.lru_cache(maxsize=settings.SELECTOR_CACHE_SIZE)
 def _load_selector(scenario: str, resolved_model_key: str) -> SolutionSelector:
     """
     Cached loader — keyed on (scenario, resolved_model_key).

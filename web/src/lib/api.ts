@@ -33,8 +33,18 @@ import type {
   PlaygroundResult,
 } from "@/lib/types";
 
+// Empty means SAME ORIGIN: requests become relative (/api/...), which is what
+// production serves — Caddy puts the API and the UI on one hostname, so there
+// is no CORS and no domain baked into the image.
+//
+// The dev fallback is deliberately gated on NODE_ENV rather than written as a
+// plain `?? "http://localhost:8000"`. Next inlines an *empty* env var as
+// undefined, so a bare `??` fallback silently baked localhost:8000 into
+// production bundles — a deployed site would then call the visitor's own
+// machine. Local dev still works with no setup; `web/.env.local` can override.
 const BASE =
-  process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
+  process.env.NEXT_PUBLIC_API_BASE ??
+  (process.env.NODE_ENV === "development" ? "http://localhost:8000" : "");
 
 // ─── Errors ──────────────────────────────────────────────────────────────────
 
