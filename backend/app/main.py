@@ -17,6 +17,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app import settings
+from app.limits import BodySizeLimitMiddleware
 from app.ratelimit import limiter
 from app.routers import (
     fronts, library, models, scenarios, replay, playback, comparison, optimize,
@@ -140,24 +141,11 @@ app.add_middleware(
 )
 
 
-@app.middleware("http")
-async def limit_upload_size(request: Request, call_next):
-    """Reject oversized request bodies before the route runs, based on the
-    Content-Length header. Requests without a Content-Length header (e.g.
-    chunked transfer-encoding) pass through unchecked here; body size for
-    those is bounded only by whatever the route itself enforces.
-    """
-    content_length = request.headers.get("content-length")
-    if content_length is not None:
-        try:
-            length = int(content_length)
-        except ValueError:
-            length = None
-        if length is not None and length > settings.MAX_UPLOAD_BYTES:
-            return JSONResponse(
-                status_code=413, content={"detail": "request body too large"}
-            )
-    return await call_next(request)
+# Bound the request body regardless of framing. Added AFTER CORS so it sits
+# OUTERMOST (Starlette applies middleware last-added-first), rejecting an
+# oversized body before anything else touches it. Unlike a Content-Length check,
+# this counts the bytes actually received, so a chunked body cannot slip past.
+app.add_middleware(BodySizeLimitMiddleware)
 
 app.include_router(models.router)
 app.include_router(scenarios.router)

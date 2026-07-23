@@ -10,7 +10,6 @@
 #
 # SAR_DOMAIN and SAR_ACME_EMAIL come from the .env file next to
 # docker-compose.prod.yml.
-
 {
 	email {$SAR_ACME_EMAIL}
 	# Staging CA for dry runs — Let's Encrypt rate-limits real certs to 5 per
@@ -21,6 +20,14 @@
 
 {$SAR_DOMAIN}, www.{$SAR_DOMAIN} {
 	encode zstd gzip
+
+	# Hard ceiling on request bodies, enforced on the actual byte count — this is
+	# the real defense (the app's own check trusts Content-Length, which a chunked
+	# body omits). Keep in step with SAR_MAX_UPLOAD_BYTES (25 MB). Caddy answers
+	# 413 before a single byte reaches the backend.
+	request_body {
+		max_size 25MB
+	}
 
 	# Everything the API owns. The backend mounts all of its routes under
 	# /api, so this single matcher covers health, library, replay and optimize.
