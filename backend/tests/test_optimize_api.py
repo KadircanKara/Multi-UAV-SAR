@@ -149,10 +149,16 @@ def test_moo_requires_two_objectives(client):
 
 
 def test_pop_size_and_gen_caps(client):
-    # New caps: pop_size ≤ 500, n_gen ≤ 1000.
-    assert client.post("/api/optimize/check", json=_cfg(pop_size=500, n_gen=1000)).status_code == 200
-    assert client.post("/api/optimize/check", json=_cfg(pop_size=501)).status_code == 422
-    assert client.post("/api/optimize/check", json=_cfg(n_gen=1001)).status_code == 422
+    """Enforced at the configured deploy cap, whatever it is tuned to — the
+    values themselves are asserted in test_scenario_bounds.py."""
+    from app import settings
+
+    ok = _cfg(pop_size=settings.MAX_POP_SIZE, n_gen=settings.MAX_N_GEN)
+    assert client.post("/api/optimize/check", json=ok).status_code == 200
+    assert client.post("/api/optimize/check",
+                       json=_cfg(pop_size=settings.MAX_POP_SIZE + 1)).status_code == 422
+    assert client.post("/api/optimize/check",
+                       json=_cfg(n_gen=settings.MAX_N_GEN + 1)).status_code == 422
 
 
 def test_constraint_values_validated(client):

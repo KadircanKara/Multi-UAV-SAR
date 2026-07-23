@@ -35,8 +35,10 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/api/health', timeout=4)"
 
-# Exactly ONE worker — optimizer job state and rate-limit buckets are
-# per-process (see backend/app/optimizer_service.py). Never add --workers.
+# Exactly ONE uvicorn worker — optimizer job state, the run queue, and
+# rate-limit buckets are all per-process (see backend/app/optimizer_service.py).
+# Never add --workers. Concurrency for optimizations comes from the pool inside
+# this process instead: set SAR_OPTIMIZE_WORKERS (default 2, one core each).
 # Behind a proxy/ALB, set FORWARDED_ALLOW_IPS to the proxy IP/CIDR (uvicorn
 # reads it natively); it defaults to 127.0.0.1, never set it to '*'.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]

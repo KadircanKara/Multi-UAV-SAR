@@ -1,9 +1,16 @@
 """Pydantic v2 schemas for the Multi-UAV-SAR API."""
 from __future__ import annotations
 
+import math
 from typing import Optional, Union
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 
 class ScenarioConfig(BaseModel):
@@ -12,7 +19,10 @@ class ScenarioConfig(BaseModel):
     All keys are passed straight into ``PathInfo(scenario_dict)``.
     """
 
-    grid_size: int = Field(default=8, ge=1)
+    # le=64 is an absolute sanity ceiling, independent of SAR_MAX_GRID_SIZE (8):
+    # a grid of a billion cells must never reach PathInfo however the deploy
+    # cap is tuned. Cell count — and every per-cell scan — grows as grid_size².
+    grid_size: int = Field(default=8, ge=1, le=64)
     cell_side_length: Union[int, float] = Field(default=50, gt=0)
     number_of_drones: int = Field(default=4, ge=1)
     max_drone_speed: float = Field(default=2.5, gt=0)
@@ -31,6 +41,17 @@ class ScenarioConfig(BaseModel):
         """Coerce whole-number floats to int so PathInfo filenames stay integer-formatted."""
         if isinstance(v, float) and v.is_integer():
             return int(v)
+        return v
+
+    @field_validator("cell_side_length", "comm_cell_range", "max_drone_speed",
+                     mode="after")
+    @classmethod
+    def reject_non_finite(cls, v: object, info: ValidationInfo) -> object:
+        """``gt=0`` admits infinity (only NaN fails the comparison). An infinite
+        distance or speed propagates into the objective computation as inf/NaN
+        instead of failing here, so reject it at the edge."""
+        if isinstance(v, float) and not math.isfinite(v):
+            raise ValueError(f"{info.field_name} must be a finite number.")
         return v
 
     @model_validator(mode="after")
@@ -436,6 +457,11 @@ class OptimizeConfig(BaseModel):
                 f"grid_size {self.scenario.grid_size} exceeds the cap of "
                 f"{settings.MAX_GRID_SIZE}"
             )
+        if self.scenario.n_visits > settings.MAX_N_VISITS:
+            raise ValueError(
+                f"n_visits {self.scenario.n_visits} exceeds the cap of "
+                f"{settings.MAX_N_VISITS}"
+            )
         if self.pop_size > settings.MAX_POP_SIZE:
             raise ValueError(
                 f"pop_size {self.pop_size} exceeds the cap of {settings.MAX_POP_SIZE}"
@@ -452,6 +478,10 @@ class OptimizeStartResponse(BaseModel):
     model_key: str
     exists: bool
     seeded: bool = False
+    # True when every pool worker was busy and the run is waiting its turn.
+    queued: bool = False
+    # 1-based place in the waiting line (1 = next to start); None if it started.
+    queue_position: Optional[int] = None
 
 
 class OptimizeCheckResponse(BaseModel):
@@ -483,7 +513,9 @@ class OptimizeFront(BaseModel):
 
 
 class OptimizeStatusResponse(BaseModel):
-    state: str  # running | done | failed
+    state: str  # queued | running | done | failed | cancelled
+    # 1-based place in the waiting line while state == "queued".
+    queue_position: Optional[int] = None
     gen: Optional[int] = None
     n_gen: Optional[int] = None
     front: Optional[OptimizeFront] = None

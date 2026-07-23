@@ -1,7 +1,13 @@
 """
 Optimizer service: synthesizes a model dict from a user's config, derives the
-scenario name, runs the optimization in a single-worker ProcessPoolExecutor
-(background + poll), and (later) saves a finished run to the library.
+scenario name, runs the optimization on a ProcessPoolExecutor (background +
+poll), and (later) saves a finished run to the library.
+
+Runs queue rather than being refused: the pool holds settings.OPTIMIZE_WORKERS
+child processes, and anything submitted while they are all busy waits its turn
+and reports its place in line. Two ceilings keep that line honest —
+OPTIMIZE_QUEUE_MAX bounds it overall, OPTIMIZE_MAX_PER_CLIENT bounds any one
+caller's share — and both surface as 409 rather than an unbounded backlog.
 
 Import-safety: imports PathInfo / PathOptimizationModel / PathFuncDict (all
 import-safe — no `main` / `PathAlgorithm`). The heavy operators are imported
@@ -47,8 +53,12 @@ _OBJ_CODE = {
 
 # ─── Errors (mapped to HTTP by the router) ────────────────────────────────────
 
-class RunInProgressError(Exception):
-    """A run is already in flight (single worker)."""
+class QueueFullError(Exception):
+    """No free slot: running + waiting runs already fill settings.OPTIMIZE_QUEUE_MAX."""
+
+
+class ClientLimitError(Exception):
+    """This client already holds settings.OPTIMIZE_MAX_PER_CLIENT runs."""
 
 
 class RunNotFoundError(Exception):
@@ -214,14 +224,102 @@ def check_config(
 
 _executor: Optional[ProcessPoolExecutor] = None
 _jobs: dict[str, dict] = {}
-_lock = threading.Lock()
+# Re-entrant: a future that is already resolved runs its done-callback in the
+# calling thread, so _dispatch_locked can be re-entered while it holds the lock.
+_lock = threading.RLock()
 
 
 def _get_executor() -> ProcessPoolExecutor:
     global _executor
     if _executor is None:
-        _executor = ProcessPoolExecutor(max_workers=1)
+        _executor = ProcessPoolExecutor(max_workers=settings.OPTIMIZE_WORKERS)
     return _executor
+
+
+def _is_waiting(job: dict) -> bool:
+    """True while a run is in the line, not yet handed to a pool worker."""
+    return job.get("future") is None and not job.get("cancelled") and "submit_args" in job
+
+
+def _holds_worker(job: dict) -> bool:
+    """True while a run occupies one of the pool's workers."""
+    fut = job.get("future")
+    return fut is not None and not fut.done()
+
+
+def _is_pending(job: dict) -> bool:
+    """True while a run still occupies a queue slot — waiting or running."""
+    return _is_waiting(job) or _holds_worker(job)
+
+
+def _awaiting_result(job: dict) -> bool:
+    """True when a job has no successful result to read yet — still waiting,
+    still running, cancelled, or failed. A job rebuilt from disk by _disk_job
+    carries no submit_args and is finished by construction."""
+    if job.get("cancelled"):
+        return True
+    fut = job.get("future")
+    if fut is None:
+        return "submit_args" in job
+    return not fut.done() or fut.cancelled() or fut.exception() is not None
+
+
+def _queue_position(run_id: str) -> Optional[int]:
+    """1-based place in the waiting line, or None if the run is not waiting.
+
+    Position 1 means "next to start". Runs already on a worker are not in the
+    line, so they are skipped rather than counted ahead.
+    """
+    job = _jobs.get(run_id)
+    if job is None or not _is_waiting(job):
+        return None
+    ahead = 0
+    # _jobs preserves submission order, which is the order runs are dispatched.
+    for rid, other in _jobs.items():
+        if rid == run_id:
+            break
+        if _is_waiting(other):
+            ahead += 1
+    return ahead + 1
+
+
+def _dispatch_locked() -> None:
+    """Hand waiting runs to the pool while it has free workers. Caller holds _lock.
+
+    The pool's own queue is deliberately left empty: ProcessPoolExecutor buffers
+    extra work items and marks their futures ``running()`` before any worker
+    picks them up, which would make both the wait count and every position
+    wrong. Submitting only as many runs as there are workers keeps the
+    "running" state honest.
+    """
+    busy = sum(1 for j in _jobs.values() if _holds_worker(j))
+    for job in _jobs.values():
+        if busy >= settings.OPTIMIZE_WORKERS:
+            return
+        if not _is_waiting(job):
+            continue
+        future = _get_executor().submit(*job.pop("submit_args"))
+        job["future"] = future
+        busy += 1
+        # Set last: the callback re-enters this function, and it must see the
+        # job as dispatched so it isn't submitted twice.
+        future.add_done_callback(_on_run_finished)
+
+
+def _on_run_finished(_future) -> None:
+    """A worker freed up — give it to whoever is next. Runs in the pool's thread."""
+    with _lock:
+        _dispatch_locked()
+
+
+def _seeded_n_gen(job: dict) -> Optional[int]:
+    """The run's target generation count, read from the status file seeded at
+    submit time — lets a queued run show "0 / N" before its worker starts."""
+    try:
+        with open(os.path.join(job["run_dir"], "status.json")) as fh:
+            return json.load(fh).get("n_gen")
+    except Exception:
+        return None
 
 
 def shutdown(wait: bool = False) -> None:
@@ -323,8 +421,7 @@ def serialize_finished_run(run_id: str) -> dict:
     job = _jobs.get(run_id) or _disk_job(run_id)
     if job is None:
         raise RunNotFoundError(f"Unknown run_id {run_id!r}")
-    fut = job.get("future")
-    if fut is not None and (not fut.done() or fut.exception() is not None):
+    if _awaiting_result(job):
         raise RunNotReadyError("Run has not finished successfully.")
 
     run_dir = job["run_dir"]
@@ -354,9 +451,14 @@ def start_run(
     max_mean_tbv: Optional[float] = None,
     gen_strategy: str = "fixed",
     early_stop_patience: int = 10, early_stop_threshold: float = 0.10,
+    client_key: str = "-",
 ) -> dict:
-    """Submit a run to the worker process; returns {run_id, scenario_name,
-    model_key, exists, seeded}. Raises RunInProgressError if one is already running."""
+    """Queue a run on the worker pool; returns {run_id, scenario_name, model_key,
+    exists, seeded, queued, queue_position}.
+
+    The run starts immediately if a pool worker is free and waits its turn
+    otherwise. Raises QueueFullError when every slot is taken, or
+    ClientLimitError when *client_key* already holds its share of them."""
     from app.optimizer_worker import run_optimization
 
     model_key, model_dict = resolve_model(
@@ -368,8 +470,18 @@ def start_run(
 
     with _lock:
         _purge_stale_runs()
-        if any(not j["future"].done() for j in _jobs.values()):
-            raise RunInProgressError("A run is already in progress.")
+        pending = [j for j in _jobs.values() if _is_pending(j)]
+        if len(pending) >= settings.OPTIMIZE_QUEUE_MAX:
+            raise QueueFullError(
+                "The optimization queue is full. Wait for a run to finish and try again."
+            )
+        mine = sum(1 for j in pending if j.get("client_key") == client_key)
+        if mine >= settings.OPTIMIZE_MAX_PER_CLIENT:
+            raise ClientLimitError(
+                f"You already have {mine} optimization"
+                f"{'s' if mine != 1 else ''} queued or running. "
+                "Wait for one to finish before starting another."
+            )
         run_id = uuid.uuid4().hex[:12]
         run_dir = os.path.join(settings.RESULTS_ROOT, ".runs", run_id)
         os.makedirs(run_dir, exist_ok=True)
@@ -377,22 +489,25 @@ def start_run(
         # (the worker child takes a moment to spawn and write its own).
         with open(os.path.join(run_dir, "status.json"), "w") as fh:
             json.dump({"state": "running", "gen": 0, "n_gen": int(n_gen)}, fh)
-        future = _get_executor().submit(
-            run_optimization, run_id, model_dict, scenario_dict, alg,
-            int(pop_size), int(n_gen), int(seed), run_dir,
-            scenario_name, model_key, list(objectives), polarities,
-            max_mission_time, min_connectivity, max_mean_tbv,
-            gen_strategy, int(early_stop_patience), float(early_stop_threshold),
-        )
         _jobs[run_id] = {
-            "future": future, "run_dir": run_dir,
+            "future": None, "run_dir": run_dir,
             "scenario_name": scenario_name, "model_key": model_key,
-            "model_dict": model_dict,
+            "model_dict": model_dict, "client_key": client_key,
+            "submit_args": (
+                run_optimization, run_id, model_dict, scenario_dict, alg,
+                int(pop_size), int(n_gen), int(seed), run_dir,
+                scenario_name, model_key, list(objectives), polarities,
+                max_mission_time, min_connectivity, max_mean_tbv,
+                gen_strategy, int(early_stop_patience), float(early_stop_threshold),
+            ),
         }
+        _dispatch_locked()
+        position = _queue_position(run_id)
     return {
         "run_id": run_id, "scenario_name": to_display(scenario_name),
         "model_key": to_display(model_key), "exists": _exists(scenario_name),
         "seeded": model_key in AVAILABLE_MODELS and _exists(scenario_name),
+        "queued": position is not None, "queue_position": position,
     }
 
 
@@ -409,7 +524,8 @@ def _displayify_done(result: dict) -> dict:
 
 
 def get_status(run_id: str) -> dict:
-    """Poll a run: running (with gen X/Y), done (with the front), or failed."""
+    """Poll a run: queued (with its place in line), running (with gen X/Y),
+    done (with the front), cancelled, or failed."""
     job = _jobs.get(run_id)
     if job is None:
         # Recover a finished run from disk after a restart that wiped _jobs.
@@ -421,7 +537,16 @@ def get_status(run_id: str) -> dict:
             result["exists_in_library"] = _exists(scen) if scen else False
             return _displayify_done(result)
         raise RunNotFoundError(f"Unknown run_id {run_id!r}")
+    if job.get("cancelled"):
+        # Left the line before a worker picked it up, so there is no partial
+        # front to hand back — distinct from a run that failed.
+        return {"state": "cancelled"}
+    if _is_waiting(job):
+        return {"state": "queued", "queue_position": _queue_position(run_id),
+                "n_gen": _seeded_n_gen(job)}
     fut = job["future"]
+    if fut.cancelled():
+        return {"state": "cancelled"}
     if fut.done():
         exc = fut.exception()
         if exc is not None:
@@ -429,7 +554,7 @@ def get_status(run_id: str) -> dict:
         result = dict(fut.result())
         result["exists_in_library"] = _exists(job["scenario_name"])
         return _displayify_done(result)
-    # still running — read the worker's status file for gen progress + live front
+    # on a worker — read its status file for gen progress + live front
     try:
         with open(os.path.join(job["run_dir"], "status.json")) as fh:
             s = json.load(fh)
@@ -445,17 +570,33 @@ def get_status(run_id: str) -> dict:
 
 
 def request_stop(run_id: str) -> dict:
-    """Cooperatively cancel a running optimization by dropping a ``cancel`` flag
-    file the worker checks each generation. The run stops within a generation or
-    two and returns its best-so-far front (a partial result), exactly like a
-    completed run. Idempotent: a no-op (``stopping: False``) if already finished."""
+    """Cancel a run, by whichever route its state allows.
+
+    A run that is still waiting is dropped from the pool outright and ends up
+    ``cancelled`` — no worker ever touched it, so there is nothing to salvage.
+    A run already executing is cancelled cooperatively via a ``cancel`` flag
+    file the worker checks each generation: it stops within a generation or two
+    and returns its best-so-far front, exactly like a completed run.
+
+    Idempotent: a no-op (``stopping: False``) if already finished."""
     job = _jobs.get(run_id)
     if job is None:
         # A finished run recovered from disk is already done — nothing to stop.
         if _disk_status(run_id) is not None:
             return {"run_id": run_id, "stopping": False}
         raise RunNotFoundError(f"Unknown run_id {run_id!r}")
-    if job["future"].done():
+    with _lock:
+        if job.get("cancelled"):
+            return {"run_id": run_id, "stopping": False}
+        # Still in line: drop it before it ever reaches a worker. A cancel file
+        # would never be read, since no worker opens the run dir.
+        if _is_waiting(job):
+            job["cancelled"] = True
+            job.pop("submit_args", None)
+            _dispatch_locked()  # its slot just freed up
+            return {"run_id": run_id, "stopping": True}
+    fut = job["future"]
+    if fut.done():
         return {"run_id": run_id, "stopping": False}
     try:
         open(os.path.join(job["run_dir"], "cancel"), "w").close()
@@ -476,8 +617,7 @@ def save_run(run_id: str, overwrite: bool) -> dict:
         job = _disk_job(run_id)
         if job is None:
             raise RunNotFoundError(f"Unknown run_id {run_id!r}")
-    fut = job.get("future")
-    if fut is not None and (not fut.done() or fut.exception() is not None):
+    if _awaiting_result(job):
         raise RunNotReadyError("Run has not finished successfully.")
 
     scenario_name = job["scenario_name"]

@@ -65,6 +65,10 @@ class PlaygroundResult(BaseModel):
             raise ValueError(
                 f"number_of_drones {self.scenario.number_of_drones} exceeds the "
                 f"cap of {settings.MAX_DRONES}")
+        if self.scenario.n_visits > settings.MAX_N_VISITS:
+            raise ValueError(
+                f"n_visits {self.scenario.n_visits} exceeds the cap of "
+                f"{settings.MAX_N_VISITS}")
 
         n_objectives = len(self.model["F"])
         number_of_cells = self.scenario.grid_size ** 2
