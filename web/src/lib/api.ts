@@ -90,20 +90,41 @@ function messageFromBody(body: unknown, status: number): string {
 
 // ─── Internal helper ─────────────────────────────────────────────────────────
 
+// Ceiling on how long any single request may run before the client gives up.
+// Generous, because the synchronous compare/replay calls can legitimately take a
+// while on a cold cache — this is here to end an indefinite hang (a wedged
+// server, a dropped connection), not to bound normal latency. Per-call override
+// via `timeoutMs`.
+const DEFAULT_TIMEOUT_MS = 120_000;
+
 async function request<T>(
   path: string,
-  options?: RequestInit
+  options?: RequestInit & { timeoutMs?: number }
 ): Promise<T> {
+  const { timeoutMs, ...init } = options ?? {};
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs ?? DEFAULT_TIMEOUT_MS);
   let res: Response;
   try {
     res = await fetch(`${BASE}${path}`, {
-      headers: { "Content-Type": "application/json", ...(options?.headers ?? {}) },
-      ...options,
+      headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
+      ...init,
+      signal: controller.signal,
     });
-  } catch {
+  } catch (err) {
+    // A timeout aborts the fetch; distinguish it from a plain reachability
+    // failure so the user knows to retry rather than assume the server is down.
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiError(
+        "The request took too long and was cancelled. Please try again.",
+        0,
+      );
+    }
     // Network-level failure (server down, DNS, CORS, offline) — fetch rejects
     // before any response. Present it as a reachability problem, not a crash.
     throw new ApiError(fallbackMessage(0), 0);
+  } finally {
+    clearTimeout(timer);
   }
   if (!res.ok) {
     // Never surface a raw server-side (5xx) detail to the user — it can carry
