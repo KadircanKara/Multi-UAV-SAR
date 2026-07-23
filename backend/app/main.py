@@ -158,9 +158,18 @@ app.include_router(optimize.router)
 app.include_router(playground.router)
 
 
+@app.on_event("startup")
+def _start_run_janitor() -> None:
+    """Start the background sweeper that bounds the temp .runs/ tree on a timer,
+    so disk stays bounded even when no new optimizations are being started."""
+    from app import optimizer_service
+    optimizer_service.start_janitor()
+
+
 @app.on_event("shutdown")
 def _shutdown_optimizer() -> None:
-    """Release the optimizer worker pool so the process can exit cleanly."""
+    """Stop the janitor and release the optimizer worker pool so the process can
+    exit cleanly (shutdown() also does a final sweep)."""
     from app import optimizer_service
     optimizer_service.shutdown(wait=False)
 

@@ -322,10 +322,55 @@ def _seeded_n_gen(job: dict) -> Optional[int]:
         return None
 
 
+def _protected_run_ids() -> set:
+    """Run ids of every in-flight (waiting or running) job — never purge these."""
+    with _lock:
+        return {rid for rid, j in _jobs.items() if _is_pending(j)}
+
+
+_janitor_stop = threading.Event()
+_janitor_thread: Optional[threading.Thread] = None
+
+
+def start_janitor(interval: Optional[int] = None) -> None:
+    """Start the background sweeper that bounds .runs on a timer, independent of
+    whether new runs are being started. Idempotent; a no-op if the interval is 0."""
+    global _janitor_thread
+    interval = settings.RUN_PURGE_INTERVAL_SECONDS if interval is None else interval
+    if interval <= 0 or _janitor_thread is not None:
+        return
+    _janitor_stop.clear()
+
+    def _loop() -> None:
+        # wait() returns True only when stop is set, so this exits promptly on
+        # shutdown instead of sleeping out the interval.
+        while not _janitor_stop.wait(interval):
+            try:
+                _purge_stale_runs(protected=_protected_run_ids())
+            except Exception:
+                pass  # a sweep must never take the janitor thread down
+
+    _janitor_thread = threading.Thread(target=_loop, name="run-janitor", daemon=True)
+    _janitor_thread.start()
+
+
+def stop_janitor() -> None:
+    """Signal the janitor to exit (on app shutdown / test teardown)."""
+    global _janitor_thread
+    _janitor_stop.set()
+    _janitor_thread = None
+
+
 def shutdown(wait: bool = False) -> None:
     """Tear down the worker executor (on app shutdown / test teardown) so the
-    interpreter doesn't block at exit joining a stale pool."""
+    interpreter doesn't block at exit joining a stale pool. Also sweeps .runs one
+    last time so a clean stop does not leave the last batch of dirs behind."""
     global _executor
+    stop_janitor()
+    try:
+        _purge_stale_runs(protected=_protected_run_ids())
+    except Exception:
+        pass
     if _executor is not None:
         try:
             _executor.shutdown(wait=wait, cancel_futures=True)
@@ -387,27 +432,46 @@ def _disk_job(run_id: str) -> Optional[dict]:
     }
 
 
-def _purge_stale_runs(now: Optional[float] = None) -> list[str]:
-    """Remove temp .runs/<id> dirs older than settings.RUN_TTL_HOURS. Best-effort:
-    never raises (a sweep failure must not block a new run)."""
+def _purge_stale_runs(
+    now: Optional[float] = None, protected: Optional[set] = None
+) -> list[str]:
+    """Bound the temp .runs/ tree. Removes a dir when it is older than
+    settings.RUN_TTL_HOURS OR beyond the newest settings.OPTIMIZE_RUN_KEEP — the
+    count cap is what actually bounds disk, since age alone leaks under a burst
+    or a process that goes quiet. Never touches a run whose id is in *protected*
+    (the in-flight runs), and never raises: a sweep failure must not block a run.
+    """
     import shutil
     import time as _time
     now = now if now is not None else _time.time()
+    protected = protected or set()
     root = os.path.join(settings.RESULTS_ROOT, ".runs")
     cutoff = now - settings.RUN_TTL_HOURS * 3600
     purged: list[str] = []
+
+    # Collect (name, path, mtime) for every candidate dir, newest first.
+    candidates: list[tuple[str, str, float]] = []
     try:
         entries = os.listdir(root)
     except OSError:
         return purged
     for name in entries:
+        if name in protected:
+            continue
         d = os.path.join(root, name)
         try:
-            if os.path.isdir(d) and os.path.getmtime(d) < cutoff:
-                shutil.rmtree(d, ignore_errors=True)
-                purged.append(name)
+            if os.path.isdir(d):
+                candidates.append((name, d, os.path.getmtime(d)))
         except OSError:
             continue
+    candidates.sort(key=lambda c: c[2], reverse=True)
+
+    keep = settings.OPTIMIZE_RUN_KEEP
+    for rank, (name, d, mtime) in enumerate(candidates):
+        # Delete if past the age cutoff, or ranked beyond the newest `keep`.
+        if mtime < cutoff or rank >= keep:
+            shutil.rmtree(d, ignore_errors=True)
+            purged.append(name)
     return purged
 
 
@@ -469,7 +533,7 @@ def start_run(
     alg = model_dict["Alg"]
 
     with _lock:
-        _purge_stale_runs()
+        _purge_stale_runs(protected={rid for rid, j in _jobs.items() if _is_pending(j)})
         pending = [j for j in _jobs.values() if _is_pending(j)]
         if len(pending) >= settings.OPTIMIZE_QUEUE_MAX:
             raise QueueFullError(

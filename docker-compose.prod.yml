@@ -56,7 +56,13 @@ services:
       SAR_REPLAY_RATE_LIMIT: ${SAR_REPLAY_RATE_LIMIT:-60/minute}
       SAR_COMPARISON_RATE_LIMIT: ${SAR_COMPARISON_RATE_LIMIT:-10/minute}
       SAR_COMPARISON_CONCURRENCY: ${SAR_COMPARISON_CONCURRENCY:-2}
+      # Bound the temp .runs/ tree so it cannot fill the volume.
+      SAR_OPTIMIZE_RUN_KEEP: ${SAR_OPTIMIZE_RUN_KEEP:-40}
+      SAR_RUN_PURGE_INTERVAL_SECONDS: ${SAR_RUN_PURGE_INTERVAL_SECONDS:-900}
     restart: unless-stopped
+    # Give in-flight runs and the shutdown sweep a defined window before SIGKILL,
+    # so a deploy does not truncate a run pickle mid-write.
+    stop_grace_period: 30s
     logging: *logging
     deploy:
       resources:

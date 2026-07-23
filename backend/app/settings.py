@@ -133,3 +133,15 @@ OPTIMIZE_MAX_PER_CLIENT: int = max(1, _int_env("SAR_OPTIMIZE_MAX_PER_CLIENT", 2)
 ALLOW_LIBRARY_SAVE: bool = _int_env("SAR_ALLOW_LIBRARY_SAVE", 0) == 1
 # Temp per-run dirs under RESULTS_ROOT/.runs are swept once they exceed this age.
 RUN_TTL_HOURS: int = _int_env("SAR_RUN_TTL_HOURS", 24)
+
+# Ceiling on how many finished run dirs are kept, independent of age. Age alone
+# does not bound disk: a burst of runs inside the TTL window, or a run that fails
+# and is never followed by another (so the age sweep never fires), both leak.
+# The newest OPTIMIZE_RUN_KEEP are retained (so /export still works for recent
+# runs); older ones are removed even before they reach RUN_TTL_HOURS.
+OPTIMIZE_RUN_KEEP: int = max(1, _int_env("SAR_OPTIMIZE_RUN_KEEP", 40))
+
+# How often the background janitor sweeps .runs (seconds). Runs regardless of
+# whether new optimizations are being started, so disk is bounded even when the
+# app goes quiet. 0 disables the janitor (the start-of-run sweep still happens).
+RUN_PURGE_INTERVAL_SECONDS: int = max(0, _int_env("SAR_RUN_PURGE_INTERVAL_SECONDS", 900))
