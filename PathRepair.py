@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 from pymoo.core.repair import Repair
 import numpy as np
 from PathSolution import *
@@ -13,6 +15,7 @@ from PathAnimation import *
 def sign(x):
     return 1 if x > 0 else -1 if x < 0 else 0  # Returns 0 if x is exactly 0
 
+
 class PathRepair(Repair):
 
     def _do(self, problem, X, **kwargs):
@@ -26,7 +29,7 @@ class PathRepair(Repair):
                 calculate_disconnectivity = True
             if "TBV" in obj:
                 calculate_tbv = True
-        
+
         for k in range(len(X)):
             sol : PathSolution = X[k, 0]
 
@@ -35,29 +38,37 @@ class PathRepair(Repair):
             X[k, 0] = PathSolution(new_path, np.copy(sol.start_points), sol.info, calculate_pathplan=True, calculate_tbv=calculate_tbv, calculate_connectivity=calculate_connectivity, calculate_disconnectivity=calculate_disconnectivity)
 
         return X
-    
+
     def interpolate_path(self, sol:PathSolution):
 
-        copy_path = list(sol.path).copy()
+        path = list(sol.path)
+        n_visits = sol.info.n_visits
+        target_length = sol.info.number_of_cells * n_visits
 
         new_path = []
+        # Kept equal to new_path.count(c) for every c. The visit ceiling used to
+        # be checked by rescanning new_path per candidate cell, which made the
+        # loop quadratic in path length — and it dominated the whole optimizer.
+        visits = defaultdict(int)
 
-        city_prev = copy_path[0]
+        city_prev = path[0]
+        index = 1  # walk an index; popping the front of a list is itself O(n)
 
-        copy_path.pop(0)
+        while len(new_path) < target_length:
 
-        while(len(new_path) < sol.info.number_of_cells * sol.info.n_visits):
+            city = path[index]
+            index += 1
 
-            city = copy_path[0]
-
-            copy_path.pop(0)
-
-            if new_path.count(city) < sol.info.n_visits:
+            if visits[city] < n_visits:
                 # Interpolate cities
                 mid_cities = self.interpolate_between_cities(sol, city_prev, city)
                 for city_mid in mid_cities:
-                    if new_path.count(city_mid) < sol.info.n_visits:
+                    # NOTE: a mid-cell already at its ceiling is skipped, so the
+                    # emitted path can jump. That is intentional — the speed
+                    # violation is carried as a constraint, not repaired here.
+                    if visits[city_mid] < n_visits:
                         new_path.append(city_mid)
+                        visits[city_mid] += 1
 
             city_prev = city
 
