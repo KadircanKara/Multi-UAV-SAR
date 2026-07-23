@@ -77,6 +77,11 @@ class EmptyRunError(Exception):
     """The run found no feasible solutions, so there is nothing to save."""
 
 
+class StorageUnavailableError(Exception):
+    """The run's storage could not be written — a full, read-only, or
+    wrong-owner Results volume. Surfaced as 503, not an opaque 500."""
+
+
 # ─── Model synthesis ──────────────────────────────────────────────────────────
 
 def _derive_type_alg(optimization_type: str, method: str) -> tuple[str, str]:
@@ -574,11 +579,19 @@ def start_run(
             )
         run_id = uuid.uuid4().hex[:12]
         run_dir = os.path.join(settings.RESULTS_ROOT, ".runs", run_id)
-        os.makedirs(run_dir, exist_ok=True)
-        # Seed the status file so the very first poll already shows n_gen
-        # (the worker child takes a moment to spawn and write its own).
-        with open(os.path.join(run_dir, "status.json"), "w") as fh:
-            json.dump({"state": "running", "gen": 0, "n_gen": int(n_gen)}, fh)
+        # A full / read-only / wrong-owner Results volume fails here. Turn the
+        # raw OSError into a typed 503 so the operator sees storage as the cause
+        # instead of an opaque 500 on every optimize attempt.
+        try:
+            os.makedirs(run_dir, exist_ok=True)
+            # Seed the status file so the very first poll already shows n_gen
+            # (the worker child takes a moment to spawn and write its own).
+            with open(os.path.join(run_dir, "status.json"), "w") as fh:
+                json.dump({"state": "running", "gen": 0, "n_gen": int(n_gen)}, fh)
+        except OSError as exc:
+            raise StorageUnavailableError(
+                "The server could not write run storage. Try again shortly."
+            ) from exc
         _jobs[run_id] = {
             "future": None, "run_dir": run_dir,
             "scenario_name": scenario_name, "model_key": model_key,

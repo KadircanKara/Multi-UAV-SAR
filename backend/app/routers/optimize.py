@@ -38,6 +38,7 @@ from app.optimizer_service import (
     RunNotReadyError,
     AlreadyExistsError,
     EmptyRunError,
+    StorageUnavailableError,
 )
 
 router = APIRouter()
@@ -69,6 +70,8 @@ def post_optimize(request: Request, body: OptimizeConfig) -> dict:
         )
     except (QueueFullError, ClientLimitError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except StorageUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get("/api/optimize/{run_id}", response_model=OptimizeStatusResponse)
