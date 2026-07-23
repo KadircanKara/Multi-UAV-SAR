@@ -346,11 +346,6 @@ def _n_gen_from_dir(run_dir: str) -> Optional[int]:
         return None
 
 
-def _seeded_n_gen(job: dict) -> Optional[int]:
-    """As _n_gen_from_dir, keyed on a job dict."""
-    return _n_gen_from_dir(job["run_dir"])
-
-
 def _protected_run_ids() -> set:
     """Run ids of every in-flight (waiting or running) job — never purge these."""
     with _lock:
