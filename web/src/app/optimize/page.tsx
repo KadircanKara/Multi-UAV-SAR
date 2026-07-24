@@ -65,6 +65,33 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
+// The raw export download and "analyze in place" hit the export URL on the API
+// origin directly (an <a download> is cross-origin, so we fetch into a blob),
+// bypassing lib/api.ts's request() helper. Mirror its AbortController timeout here
+// so a wedged server or dropped connection can't hang the download/analyze
+// forever. Matches DEFAULT_TIMEOUT_MS in lib/api.ts.
+const EXPORT_FETCH_TIMEOUT_MS = 120_000;
+
+async function fetchWithTimeout(
+  url: string,
+  timeoutMs = EXPORT_FETCH_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(
+        "The request took too long and was cancelled. Please try again.",
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // LiveProgress (Recharts) — only mounted while a run is in flight.
 const LiveProgress = dynamic(
   () => import("@/components/optimize/LiveProgress").then((m) => m.LiveProgress),
@@ -951,7 +978,7 @@ export default function OptimizePage() {
   async function downloadResultJson() {
     if (!runId || !result) return;
     try {
-      const res = await fetch(optimizeExportUrl(runId));
+      const res = await fetchWithTimeout(optimizeExportUrl(runId));
       if (!res.ok) throw new Error(`export failed (${res.status})`);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -992,7 +1019,7 @@ export default function OptimizePage() {
     if (!runId) return;
     setAnalyzeBusy(true);
     try {
-      const res = await fetch(optimizeExportUrl(runId));
+      const res = await fetchWithTimeout(optimizeExportUrl(runId));
       if (!res.ok) throw new Error(`export failed (${res.status})`);
       loadAnalysis(parseRunJson(await res.text()));
     } catch (e) {

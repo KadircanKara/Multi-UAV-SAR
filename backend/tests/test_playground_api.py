@@ -70,6 +70,24 @@ def test_playground_oversized_body_is_413(client, monkeypatch):
     r = client.post("/api/playground/front", json={"result": _payload()})
     assert r.status_code == 413
 
+
+def test_playground_total_path_cells_cap_is_422(client, monkeypatch):
+    """The combined path-cell cap short-circuits an upload whose solutions sum to
+    too many cells, BEFORE the per-cell validation loop. Monkeypatched tiny so the
+    seeded payload (hundreds of solutions) trips it."""
+    from app import playground_schema
+    monkeypatch.setattr(playground_schema, "MAX_TOTAL_PATH_CELLS", 10, raising=False)
+    r = client.post("/api/playground/front", json={"result": _payload()})
+    assert r.status_code == 422
+
+
+def test_playground_comparison_rejects_too_many_results(client):
+    """_CompareObjReq.results is bounded so one request cannot fan out over an
+    unbounded list of heavy uploads."""
+    payloads = [_payload() for _ in range(9)]  # max_length is 8
+    r = client.post("/api/playground/comparison", json={"results": payloads})
+    assert r.status_code == 422
+
 def test_playground_front_is_rate_limited(client, monkeypatch):
     from app import settings
     monkeypatch.setattr(settings, "OPTIMIZE_RATE_LIMIT", "1/minute", raising=False)

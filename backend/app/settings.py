@@ -40,6 +40,25 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+def _float_env(name: str, default: float) -> float:
+    """Read a float from the environment, falling back to a default.
+
+    Same import-time robustness as ``_int_env``: a malformed value must not turn
+    a container start into a restart loop, so fall back and warn to stderr."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        print(
+            f"WARNING: environment variable {name}={raw!r} is not a valid "
+            f"number; falling back to default {default}.",
+            file=sys.stderr,
+        )
+        return default
+
+
 def _csv_env(name: str, default: list[str]) -> list[str]:
     """Read a comma-separated list from the environment, falling back to a default."""
     raw = os.environ.get(name)
@@ -80,6 +99,18 @@ MAX_N_GEN: int = _int_env("SAR_MAX_N_GEN", 1000)
 # 1-3; left uncapped, n_visits=100 made a single generation take 10 minutes and
 # a full run over a week. Nothing else here bounds it.
 MAX_N_VISITS: int = _int_env("SAR_MAX_N_VISITS", 3)
+
+# cell_side_length and max_drone_speed together set the realtime sub-sample count
+# (dt = ceil(leg_distance / speed), and leg_distance scales with cell_side_length):
+# a huge cell or a near-zero speed inflates the interpolated trajectory toward an
+# OOM. Time.get_real_paths' cumulative-columns bound is the real backstop, but
+# these deploy caps let a public box reject the pathological combo fast at the API
+# with a clear message instead of spending a worker on a run that will fail. The
+# defaults equal the ScenarioConfig schema ceilings (le=1000 / ge=0.1) so nothing
+# that runs today is affected; tighten them for a public deploy, e.g.
+# SAR_MAX_CELL_SIDE_LENGTH=100 SAR_MIN_DRONE_SPEED=1.0 (real scenarios use 50 / 2.5).
+MAX_CELL_SIDE_LENGTH: float = _float_env("SAR_MAX_CELL_SIDE_LENGTH", 1000)
+MIN_DRONE_SPEED: float = _float_env("SAR_MIN_DRONE_SPEED", 0.1)
 
 # ── Memory: cached scenarios ────────────────────────────────────────────────
 # How many scenarios selector_service keeps unpickled in memory at once. This is
@@ -154,11 +185,15 @@ COMPARISON_TIME_BUDGET_SECONDS: int = max(1, _int_env("SAR_COMPARISON_TIME_BUDGE
 HEAVY_CONCURRENCY: int = max(1, _int_env("SAR_HEAVY_CONCURRENCY", 3))
 
 # ── Deploy-safety: request body size cap ────────────────────────────────────
-# Upper bound on request body size (bytes), enforced via the Content-Length
-# header by a middleware in main.py. Guards against a schema-valid worst-case
-# Playground upload (2000 solutions x 100k-int paths) ballooning into
-# gigabytes of memory. Override via SAR_MAX_UPLOAD_BYTES.
-MAX_UPLOAD_BYTES: int = _int_env("SAR_MAX_UPLOAD_BYTES", 25 * 1024 * 1024)
+# Upper bound on request body size (bytes), enforced on the received byte count
+# by a middleware in main.py. Guards against a schema-valid worst-case Playground
+# upload ballooning into memory, AND bounds how much JSON the event loop parses
+# synchronously before the rate limiter / heavy_slot even run. A legitimate
+# 2000-solution export is ~2 MB (measured: 16 drones, n_visits 3), so 10 MB is
+# ~5x headroom while cutting the synchronous parse budget 2.5x from the old 25 MB.
+# If you raise this, raise request_body max_size in the Caddyfile to match (Caddy
+# rejects first otherwise). Override via SAR_MAX_UPLOAD_BYTES.
+MAX_UPLOAD_BYTES: int = _int_env("SAR_MAX_UPLOAD_BYTES", 10 * 1024 * 1024)
 
 # ── Optimizer queue ─────────────────────────────────────────────────────────
 # Each in-flight run is one child process that saturates exactly ONE core, so

@@ -60,7 +60,11 @@ class _PlaybackReq(BaseModel):
     stride: int = Field(default=1, ge=1, description="Step-axis downsampling factor (>=1)")
 
 class _CompareObjReq(BaseModel):
-    results: list[PlaygroundResult]
+    # One full PlaygroundResult per model being compared. Bounded like the other
+    # batch endpoints (_CompareReq.configs) so a single request cannot fan out
+    # over an unbounded list of heavy uploads; the whole body is separately capped
+    # by MAX_UPLOAD_BYTES. The project has a handful of models, so 8 is ample.
+    results: list[PlaygroundResult] = Field(..., min_length=1, max_length=8)
 
 
 def _heavy_solution(result: PlaygroundResult, index: int):

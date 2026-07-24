@@ -8,7 +8,7 @@ from Connectivity import get_connected_node_ids, connected_components, PathSolut
 # from Distance import interpolate_between_cities
 from copy import deepcopy
 
-from Time import get_real_connectivity_matrix, get_real_paths, isCoordinateDiscrete, intp_between_coords
+from Time import get_real_connectivity_matrix, get_real_paths, isCoordinateDiscrete, intp_between_coords, _MAX_REALTIME_STEPS
 
 # from matplotlib import pyplot as plt
 # import seaborn as sns
@@ -102,7 +102,12 @@ def _matrix_column_arrival_steps(path_matrix, D, speed):
     for j in range(n_cols - 1):
         max_dist = max(D[path_matrix[r, j], path_matrix[r, j + 1]]
                        for r in range(1, n_rows))
-        dt = ceil(max_dist / speed)
+        # Same per-leg clamp get_real_paths applies, so arrival offsets stay in
+        # lockstep with the columns it actually emits: an unclamped dt here would
+        # drift the arrival index past the (clamped) trajectory for a pathological
+        # leg. Legit dt is tiny (<< _MAX_REALTIME_STEPS), so this never changes
+        # valid output.
+        dt = min(ceil(max_dist / speed), _MAX_REALTIME_STEPS)
         if dt == 0:
             arrivals.append(arrivals[-1])
         else:

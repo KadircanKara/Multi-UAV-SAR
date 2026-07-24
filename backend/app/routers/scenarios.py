@@ -61,6 +61,25 @@ def validate_scenario(request: Request, req: ScenarioValidateRequest) -> Scenari
                 f"{settings.MAX_N_VISITS}"
             ),
         )
+    # cell_side_length x (1 / max_drone_speed) drives the realtime sub-sample
+    # count; keep this validation gate in step with OptimizeConfig so the UI never
+    # validates a scenario that /api/optimize would then reject.
+    if req.scenario.cell_side_length > settings.MAX_CELL_SIDE_LENGTH:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"cell_side_length {req.scenario.cell_side_length} exceeds the "
+                f"cap of {settings.MAX_CELL_SIDE_LENGTH}"
+            ),
+        )
+    if req.scenario.max_drone_speed < settings.MIN_DRONE_SPEED:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"max_drone_speed {req.scenario.max_drone_speed} is below the "
+                f"floor of {settings.MIN_DRONE_SPEED}"
+            ),
+        )
 
     # Pydantic already validated ScenarioConfig; if PathInfo raises, surface it.
     try:

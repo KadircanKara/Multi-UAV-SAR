@@ -468,6 +468,18 @@ class OptimizeConfig(BaseModel):
                 f"n_visits {self.scenario.n_visits} exceeds the cap of "
                 f"{settings.MAX_N_VISITS}"
             )
+        # cell_side_length x (1 / max_drone_speed) drives the realtime sub-sample
+        # count; a huge cell or a near-zero speed can OOM a worker (see settings).
+        if self.scenario.cell_side_length > settings.MAX_CELL_SIDE_LENGTH:
+            raise ValueError(
+                f"cell_side_length {self.scenario.cell_side_length} exceeds the "
+                f"cap of {settings.MAX_CELL_SIDE_LENGTH}"
+            )
+        if self.scenario.max_drone_speed < settings.MIN_DRONE_SPEED:
+            raise ValueError(
+                f"max_drone_speed {self.scenario.max_drone_speed} is below the "
+                f"floor of {settings.MIN_DRONE_SPEED}"
+            )
         if self.pop_size > settings.MAX_POP_SIZE:
             raise ValueError(
                 f"pop_size {self.pop_size} exceeds the cap of {settings.MAX_POP_SIZE}"
