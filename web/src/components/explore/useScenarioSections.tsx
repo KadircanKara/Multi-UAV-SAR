@@ -36,7 +36,7 @@ import type { BeliefRow } from "@/components/viz/BeliefEvolutionChart";
 import type { CompareTableRow } from "@/components/viz/MergingMetricsTable";
 import type { TargetsKnownRow } from "@/components/viz/TargetsKnownChart";
 import ChartSkeleton from "./ChartSkeleton";
-import MergingContent from "./MergingContent";
+import MergingContent, { MERGING_HEIGHT } from "./MergingContent";
 import MergingControls from "./MergingControls";
 import ParetoControls from "./ParetoControls";
 import ParetoFrontsCard, { has3DView } from "./ParetoFrontsCard";
@@ -57,12 +57,11 @@ const ParetoScatter3D = dynamic(
 // Reserved scroll height for a section's CONTENT COLUMN before it has mounted,
 // px. Roughly what each measures once loaded on a desktop viewport, so the
 // scrollbar doesn't jump as sections come in: the Pareto card is a header plus
-// a ~384px chart row, Merging's content is the comparison result alone (the
-// sensing-config card that used to sit here now lives in the panel — content
-// is empty until Compare runs, then the metrics table plus the two
-// belief/known charts), and Animation is its config card plus the canvas.
+// a ~384px chart row, and Animation is its config card plus the canvas.
+// Merging's own number is declared in (and imported from) MergingContent.tsx
+// instead of alongside these two — that file's empty/loading states use it as
+// a real `minHeight` floor, not just a pre-mount estimate (see its comment).
 const PARETO_HEIGHT = 560;
-const MERGING_HEIGHT = 620;
 const ANIMATION_HEIGHT = 720;
 
 // ─── Options / result ─────────────────────────────────────────────────────────
