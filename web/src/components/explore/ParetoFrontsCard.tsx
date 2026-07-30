@@ -52,11 +52,10 @@ export default function ParetoFrontsCard({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div
-          className={
-            show3D ? "grid grid-cols-1 gap-6 xl:grid-cols-2" : "grid grid-cols-1"
-          }
-        >
+        {/* Stacked, not side by side: each plot gets the full width of the
+            card, so the 3D cube and the 2D axis labels are both legible at
+            the width the content column actually has. */}
+        <div className="flex flex-col gap-6">
           {scatter2D}
           {show3D && scatter3D}
         </div>

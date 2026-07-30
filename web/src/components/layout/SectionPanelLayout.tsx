@@ -17,6 +17,11 @@
  *
  * The cross-fade animates an inner div, never the sticky element — a transform on
  * the sticky box would create a containing block and break the pinning.
+ *
+ * A section may legitimately have no `controls` at all. Neither the aside nor
+ * the drawer trigger is rendered for one, and the two-column grid collapses to
+ * a single column, so the section's content gets the full width instead of
+ * sitting beside a tall empty outlined box.
  */
 
 import { Menu } from "lucide-react";
@@ -27,6 +32,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useScrollSpy } from "@/hooks/useScrollSpy";
+import { cn } from "@/lib/utils";
 import type { PanelSection } from "./PanelSection";
 
 const DEFAULT_ESTIMATED_HEIGHT = 480;
@@ -48,9 +54,19 @@ export default function SectionPanelLayout({ sections }: { sections: PanelSectio
     </div>
   );
 
+  // Sections are allowed to have nothing to configure. Showing the panel for
+  // one renders an empty bordered box as tall as the section beside it, so it
+  // is dropped altogether and the grid collapses to the content column alone.
+  const hasControls = Boolean(active?.controls);
+
   return (
-    <div className="flex flex-col gap-6 lg:grid lg:grid-cols-[320px_1fr] lg:items-start lg:gap-6">
-      {isDesktop ? (
+    <div
+      className={cn(
+        "flex flex-col gap-6",
+        hasControls && "lg:grid lg:grid-cols-[320px_1fr] lg:items-start lg:gap-6"
+      )}
+    >
+      {hasControls && (isDesktop ? (
         <aside className="flex sticky top-14 max-h-[calc(100vh-3.5rem-2rem)] flex-col gap-3 overflow-y-auto rounded-xl border border-border bg-background px-4 py-3">
           <p className="text-xs font-semibold tracking-widest uppercase text-primary font-display">
             {active?.label}
@@ -78,7 +94,7 @@ export default function SectionPanelLayout({ sections }: { sections: PanelSectio
             </SheetContent>
           </Sheet>
         </div>
-      )}
+      ))}
 
       {/* Content column */}
       <div className="flex min-w-0 flex-col gap-10">

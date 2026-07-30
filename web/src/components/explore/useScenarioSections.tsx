@@ -7,8 +7,10 @@
  * This is where the deep-dive's shared state lives, because the two halves of
  * a section are rendered in two different places: `controls` in the sticky
  * panel, `content` in the scrolling column. Anything both halves read — the
- * selected solution, the five axis choices — therefore has to sit above both,
- * which is here.
+ * selected solution above all — therefore has to sit above both, which is
+ * here. The five axis choices live here too: the dropdowns that write them
+ * render on the charts, but the state is one level up so the panel can take
+ * them over again without moving anything.
  *
  * `selectedIndex` is deliberately ONE value for all three sections: picking
  * BEST / BALANCED / KNEE / by-index / by-weights in the Pareto panel moves the
@@ -28,7 +30,7 @@ import type { PanelSection } from "@/components/layout/PanelSection";
 import GridPlayback from "@/components/viz/GridPlayback/GridPlayback";
 import ChartSkeleton from "./ChartSkeleton";
 import MergingTab from "./MergingTab";
-import ParetoControls, { type ParetoAxes } from "./ParetoControls";
+import ParetoControls from "./ParetoControls";
 import ParetoFrontsCard, { has3DView } from "./ParetoFrontsCard";
 import { useScenarioFront } from "./useScenarioFront";
 
@@ -87,16 +89,17 @@ export function useScenarioSections({
   // Shared across all three sections.
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  // 2D Pareto axis choice — held here, not in ParetoScatter, so the panel can
-  // drive it too (see ParetoScatter's `xObj`/`yObj` props).
+  // 2D Pareto axis choice. ParetoScatter renders the dropdowns that write it
+  // (see its `xObj`/`yObj`/`hideAxisSelectors` props) but does not own it: the
+  // seeding effect below has to reach it when the front changes, and a panel
+  // could drive it instead without either chart changing.
   const [xObj, setXObj] = useState<string>("");
   const [yObj, setYObj] = useState<string>("");
 
-  // 3D Pareto axis choice — INDEPENDENT of the 2D pair above (the panel shows
-  // a separate "3D AXES" block so a fixed 3D view can be compared against a
-  // changing 2D slice), held here rather than in ParetoScatter3D (see its
-  // `xObj`/`yObj`/`zObj` props). Named with a `3D` infix so no reader can
-  // mistake these for the 2D xObj/yObj.
+  // 3D Pareto axis choice — INDEPENDENT of the 2D pair above, so a fixed 3D
+  // view can be read against a changing 2D slice. Held here for the same
+  // reason (see ParetoScatter3D's `xObj`/`yObj`/`zObj` props) and named with a
+  // `3D` infix so no reader can mistake these for the 2D xObj/yObj.
   const [x3DObj, setX3DObj] = useState<string>("");
   const [y3DObj, setY3DObj] = useState<string>("");
   const [z3DObj, setZ3DObj] = useState<string>("");
@@ -160,19 +163,6 @@ export function useScenarioSections({
     setSelectedIndex(idx);
   }, []);
 
-  const axes: ParetoAxes = {
-    xObj,
-    yObj,
-    onXChange: setXObj,
-    onYChange: setYObj,
-    x3DObj,
-    y3DObj,
-    z3DObj,
-    onX3DChange: setX3DObj,
-    onY3DChange: setY3DObj,
-    onZ3DChange: setZ3DObj,
-  };
-
   const sections: PanelSection[] = front
     ? [
         {
@@ -185,7 +175,6 @@ export function useScenarioSections({
               front={front}
               selectedIndex={selectedIndex}
               onSelectIndex={handleSelectIndex}
-              axes={axes}
               combinationControls={combinationControls}
             />
           ),
@@ -202,7 +191,6 @@ export function useScenarioSections({
                   yObj={yObj}
                   onXChange={setXObj}
                   onYChange={setYObj}
-                  hideAxisSelectors
                 />
               }
               // Same predicate the card renders on; building the node early
@@ -224,7 +212,6 @@ export function useScenarioSections({
                     onXChange={setX3DObj}
                     onYChange={setY3DObj}
                     onZChange={setZ3DObj}
-                    hideAxisSelectors
                   />
                 ) : null
               }
