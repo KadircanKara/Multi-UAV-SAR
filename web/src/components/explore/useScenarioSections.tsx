@@ -17,19 +17,27 @@
  * highlighted point on the 2D plot AND the 3D plot, and is the same solution
  * the Merging comparison and the Animation replay run on.
  *
- * Merging and Animation still carry their pre-refactor content and no controls
- * of their own; splitting those two into panel/column halves is the next two
- * tasks. Keeping them whole here means the app works at this commit.
+ * Merging's controls/content are split into MergingControls (panel) +
+ * MergingContent (column); its sensing config and the compare result that
+ * config produces live here for the same reason `selectedIndex` does — both
+ * halves read them (see the "Merging section state" block below). Animation
+ * still carries its pre-refactor content and no controls of its own;
+ * splitting it is the next task.
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import dynamic from "next/dynamic";
-import type { ExplorerSource } from "@/lib/source";
-import type { ParetoFront } from "@/lib/types";
+import { toast } from "sonner";
+import { sourceCompare, type ExplorerSource } from "@/lib/source";
+import type { ParetoFront, SensingConfig } from "@/lib/types";
 import type { PanelSection } from "@/components/layout/PanelSection";
 import GridPlayback from "@/components/viz/GridPlayback/GridPlayback";
+import type { BeliefRow } from "@/components/viz/BeliefEvolutionChart";
+import type { CompareTableRow } from "@/components/viz/MergingMetricsTable";
+import type { TargetsKnownRow } from "@/components/viz/TargetsKnownChart";
 import ChartSkeleton from "./ChartSkeleton";
-import MergingTab from "./MergingTab";
+import MergingContent from "./MergingContent";
+import MergingControls from "./MergingControls";
 import ParetoControls from "./ParetoControls";
 import ParetoFrontsCard, { has3DView } from "./ParetoFrontsCard";
 import { useScenarioFront } from "./useScenarioFront";
@@ -46,11 +54,13 @@ const ParetoScatter3D = dynamic(
   { ssr: false, loading: () => <ChartSkeleton height="h-96" /> }
 );
 
-// Reserved scroll height for a section whose content hasn't mounted yet, px.
-// Roughly what each section measures once loaded on a desktop viewport, so the
+// Reserved scroll height for a section's CONTENT COLUMN before it has mounted,
+// px. Roughly what each measures once loaded on a desktop viewport, so the
 // scrollbar doesn't jump as sections come in: the Pareto card is a header plus
-// a ~384px chart row, Merging is the sensing-config card alone until a
-// comparison is run, and Animation is its config card plus the canvas.
+// a ~384px chart row, Merging's content is the comparison result alone (the
+// sensing-config card that used to sit here now lives in the panel — content
+// is empty until Compare runs, then the metrics table plus the two
+// belief/known charts), and Animation is its config card plus the canvas.
 const PARETO_HEIGHT = 560;
 const MERGING_HEIGHT = 620;
 const ANIMATION_HEIGHT = 720;
@@ -163,6 +173,87 @@ export function useScenarioSections({
     setSelectedIndex(idx);
   }, []);
 
+  // ─── Merging section state ─────────────────────────────────────────────────
+  // Not shared with Pareto or Animation (unlike selectedIndex and the axis
+  // state above) — this is local to Merging, but split across the same
+  // panel/column boundary as everything else here: MergingControls (panel)
+  // writes the sensing config and triggers the compare, MergingContent
+  // (column) reads the result, and `comparing` gates both a disabled/labelled
+  // button in the former and a loading skeleton in the latter. Neither half
+  // alone sees both ends, so the state sits here.
+  const [timeModel, setTimeModel] = useState<"discrete" | "realtime">("discrete");
+  const [detProb, setDetProb] = useState(0.8);
+  const [faProb, setFaProb] = useState(0.1);
+  const [beliefThresh, setBeliefThresh] = useState(0.9);
+  const [targetsInput, setTargetsInput] = useState("12");
+
+  const [comparing, setComparing] = useState(false);
+  const [tableRows, setTableRows] = useState<CompareTableRow[] | null>(null);
+  const [beliefRows, setBeliefRows] = useState<BeliefRow[] | null>(null);
+  const [knownRows, setKnownRows] = useState<TargetsKnownRow[] | null>(null);
+
+  const pqInvalid = detProb <= faProb;
+  const targetList = targetsInput
+    .split(",")
+    .map((s) => parseInt(s.trim(), 10))
+    .filter((n) => !isNaN(n));
+  const canCompare = !pqInvalid && targetList.length > 0 && !comparing;
+
+  async function runCompare() {
+    if (!canCompare) return;
+    setComparing(true);
+    setTableRows(null);
+    setBeliefRows(null);
+    setKnownRows(null);
+
+    const baseConfig = {
+      time_model: timeModel,
+      detection_prob: detProb,
+      false_alarm_prob: faProb,
+      belief_threshold: beliefThresh,
+      target_locations: targetList,
+    };
+
+    const configs: SensingConfig[] = [
+      { ...baseConfig, merge_topology: "none" },
+      { ...baseConfig, merge_topology: "onboard" },
+      { ...baseConfig, merge_topology: "gcs" },
+    ];
+    const labels = ["none", "onboard", "gcs"];
+
+    try {
+      const res = await sourceCompare(source, {
+        index: selectedIndex,
+        configs,
+        labels,
+        model_key: null,
+      });
+
+      // Parse compare response
+      const rawTable = res.table as Record<string, string | number | null>[] | undefined;
+      if (rawTable) {
+        setTableRows(rawTable as CompareTableRow[]);
+      }
+
+      const rawRows = res.rows as Record<string, unknown>[] | undefined;
+      if (rawRows) {
+        const bRows: BeliefRow[] = rawRows.map((r, i) => ({
+          label: labels[i] ?? `config-${i}`,
+          cell_occupancy_probabilities: r.cell_occupancy_probabilities as number[][],
+          target_locations: r.target_locations as number[],
+          belief_threshold: r.belief_threshold as number,
+        }));
+        setBeliefRows(bRows);
+        setKnownRows(bRows as TargetsKnownRow[]);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error("Comparison failed", { description: msg });
+    } finally {
+      setComparing(false);
+    }
+  }
+
   const sections: PanelSection[] = front
     ? [
         {
@@ -222,8 +313,46 @@ export function useScenarioSections({
           id: "merging",
           label: "MERGING",
           estimatedHeight: MERGING_HEIGHT,
-          controls: null,
-          content: <MergingTab source={source} selectedIndex={selectedIndex} />,
+          controls: (
+            <MergingControls
+              front={front}
+              selectedIndex={selectedIndex}
+              onSelectIndex={handleSelectIndex}
+              xObj={xObj}
+              yObj={yObj}
+              onXChange={setXObj}
+              onYChange={setYObj}
+              x3DObj={x3DObj}
+              y3DObj={y3DObj}
+              z3DObj={z3DObj}
+              onX3DChange={setX3DObj}
+              onY3DChange={setY3DObj}
+              onZ3DChange={setZ3DObj}
+              timeModel={timeModel}
+              onTimeModelChange={setTimeModel}
+              detProb={detProb}
+              onDetProbChange={setDetProb}
+              faProb={faProb}
+              onFaProbChange={setFaProb}
+              beliefThresh={beliefThresh}
+              onBeliefThreshChange={setBeliefThresh}
+              targetsInput={targetsInput}
+              onTargetsInputChange={setTargetsInput}
+              pqInvalid={pqInvalid}
+              targetList={targetList}
+              canCompare={canCompare}
+              comparing={comparing}
+              onCompare={runCompare}
+            />
+          ),
+          content: (
+            <MergingContent
+              comparing={comparing}
+              tableRows={tableRows}
+              beliefRows={beliefRows}
+              knownRows={knownRows}
+            />
+          ),
         },
         {
           id: "animation",
