@@ -389,6 +389,10 @@ interface Props {
   source: ExplorerSource;
   /** Show the big scenario title heading (standalone route). Off when embedded. */
   showTitle?: boolean;
+  /** Show the model/kind/solutions/objectives badge row. Off when the parent
+   *  already renders that identity itself (the Analysis section's sticky
+   *  header does, via RunSummary) so it isn't stated twice on one screen. */
+  showSummary?: boolean;
   /** Notified once the front loads — lets a parent build a back-link, etc. */
   onFrontLoaded?: (front: ParetoFront) => void;
   /** Optional content rendered inside the Pareto-front card, below the scatter
@@ -399,6 +403,7 @@ interface Props {
 export default function ScenarioExplorer({
   source,
   showTitle = true,
+  showSummary = true,
   onFrontLoaded,
   paretoFooter,
 }: Props) {
@@ -474,6 +479,7 @@ export default function ScenarioExplorer({
   return (
     <div className="flex flex-col gap-6">
       {/* Scenario info header */}
+      {(showTitle || showSummary) && (
       <div className="flex flex-col gap-2">
         {showTitle && (
           <h1
@@ -483,6 +489,7 @@ export default function ScenarioExplorer({
             {displayLabel}
           </h1>
         )}
+        {showSummary && (
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline" className="text-xs font-mono tracking-widest">
             {front.model_key}
@@ -505,7 +512,9 @@ export default function ScenarioExplorer({
             </Badge>
           ))}
         </div>
+        )}
       </div>
+      )}
 
       {/* Main tabs */}
       <Tabs defaultValue="pareto" className="w-full">

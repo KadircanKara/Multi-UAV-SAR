@@ -15,7 +15,7 @@ from fastapi.responses import ORJSONResponse
 from slowapi.util import get_remote_address
 
 from app import settings
-from app.concurrency import BusyError, heavy_slot
+from app.concurrency import heavy_slot
 from app.ratelimit import limiter
 from app.schemas import (
     OptimizeConfig,
@@ -134,8 +134,6 @@ def get_optimize_export(request: Request, run_id: str) -> ORJSONResponse:
     try:
         with heavy_slot():
             payload = serialize_finished_run(run_id)
-    except BusyError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RunNotReadyError as exc:

@@ -7,7 +7,7 @@ import app.rootpath  # must come before any root-module import
 from fastapi import APIRouter, HTTPException, Request
 
 from app import settings
-from app.concurrency import BusyError, heavy_slot
+from app.concurrency import heavy_slot
 from app.ratelimit import limiter
 from app.schemas import ReplayRequest, CompareRequest
 from app.selector_service import _SelectorNotFound, StrategyUnavailableError
@@ -23,10 +23,6 @@ def _not_found(scenario: str, detail: str = None) -> HTTPException:
 
 def _unprocessable(detail: str) -> HTTPException:
     return HTTPException(status_code=422, detail=detail)
-
-
-def _busy(exc: BusyError) -> HTTPException:
-    return HTTPException(status_code=503, detail=str(exc))
 
 
 @router.post("/api/replay/{scenario}")
@@ -48,8 +44,6 @@ def post_replay(request: Request, scenario: str, body: ReplayRequest) -> dict:
                 cfg_dict=body.config.to_cfg_dict(),
                 label=body.label,
             )
-    except BusyError as exc:
-        raise _busy(exc) from exc
     except _SelectorNotFound as exc:
         raise _not_found(scenario) from exc
     except StrategyUnavailableError as exc:
@@ -77,8 +71,6 @@ def post_compare(request: Request, scenario: str, body: CompareRequest) -> dict:
                 cfg_dicts=[c.to_cfg_dict() for c in body.configs],
                 labels=body.labels,
             )
-    except BusyError as exc:
-        raise _busy(exc) from exc
     except _SelectorNotFound as exc:
         raise _not_found(scenario) from exc
     except StrategyUnavailableError as exc:

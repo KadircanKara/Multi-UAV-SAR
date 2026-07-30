@@ -387,8 +387,12 @@ export function ObjectivesView({
 
       {data.skipped.length > 0 && (
         <p className="text-xs text-muted-foreground">
+          {/* `skipped` covers three cases, not just bad data: unloadable
+              scenarios, the server's per-request scenario cap, and its
+              wall-clock budget. Do not claim a cause we cannot tell apart. */}
           Skipped {data.skipped.length} scenario
-          {data.skipped.length !== 1 ? "s" : ""} (no loadable data).
+          {data.skipped.length !== 1 ? "s" : ""} (not included in this
+          comparison).
         </p>
       )}
     </div>

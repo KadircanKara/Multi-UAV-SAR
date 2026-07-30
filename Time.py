@@ -288,13 +288,17 @@ def get_real_paths(sol:PathSolution):
         dists = np.array([sol.info.D[current_cells[j], next_cells[j]] for j in range(sol.info.number_of_drones)])
         dt = ceil(np.max(dists)/info.max_drone_speed)
         # Backstop against an OOM from a pathological scenario (tiny speed / huge
-        # cell): cap the sub-sample count that follows. dt is already >= 0 (ceil of
-        # a non-negative), and dt == 0 is a legitimate no-op step (a stationary
-        # transition — happens routinely once drones have returned to base), so
-        # only the upper bound is clamped; forcing dt >= 1 would inject a duplicate
-        # column and perturb the nvisits/TBV counts. Legit dt is tiny (<<
-        # _MAX_REALTIME_STEPS), so this never changes valid output.
-        dt = min(dt, _MAX_REALTIME_STEPS)
+        # cell). This RAISES rather than clamping: silently truncating a leg to
+        # _MAX_REALTIME_STEPS keeps the drone arriving but bills the leg as 5000
+        # realtime seconds instead of its true length, so mission/detection/inform
+        # times and TBV come back several times too short — a wrong answer served
+        # as a confident 200. A scenario at the schema's own extremes
+        # (cell_side_length 1000 with max_drone_speed 0.1) reaches dt ~ 100_000
+        # while the cumulative bound below stays unfired, so the clamp was
+        # reachable from API-legal input. dt == 0 stays legal: it is a stationary
+        # transition, routine once drones have returned to base.
+        if dt > _MAX_REALTIME_STEPS:
+            raise ValueError("Realtime trajectory too long for this scenario.")
         # The per-leg clamp bounds ONE leg; this bounds the whole timeline so a
         # long path cannot accumulate a multi-million-column trajectory that the
         # downstream zeros((cols, nodes, nodes)) allocation turns into an OOM. Legit

@@ -2,6 +2,7 @@
 Central settings/constants for the backend.
 All paths are absolute so they never depend on CWD.
 """
+import logging
 import os
 import sys
 
@@ -14,8 +15,34 @@ RESULTS_ROOT: str = os.path.abspath(
     os.environ.get("SAR_RESULTS_ROOT") or os.path.join(REPO_ROOT, "Results")
 )
 
+def _log_level_env(name: str, default: str) -> str:
+    """Read a log level name from the environment, falling back to a default.
+
+    main.py hands this straight to ``logging.basicConfig`` at import, and
+    ``logging`` raises ValueError on anything it does not recognise — so an
+    unvalidated value ("WARNNING", or a bare "20", which ``.upper()`` leaves as a
+    string the level table has no entry for) would abort the import, and
+    ``restart: unless-stopped`` would loop the container forever on a typo. Same
+    import-time robustness as ``_int_env`` / ``_float_env`` below."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    level = raw.strip().upper()
+    # Numeric levels are legal for logging, just not as an upper-cased string.
+    if level.isdigit():
+        return int(level)  # type: ignore[return-value]
+    if isinstance(logging.getLevelName(level), int):
+        return level
+    print(
+        f"WARNING: environment variable {name}={raw!r} is not a valid log "
+        f"level; falling back to default {default}.",
+        file=sys.stderr,
+    )
+    return default
+
+
 # Root log level (SAR_LOG_LEVEL). Names or numbers; INFO in production.
-LOG_LEVEL: str = os.environ.get("SAR_LOG_LEVEL", "INFO").upper()
+LOG_LEVEL = _log_level_env("SAR_LOG_LEVEL", "INFO")
 
 
 def _int_env(name: str, default: int) -> int:

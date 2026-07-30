@@ -60,6 +60,37 @@ _POLARITY: dict[str, int] = {
 _TBV_OBJECTIVE = "Max Mean TBV"
 
 
+def _within_budget(ordered: list[str], skipped: list[str]):
+    """Yield the scenarios a single comparison request is allowed to process.
+
+    Two ceilings bound the per-request cost, and both are the same policy, so
+    both comparison endpoints drive them through here rather than each keeping
+    its own copy:
+
+      * COMPARISON_MAX_SCENARIOS — how MANY distinct scenarios are attempted at
+        all. Each one is a ~160 MB selector unpickle (compare_objectives) or a
+        full sensing replay (compare_time_metrics), and the schema caps bound the
+        request BODY, not the work.
+      * COMPARISON_TIME_BUDGET_SECONDS — a wall-clock stop, because a cold
+        selector cache costs ~50x a warm one per scenario, so a count that is
+        quick when cached can still pin a core for minutes.
+
+    Everything not reached is appended to *skipped* (partial + honest, never
+    silently truncated). The budget is checked at the top of each iteration but
+    not on the first, so at least one scenario always runs — that keeps an
+    all-skipped result attributable to genuinely unloadable input rather than to
+    the clock.
+    """
+    head = ordered[: max(1, settings.COMPARISON_MAX_SCENARIOS)]
+    skipped.extend(ordered[len(head):])
+    start = time.monotonic()
+    for i, scenario in enumerate(head):
+        if i and time.monotonic() - start > settings.COMPARISON_TIME_BUDGET_SECONDS:
+            skipped.extend(head[i:])
+            return
+        yield scenario
+
+
 def _optimized_objective_names(model: dict) -> list[str]:
     """The individual objective names a model actually optimises (WS expanded)."""
     if model.get("Type") == "WS":
@@ -199,29 +230,9 @@ def compare_objectives(scenarios: list[str]) -> dict:
             seen.add(s)
             ordered.append(s)
 
-    # Bound the per-request heavy work: each distinct scenario is a ~160 MB
-    # selector unpickle, so process at most COMPARISON_MAX_SCENARIOS of them and
-    # surface the overflow in ``skipped`` (partial + honest, not silently cut).
-    cap = max(1, settings.COMPARISON_MAX_SCENARIOS)
-    overflow = ordered[cap:]
-    ordered = ordered[:cap]
-
-    # Wall-clock budget: the count cap bounds how many scenarios are attempted,
-    # but a cold selector cache costs ~50x a warm one per scenario, so bound the
-    # request's CPU by elapsed time too. Anything not reached is reported in
-    # ``skipped`` (partial + honest), so it stays consistent with the overflow.
-    budget = settings.COMPARISON_TIME_BUDGET_SECONDS
-    start = time.monotonic()
-
     results: list[dict] = []
-    skipped: list[str] = list(overflow)
-    for i, scenario in enumerate(ordered):
-        # Checked at the top of the loop, but skipped on the first iteration so at
-        # least one scenario always runs (elapsed is ~0 there anyway) — the
-        # all-skipped 404 then reflects genuinely unloadable input, not the budget.
-        if i > 0 and time.monotonic() - start > budget:
-            skipped.extend(ordered[i:])
-            break
+    skipped: list[str] = []
+    for scenario in _within_budget(ordered, skipped):
         stats = _scenario_stats(scenario)
         if stats is None:
             skipped.append(scenario)
@@ -408,29 +419,11 @@ def compare_time_metrics(
             seen.add(s)
             ordered.append(s)
 
-    # Bound the per-request heavy work: each distinct scenario is a full sensing
-    # replay, so process at most COMPARISON_MAX_SCENARIOS of them and surface the
-    # overflow in ``skipped`` (partial + honest, not silently cut).
-    cap = max(1, settings.COMPARISON_MAX_SCENARIOS)
-    overflow = ordered[cap:]
-    ordered = ordered[:cap]
-
-    # Wall-clock budget across the per-scenario replays (see compare_objectives).
-    # Each scenario here is a full sensing replay, so the elapsed-time bound is
-    # the one that actually keeps a cold-cache request from pinning a core for
-    # minutes; the unreached remainder is reported in ``skipped``.
-    budget = settings.COMPARISON_TIME_BUDGET_SECONDS
-    start = time.monotonic()
-
     results: list[dict] = []
-    skipped: list[str] = list(overflow)
-    for i, scenario in enumerate(ordered):
-        # Top-of-loop check, skipped on the first iteration so at least one
-        # scenario always runs (keeps the all-skipped 404 tied to unloadable
-        # input, not to the budget).
-        if i > 0 and time.monotonic() - start > budget:
-            skipped.extend(ordered[i:])
-            break
+    skipped: list[str] = []
+    # Each scenario here is a full sensing replay, so the elapsed-time half of
+    # the bound is the one that actually fires (see _within_budget).
+    for scenario in _within_budget(ordered, skipped):
         try:
             row = _time_metrics_for_scenario(
                 scenario, cfg_dict, strategy, objective_name, weights

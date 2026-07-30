@@ -4,7 +4,7 @@ import app.rootpath  # must come before any root-module import
 from fastapi import APIRouter, HTTPException, Request
 
 from app import settings
-from app.concurrency import BusyError, comparison_slot
+from app.concurrency import comparison_slot
 from app.ratelimit import limiter
 from app.schemas import (
     ComparisonRequest,
@@ -31,11 +31,8 @@ def post_comparison(request: Request, body: ComparisonRequest) -> dict:
     404 only if NONE of the requested scenarios could be loaded.
     503 when the server already has its share of comparisons running.
     """
-    try:
-        with comparison_slot():
-            result = compare_objectives(body.scenarios)
-    except BusyError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    with comparison_slot():
+        result = compare_objectives(body.scenarios)
     if not result["scenarios"]:
         raise HTTPException(
             status_code=404,
@@ -71,8 +68,6 @@ def post_comparison_time(request: Request, body: TimeComparisonRequest) -> dict:
                 objective_name=body.objective_name,
                 weights=body.weights,
             )
-    except BusyError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except StrategyUnavailableError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:

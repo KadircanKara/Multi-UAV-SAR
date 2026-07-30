@@ -44,7 +44,7 @@ services:
         max-file: "3"
 
   backend:
-    image: ghcr.io/${GITHUB_REPOSITORY:-kadircankara/multi-uav-sar}/backend:${SAR_IMAGE_TAG:-latest}
+    image: ghcr.io/${SAR_IMAGE_REPO:-kadircankara/multi-uav-sar}/backend:${SAR_IMAGE_TAG:-latest}
     # No ports: only Caddy reaches this, over the compose network.
     volumes:
       - ${SAR_DATA_DIR:-/opt/sar/Results}:/app/Results
@@ -97,7 +97,7 @@ services:
           pids: 512
 
   web:
-    image: ghcr.io/${GITHUB_REPOSITORY:-kadircankara/multi-uav-sar}/web:${SAR_IMAGE_TAG:-latest}
+    image: ghcr.io/${SAR_IMAGE_REPO:-kadircankara/multi-uav-sar}/web:${SAR_IMAGE_TAG:-latest}
     restart: unless-stopped
     # So Caddy can wait for the UI to be ready (depends_on above) instead of
     # proxying to a dead port and serving 502s during a rollout.

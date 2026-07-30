@@ -18,6 +18,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app import settings
+from app.concurrency import BusyError
 from app.limits import BodySizeLimitMiddleware
 from app.ratelimit import limiter
 
@@ -42,6 +43,16 @@ app = FastAPI(
 # playback.py, comparison.py), and the playground (routers/playground.py).
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# Every heavy endpoint takes a concurrency slot (app/concurrency.py) that refuses
+# rather than queues when full. Translating that to 503 here, once, means a route
+# only has to acquire the slot — it cannot forget the `except BusyError` arm and
+# turn a busy signal into an opaque 500. The messages are author-written and
+# carry no internals, so they are safe to pass through verbatim.
+@app.exception_handler(BusyError)
+async def _busy_handler(request: Request, exc: BusyError):
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
 def _json_safe(obj):
@@ -139,6 +150,15 @@ async def _validation_exception_handler(request: Request, exc: RequestValidation
         },
     )
 
+# Bound the request body regardless of framing. Unlike a Content-Length check,
+# this counts the bytes actually received, so a chunked body cannot slip past.
+# Added BEFORE CORS (Starlette applies middleware last-added-first, so CORS ends
+# up OUTSIDE this) on purpose: a 413 emitted outside CORSMiddleware carries no
+# Access-Control-Allow-Origin, and a cross-origin browser then reports an opaque
+# network failure instead of "that request is too large". CORS never reads the
+# body, so nothing is buffered ahead of this cap.
+app.add_middleware(BodySizeLimitMiddleware)
+
 # The API is anonymous (no cookies/auth), so credentialed CORS is disabled;
 # never re-enable it together with a wildcard or reflected origin.
 app.add_middleware(
@@ -161,12 +181,6 @@ async def _log_unhandled(request: Request, call_next):
         logger.exception("unhandled error on %s %s", request.method, request.url.path)
         raise
 
-
-# Bound the request body regardless of framing. Added AFTER CORS so it sits
-# OUTERMOST (Starlette applies middleware last-added-first), rejecting an
-# oversized body before anything else touches it. Unlike a Content-Length check,
-# this counts the bytes actually received, so a chunked body cannot slip past.
-app.add_middleware(BodySizeLimitMiddleware)
 
 app.include_router(models.router)
 app.include_router(scenarios.router)

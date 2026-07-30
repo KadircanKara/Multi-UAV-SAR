@@ -42,6 +42,10 @@ jobs:
   # a box with barely enough RAM to do it.
   docker-images:
     runs-on: ubuntu-latest
+    # Gate on the tests: without this the job runs in parallel with them and
+    # pushes :latest even when they fail, so "the server pulls a tested
+    # artifact" would not actually hold.
+    needs: [backend-tests, web-build]
     permissions:
       contents: read
       packages: write

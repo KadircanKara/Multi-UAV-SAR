@@ -737,8 +737,12 @@ function TimeMetricsTab({
 
           {data.skipped.length > 0 && (
             <p className="text-xs text-muted-foreground">
+              {/* `skipped` covers three cases, not just bad data: unloadable
+                  scenarios, the server's per-request scenario cap, and its
+                  wall-clock budget. Do not claim a cause we cannot tell apart. */}
               Skipped {data.skipped.length} scenario
-              {data.skipped.length !== 1 ? "s" : ""} (no loadable data).
+              {data.skipped.length !== 1 ? "s" : ""} (not included in this
+              comparison).
             </p>
           )}
         </div>
@@ -796,8 +800,9 @@ export default function ComparePage() {
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6">
-      {/* Header */}
-      <div className="flex flex-col gap-1.5">
+      {/* Header — sticky so the page identity survives the long scroll through
+          the picker and the objective/time-metric chart grids. */}
+      <div className="sticky top-14 z-30 flex flex-col gap-1.5 rounded-xl border border-border bg-background px-4 py-3">
         <h1
           className="animate-hud-rise text-2xl font-bold tracking-tight text-foreground"
           style={{ animationDelay: "60ms" }}

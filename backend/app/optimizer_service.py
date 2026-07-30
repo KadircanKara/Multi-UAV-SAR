@@ -328,7 +328,13 @@ def _dispatch_locked() -> None:
     "running" state honest.
     """
     busy = sum(1 for j in _jobs.values() if _holds_worker(j))
-    for job in _jobs.values():
+    # Snapshot: add_done_callback below runs the callback INLINE when the future
+    # is already resolved (a pool that dies between submit() and the callback
+    # registration resolves it from the executor's management thread). _lock is
+    # an RLock, so that inline _on_run_finished re-enters and its
+    # _evict_finished_locked() pops from _jobs — which would raise
+    # "dictionary changed size during iteration" on a live view.
+    for job in list(_jobs.values()):
         if busy >= settings.OPTIMIZE_WORKERS:
             return
         if not _is_waiting(job):
@@ -348,9 +354,9 @@ def _dispatch_locked() -> None:
                 # the queue or letting it escape start_run as a 500. A resolved
                 # failed future reports "failed" through the normal status path
                 # (fut.done() + exception). No done-callback is attached: the
-                # future is already resolved, so the callback would run inline and
-                # its _evict_finished_locked() would mutate _jobs mid-iteration —
-                # the outer loop below already drives the remaining waiting runs.
+                # future is already resolved, so the callback would recurse into
+                # this same function for no gain — the loop below already drives
+                # the remaining waiting runs, and start_run bounds _jobs.
                 logger.error("run submit failed (pool unrecoverable): %s", exc)
                 failed: Future = Future()
                 failed.set_exception(exc)
@@ -453,10 +459,19 @@ def start_janitor(interval: Optional[int] = None) -> None:
 
 
 def stop_janitor() -> None:
-    """Signal the janitor to exit (on app shutdown / test teardown)."""
+    """Signal the janitor to exit and wait for it (on app shutdown / teardown).
+
+    The join matters: without it a stop/start cycle (an in-process restart, a
+    test teardown followed by a fresh TestClient) would have start_janitor's
+    ``_janitor_stop.clear()`` un-set the flag while the old thread is still
+    parked in ``wait(interval)`` — it would never exit, and every cycle would
+    leave another thread sweeping the same tree."""
     global _janitor_thread
+    thread = _janitor_thread
     _janitor_stop.set()
     _janitor_thread = None
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=5)
 
 
 def shutdown(wait: bool = False) -> None:
@@ -542,7 +557,9 @@ def _purge_stale_runs(
     import shutil
     import time as _time
     now = now if now is not None else _time.time()
-    protected = protected or set()
+    # Default to the LIVE in-flight set, not the empty set: the destructive
+    # reading must not be the one a caller gets by forgetting an argument.
+    protected = _protected_run_ids() if protected is None else protected
     root = os.path.join(settings.RESULTS_ROOT, ".runs")
     cutoff = now - settings.RUN_TTL_HOURS * 3600
     purged: list[str] = []
@@ -659,8 +676,13 @@ def start_run(
     polarities = {o: _POLARITY[o] for o in objectives}
     alg = model_dict["Alg"]
 
+    # Sweep BEFORE taking _lock, in the janitor's shape: the sweep is a listdir
+    # plus an rmtree per stale dir, and _lock is what the pool's callback thread
+    # and every status poll contend on — holding it across that I/O freezes the
+    # whole optimizer subsystem for the duration.
+    _purge_stale_runs(protected=_protected_run_ids())
+
     with _lock:
-        _purge_stale_runs(protected={rid for rid, j in _jobs.items() if _is_pending(j)})
         pending = [j for j in _jobs.values() if _is_pending(j)]
         if len(pending) >= settings.OPTIMIZE_QUEUE_MAX:
             raise QueueFullError(
@@ -701,6 +723,11 @@ def start_run(
                 gen_strategy, int(early_stop_patience), float(early_stop_threshold),
             ),
         }
+        # Bound the registry on the path where it GROWS. _on_run_finished also
+        # evicts, but that callback is deliberately not attached on the
+        # unrecoverable-pool path — so a persistently broken pool would otherwise
+        # add one entry per request and never drop one.
+        _evict_finished_locked()
         _dispatch_locked()
         position = _queue_position(run_id)
     logger.info(
@@ -854,9 +881,18 @@ def save_run(run_id: str, overwrite: bool) -> dict:
     # Refuse to persist a run that found no feasible solutions — an empty front
     # in the library breaks selection/replay endpoints with 500s.
     src_obj = os.path.join(job["run_dir"], "Objectives.pkl")
+    # The janitor sweeps .runs on a timer and protects only IN-FLIGHT runs, so a
+    # finished run's dir can vanish between _ready_job and here. That must read
+    # as "gone", not as "found nothing" — the old bare `except Exception: 0` told
+    # users their optimization was infeasible when its data had been cleaned up.
+    # Mirrors serialize_finished_run's translation of the same window.
     try:
         import pandas as pd
         n_solutions = int(pd.read_pickle(src_obj).shape[0])
+    except FileNotFoundError as exc:
+        raise RunNotFoundError(
+            f"Run {run_id!r} is no longer available (its data was cleaned up)."
+        ) from exc
     except Exception:
         n_solutions = 0
     if n_solutions < 1:
@@ -869,8 +905,15 @@ def save_run(run_id: str, overwrite: bool) -> dict:
     sol_dst = os.path.join(settings.RESULTS_ROOT, "Solutions", f"{scenario_name}-SolutionObjects.pkl")
     os.makedirs(os.path.dirname(obj_dst), exist_ok=True)
     os.makedirs(os.path.dirname(sol_dst), exist_ok=True)
-    shutil.copyfile(os.path.join(job["run_dir"], "Objectives.pkl"), obj_dst)
-    shutil.copyfile(os.path.join(job["run_dir"], "Solutions.pkl"), sol_dst)
+    # Same sweep window as above — a dir removed between the read and the copies
+    # must be a clean 404, not an uncaught 500 out of shutil.
+    try:
+        shutil.copyfile(os.path.join(job["run_dir"], "Objectives.pkl"), obj_dst)
+        shutil.copyfile(os.path.join(job["run_dir"], "Solutions.pkl"), sol_dst)
+    except FileNotFoundError as exc:
+        raise RunNotFoundError(
+            f"Run {run_id!r} is no longer available (its data was cleaned up)."
+        ) from exc
 
     # Copy the RunConfig sidecar (present for worker-produced runs) into the library.
     cfg_src = os.path.join(job["run_dir"], "config.json")

@@ -55,7 +55,11 @@ done
 echo "==> creating $DATA_DIR"
 mkdir -p "$DATA_DIR/.runs"
 # The containers run as uid 1000 and write temp run dirs under Results/.
-chown -R "$APP_UID:$APP_UID" "$APP_DIR"
+# Both paths: SAR_DATA_DIR is independently configurable, so it is NOT
+# necessarily inside APP_DIR — chowning APP_DIR alone would leave a data volume
+# on another mount root-owned, and every optimization would 503 on an
+# unwritable Results/.runs while the library still read fine.
+chown -R "$APP_UID:$APP_UID" "$APP_DIR" "$DATA_DIR"
 echo "    owned by uid $APP_UID"
 
 echo "==> configuring ${SWAP_GB}G swap"

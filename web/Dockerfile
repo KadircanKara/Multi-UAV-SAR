@@ -1,6 +1,11 @@
 # Next.js frontend. Build from web/:
 #
-#   docker build --build-arg NEXT_PUBLIC_API_BASE=https://api.example.com -t sar-web web
+#   docker build -t sar-web web
+#
+# No build arg is needed: NEXT_PUBLIC_API_BASE defaults to "" (same origin),
+# which is what the production stack serves — Caddy puts the API and the UI on
+# one hostname. Pass --build-arg NEXT_PUBLIC_API_BASE=https://api.example.com
+# ONLY for a split-origin deployment; see the ARG below.
 #
 # NEXT_PUBLIC_API_BASE is inlined into the JS bundle at BUILD time — a runtime
 # env var cannot change it. Rebuild the image to point at a different backend.

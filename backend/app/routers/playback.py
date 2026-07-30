@@ -9,7 +9,7 @@ import app.rootpath  # must come before any root-module import
 from fastapi import APIRouter, HTTPException, Request
 
 from app import settings
-from app.concurrency import BusyError, heavy_slot
+from app.concurrency import heavy_slot
 from app.ratelimit import limiter
 from app.schemas import PlaybackRequest
 from app.selector_service import _SelectorNotFound, StrategyUnavailableError
@@ -25,10 +25,6 @@ def _not_found(scenario: str, detail: str = None) -> HTTPException:
 
 def _unprocessable(detail: str) -> HTTPException:
     return HTTPException(status_code=422, detail=detail)
-
-
-def _busy(exc: BusyError) -> HTTPException:
-    return HTTPException(status_code=503, detail=str(exc))
 
 
 @router.post("/api/playback/{scenario}")
@@ -55,8 +51,6 @@ def post_playback(request: Request, scenario: str, body: PlaybackRequest) -> dic
                 cfg_dict=body.config.to_cfg_dict(),
                 stride=body.stride,
             )
-    except BusyError as exc:
-        raise _busy(exc) from exc
     except _SelectorNotFound as exc:
         raise _not_found(scenario) from exc
     except StrategyUnavailableError as exc:

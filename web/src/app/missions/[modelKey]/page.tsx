@@ -316,23 +316,6 @@ function buildSeriesByObjective(
   return result;
 }
 
-// ─── Plain-language model description ────────────────────────────────────────
-
-function modelDescription(grid: ModelGrid): string {
-  const objList = grid.objectives.join(" and ");
-  const algo = grid.algorithm ? ` using ${grid.algorithm}` : "";
-  if (grid.type === "MOO") {
-    return `Multi-objective optimisation${algo} — simultaneously optimises ${objList}.`;
-  }
-  if (grid.type === "WS") {
-    return `Weighted-sum scalarisation${algo} — balances ${objList} via a scalar weight.`;
-  }
-  if (grid.type === "SOO") {
-    return `Single-objective optimisation${algo} — minimises/maximises ${objList}.`;
-  }
-  return `Optimises ${objList}${algo}.`;
-}
-
 // ─── Combination selector (dependent dropdowns) ───────────────────────────────
 
 interface CombinationSelectProps {
@@ -919,8 +902,9 @@ export default function ModelPage() {
         </>
       ) : grid ? (
         <>
-          {/* Header */}
-          <div className="flex flex-col gap-2">
+          {/* Header — sticky so the model and its objectives stay on screen
+              while the reader scrolls the parameter-effect charts. */}
+          <div className="sticky top-14 z-30 flex flex-col gap-2 rounded-xl border border-border bg-background px-4 py-3">
             <h1
               className="text-lg font-semibold tracking-widest uppercase text-primary font-display"
               style={{ fontFamily: "var(--font-display)" }}
@@ -952,9 +936,6 @@ export default function ModelPage() {
                 </Badge>
               ))}
             </div>
-            <p className="text-xs text-muted-foreground font-mono max-w-xl">
-              {modelDescription(grid)}
-            </p>
           </div>
 
           {/* ── Parameter-effect analysis ─────────────────────────────────── */}

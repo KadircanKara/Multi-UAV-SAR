@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from typing import Optional
 
 from app import settings
-from app.concurrency import BusyError, heavy_slot
+from app.concurrency import heavy_slot
 from app.ratelimit import limiter
 from app.schemas import ParetoFront, SelectRequest, SelectResponse
 from app.selector_service import (
@@ -28,10 +28,6 @@ def _not_found(scenario: str, detail: str = None) -> HTTPException:
     return HTTPException(status_code=404, detail=msg)
 
 
-def _busy(exc: BusyError) -> HTTPException:
-    return HTTPException(status_code=503, detail=str(exc))
-
-
 @router.get("/api/fronts/{scenario}", response_model=ParetoFront)
 @limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
 def get_front(
@@ -48,8 +44,6 @@ def get_front(
     try:
         with heavy_slot():
             return build_front(scenario, model_key or None)
-    except BusyError as exc:
-        raise _busy(exc) from exc
     except _SelectorNotFound as exc:
         raise _not_found(scenario) from exc
 
@@ -70,8 +64,6 @@ def get_front_capabilities(
     try:
         with heavy_slot():
             return get_capabilities(scenario, model_key or None)
-    except BusyError as exc:
-        raise _busy(exc) from exc
     except _SelectorNotFound as exc:
         raise _not_found(scenario) from exc
 
@@ -100,8 +92,6 @@ def select_solution(
                 weights=body.weights,
                 index=body.index,
             )
-    except BusyError as exc:
-        raise _busy(exc) from exc
     except _SelectorNotFound as exc:
         raise _not_found(scenario) from exc
     except StrategyUnavailableError as exc:

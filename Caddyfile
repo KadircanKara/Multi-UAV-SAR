@@ -21,13 +21,15 @@
 {$SAR_DOMAIN}, www.{$SAR_DOMAIN} {
 	encode zstd gzip
 
-	# Hard ceiling on request bodies, enforced on the actual byte count — this is
-	# the real defense (the app's own check trusts Content-Length, which a chunked
-	# body omits). Keep in step with SAR_MAX_UPLOAD_BYTES (10 MB) — a legit
-	# 2000-solution export is ~2 MB, so this is ample headroom. Caddy answers
-	# 413 before a single byte reaches the backend.
+	# Hard ceiling on request bodies, enforced on the actual byte count. Caddy
+	# answers 413 before a single byte reaches the backend; the app's own ASGI
+	# byte-counter is the defence-in-depth layer for anything not behind Caddy.
+	# 10MiB, NOT 10MB: Caddy parses SI units, so "10MB" would be 10,000,000 bytes
+	# and reject the 485 KB window below SAR_MAX_UPLOAD_BYTES (10 * 1024 * 1024)
+	# with a plain-text 413 instead of the app's JSON one. A legit 2000-solution
+	# export is ~2 MB, so this is ample headroom either way.
 	request_body {
-		max_size 10MB
+		max_size 10MiB
 	}
 
 	# Everything the API owns. The backend mounts all of its routes under

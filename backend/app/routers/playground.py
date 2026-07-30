@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app import settings
-from app.concurrency import BusyError, heavy_slot
+from app.concurrency import heavy_slot
 from app.ratelimit import limiter
 from app.playground_schema import PlaygroundResult
 from app.playground_reconstruct import (
@@ -24,10 +24,6 @@ router = APIRouter()
 
 def _unprocessable(detail: str) -> HTTPException:
     return HTTPException(status_code=422, detail=detail)
-
-
-def _busy(exc: BusyError) -> HTTPException:
-    return HTTPException(status_code=503, detail=str(exc))
 
 
 class _FrontReq(BaseModel):
@@ -88,12 +84,9 @@ def playground_front(request: Request, body: _FrontReq) -> dict:
 
     503 — the server already has its share of heavy reads running.
     """
-    try:
-        with heavy_slot():
-            return selector_service.build_front_from_selector(
-                reconstruct_selector(body.result))
-    except BusyError as exc:
-        raise _busy(exc) from exc
+    with heavy_slot():
+        return selector_service.build_front_from_selector(
+            reconstruct_selector(body.result))
 
 
 @router.post("/api/playground/select")
@@ -111,8 +104,6 @@ def playground_select(request: Request, body: _SelectReq) -> dict:
             sel = reconstruct_selector(body.result)
             return selector_service.select_from_selector(
                 sel, body.strategy, body.objective_name, body.weights, body.index)
-    except BusyError as exc:
-        raise _busy(exc) from exc
     except StrategyUnavailableError as exc:
         raise _unprocessable(str(exc)) from exc
 
@@ -130,8 +121,6 @@ def playground_replay(request: Request, body: _ReplayReq) -> dict:
             sol = _heavy_solution(body.result, body.index)
             return replay_service.run_replay_for_solution(
                 sol, body.config.to_cfg_dict(), body.label)
-    except BusyError as exc:
-        raise _busy(exc) from exc
     except ValueError as exc:
         raise _unprocessable(str(exc)) from exc
 
@@ -149,8 +138,6 @@ def playground_compare(request: Request, body: _CompareReq) -> dict:
             sol = _heavy_solution(body.result, body.index)
             return replay_service.run_compare_for_solution(
                 sol, [c.to_cfg_dict() for c in body.configs], body.labels)
-    except BusyError as exc:
-        raise _busy(exc) from exc
     except ValueError as exc:
         raise _unprocessable(str(exc)) from exc
 
@@ -175,8 +162,6 @@ def playground_playback(request: Request, body: _PlaybackReq) -> dict:
             sol = _heavy_solution(body.result, body.index)
             out = playback_service.build_playback_for_solution(
                 sol, body.config.to_cfg_dict(), body.stride)
-    except BusyError as exc:
-        raise _busy(exc) from exc
     except ValueError as exc:
         raise _unprocessable(str(exc)) from exc
     out["scenario"] = ""
@@ -198,8 +183,5 @@ def playground_comparison(request: Request, body: _CompareObjReq) -> dict:
 
     503 — the server already has its share of heavy reads running.
     """
-    try:
-        with heavy_slot():
-            return comparison_service.compare_objectives_from_results(body.results)
-    except BusyError as exc:
-        raise _busy(exc) from exc
+    with heavy_slot():
+        return comparison_service.compare_objectives_from_results(body.results)

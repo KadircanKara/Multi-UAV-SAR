@@ -102,12 +102,14 @@ def _matrix_column_arrival_steps(path_matrix, D, speed):
     for j in range(n_cols - 1):
         max_dist = max(D[path_matrix[r, j], path_matrix[r, j + 1]]
                        for r in range(1, n_rows))
-        # Same per-leg clamp get_real_paths applies, so arrival offsets stay in
-        # lockstep with the columns it actually emits: an unclamped dt here would
-        # drift the arrival index past the (clamped) trajectory for a pathological
-        # leg. Legit dt is tiny (<< _MAX_REALTIME_STEPS), so this never changes
-        # valid output.
-        dt = min(ceil(max_dist / speed), _MAX_REALTIME_STEPS)
+        # Same per-leg ceiling get_real_paths enforces, so arrival offsets stay in
+        # lockstep with the columns it actually emits. get_real_paths raises on the
+        # same condition, so a scenario that trips this fails there too rather than
+        # returning silently-compressed timing metrics. Legit dt is tiny
+        # (<< _MAX_REALTIME_STEPS), so this never fires for valid input.
+        dt = ceil(max_dist / speed)
+        if dt > _MAX_REALTIME_STEPS:
+            raise ValueError("Realtime trajectory too long for this scenario.")
         if dt == 0:
             arrivals.append(arrivals[-1])
         else:

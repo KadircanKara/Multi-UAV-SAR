@@ -53,8 +53,12 @@ stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 ln -s "$(cd "$SRC" && pwd)" "$stage/Results"
 
+# ${extra[@]+"${extra[@]}"} rather than "${extra[@]}": on bash < 4.4 — which is
+# the /bin/bash macOS still ships, and this script runs on a laptop — expanding
+# an EMPTY array under `set -u` is an "unbound variable" abort. custom_models.json
+# is absent on a fresh data tree, so that is the normal case.
 tar -czhf "$OUT" -C "$stage" \
-    Results/Objectives Results/Solutions Results/Metadata "${extra[@]}"
+    Results/Objectives Results/Solutions Results/Metadata ${extra[@]+"${extra[@]}"}
 
 size=$(du -h "$OUT" | cut -f1)
 echo "wrote $OUT ($size)"
