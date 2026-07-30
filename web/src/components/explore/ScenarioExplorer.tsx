@@ -414,10 +414,12 @@ export default function ScenarioExplorer({
   // Shared across tabs
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  // 2D Pareto axis choice — lifted out of ParetoScatter so a future left panel
-  // can drive it too (see ParetoScatter's `xObj`/`yObj` props).
+  // Pareto axis choice — lifted out of ParetoScatter / ParetoScatter3D so a
+  // future left panel can drive it too (see their `xObj`/`yObj`/`zObj` props).
+  // X and Y are shared between the 2D and 3D charts; Z only exists in 3D.
   const [xObj, setXObj] = useState<string>("");
   const [yObj, setYObj] = useState<string>("");
+  const [zObj, setZObj] = useState<string>("");
 
   // Display label — was `scenario` before; derived for both source modes.
   const displayLabel =
@@ -464,12 +466,16 @@ export default function ScenarioExplorer({
   // the dependency array for us instead of us silencing it.
   const defaultXObj = front?.objectives[0] ?? "";
   const defaultYObj = front?.objectives[1] ?? front?.objectives[0] ?? "";
-  // Full-list fingerprint. defaultXObj/defaultYObj alone only notice a change
-  // to the first two entries — but a manually-selected axis can point at an
-  // objective at index >= 2, which can go stale (renamed/removed) while the
-  // first two names stay the same. Depending on this too forces a reseed on
-  // ANY change to the list, so xObj/yObj never keep pointing at a key that's
-  // absent from the new front.
+  // The 3D chart only renders from 3 objectives up (see the guard around
+  // ParetoScatter3D below); below that, "" is a sane, inert default — there's
+  // no third objective to point at and nothing will read it.
+  const defaultZObj = front?.objectives[2] ?? "";
+  // Full-list fingerprint. defaultXObj/defaultYObj/defaultZObj alone only
+  // notice a change to the first three entries — but a manually-selected axis
+  // can point at an objective at any index, which can go stale (renamed/
+  // removed) while those first names stay the same. Depending on this too
+  // forces a reseed on ANY change to the list, so xObj/yObj/zObj never keep
+  // pointing at a key that's absent from the new front.
   const objectivesKey = front?.objectives.join("|") ?? "";
 
   // Seed the axes once the front arrives; the front can change under us when the
@@ -478,7 +484,8 @@ export default function ScenarioExplorer({
   useEffect(() => {
     setXObj(defaultXObj);
     setYObj(defaultYObj);
-  }, [defaultXObj, defaultYObj, objectivesKey]);
+    setZObj(defaultZObj);
+  }, [defaultXObj, defaultYObj, defaultZObj, objectivesKey]);
 
   const handleSelectIndex = useCallback((idx: number) => {
     setSelectedIndex(idx);
@@ -636,6 +643,12 @@ export default function ScenarioExplorer({
                   polarities={front.polarities}
                   selectedIndex={selectedIndex}
                   onSelectIndex={handleSelectIndex}
+                  xObj={xObj}
+                  yObj={yObj}
+                  zObj={zObj}
+                  onXChange={setXObj}
+                  onYChange={setYObj}
+                  onZChange={setZObj}
                 />
               </CardContent>
             </Card>

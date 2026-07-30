@@ -187,6 +187,13 @@ function LivePareto3D({
   objectives: string[];
   liveFront: Record<string, number>[] | null;
 }) {
+  // This standalone live view has no left panel to lift into, so it keeps its
+  // own axis state — seeded the same way ParetoScatter3D used to seed it
+  // internally, so the default view is unchanged.
+  const [xObj, setXObj] = useState(objectives[0] ?? "");
+  const [yObj, setYObj] = useState(objectives[1] ?? objectives[0] ?? "");
+  const [zObj, setZObj] = useState(objectives[2] ?? objectives[0] ?? "");
+
   const points = useMemo(
     () =>
       (liveFront ?? []).map((values) => ({
@@ -209,6 +216,12 @@ function LivePareto3D({
         points={points}
         polarities={POLARITY}
         height={420}
+        xObj={xObj}
+        yObj={yObj}
+        zObj={zObj}
+        onXChange={setXObj}
+        onYChange={setYObj}
+        onZChange={setZObj}
       />
     </div>
   );

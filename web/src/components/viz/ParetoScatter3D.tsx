@@ -18,13 +18,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import ObjectiveAxisSelect from "@/components/viz/ObjectiveAxisSelect";
 import { useChartColors } from "@/hooks/useChartColors";
 import { useCanvasDPR } from "@/hooks/useCanvasDPR";
 import { isPercentObjective, percentString, percentTick } from "@/lib/objective-format";
@@ -46,6 +40,15 @@ interface Props {
   onSelectIndex?: (index: number) => void;
   /** Canvas height in px. */
   height?: number;
+  /** Axis choice owned by the parent so the left panel can drive it. */
+  xObj: string;
+  yObj: string;
+  zObj: string;
+  onXChange: (objective: string) => void;
+  onYChange: (objective: string) => void;
+  onZChange: (objective: string) => void;
+  /** True when the parent renders the pickers itself (panel layout). */
+  hideAxisSelectors?: boolean;
 }
 
 interface Camera {
@@ -181,6 +184,13 @@ export default function ParetoScatter3D({
   selectedIndex = null,
   onSelectIndex,
   height = 384,
+  xObj,
+  yObj,
+  zObj,
+  onXChange,
+  onYChange,
+  onZChange,
+  hideAxisSelectors,
 }: Props) {
   const colors = useChartColors();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -194,9 +204,6 @@ export default function ParetoScatter3D({
     moved: number;
   }>({ active: false, lastX: 0, lastY: 0, moved: 0 });
 
-  const [xObj, setXObj] = useState(objectives[0] ?? "");
-  const [yObj, setYObj] = useState(objectives[1] ?? objectives[0] ?? "");
-  const [zObj, setZObj] = useState(objectives[2] ?? objectives[0] ?? "");
   const [hover, setHover] = useState<{
     point: Point3D;
     sx: number;
@@ -519,34 +526,22 @@ export default function ParetoScatter3D({
     <div className="flex flex-col gap-3">
       {/* Axis selectors + reset */}
       <div className="flex flex-wrap items-center gap-3">
-        {(
-          [
-            ["X", xObj, setXObj],
-            ["Y", yObj, setYObj],
-            ["Z", zObj, setZObj],
-          ] as const
-        ).map(([label, value, setter]) => (
-          <div key={label} className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground tracking-widest font-mono">
-              {label}:
-            </span>
-            <Select value={value} onValueChange={setter}>
-              <SelectTrigger className="h-7 w-48 text-xs font-mono">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {objectives.map((obj) => (
-                  <SelectItem key={obj} value={obj} className="text-xs font-mono">
-                    {obj}
-                    {polarities?.[obj] === -1 && (
-                      <span className="ml-1 text-muted-foreground">(max)</span>
-                    )}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        ))}
+        {!hideAxisSelectors && (
+          <>
+            <ObjectiveAxisSelect
+              label="X:" value={xObj} onChange={onXChange}
+              objectives={objectives} polarities={polarities ?? {}}
+            />
+            <ObjectiveAxisSelect
+              label="Y:" value={yObj} onChange={onYChange}
+              objectives={objectives} polarities={polarities ?? {}}
+            />
+            <ObjectiveAxisSelect
+              label="Z:" value={zObj} onChange={onZChange}
+              objectives={objectives} polarities={polarities ?? {}}
+            />
+          </>
+        )}
         <button
           type="button"
           onClick={resetView}
