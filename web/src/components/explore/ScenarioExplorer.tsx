@@ -2,67 +2,30 @@
 
 /**
  * ScenarioExplorer — the Pareto / Merging / Animation deep-dive for ONE
- * precomputed scenario. Extracted from the former /explore/[scenario] page so
- * it can be embedded inline on the model page (driven by the parameter-
- * combination dropdowns) as well as rendered standalone at /explore/[scenario].
+ * precomputed scenario, as a self-contained block: it loads the front, renders
+ * the scenario's identity, and hands the sections to the panel layout.
  *
- * Fetches the Pareto front for `scenario` and renders three tabs. When embedded
- * on the model page the parent passes a `key={scenario}` so switching the
- * combination fully remounts this subtree (resetting tab + per-tab state).
+ * The three sections used to be tabs; they are now scroll sections whose
+ * controls share one sticky panel (see SectionPanelLayout), which is why
+ * everything below the header is `useScenarioSections` — a page that wants to
+ * interleave its OWN sections with these (the model route) calls that hook
+ * directly and skips this wrapper.
+ *
+ * Used standalone at /missions/[modelKey]/scenario/[suffix], embedded on the
+ * model page (driven by the parameter-combination dropdowns, with a
+ * `key={scenario}` so switching combination fully remounts this subtree), and
+ * in the Analysis block of /optimize (playground source).
  */
 
-import { useEffect, useState, useCallback, type ReactNode } from "react";
-import dynamic from "next/dynamic";
-import { toast } from "sonner";
-import { sourceFront, sourceCompare } from "@/lib/source";
+import type { ReactNode } from "react";
 import type { ExplorerSource } from "@/lib/source";
-import type { ParetoFront, SensingConfig } from "@/lib/types";
-import GridPlayback from "@/components/viz/GridPlayback/GridPlayback";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import type { ParetoFront } from "@/lib/types";
+import SectionPanelLayout from "@/components/layout/SectionPanelLayout";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Slider } from "@/components/ui/slider";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Separator } from "@/components/ui/separator";
-import SolutionSelectorPanel from "@/components/SolutionSelectorPanel";
-import MergingMetricsTable, {
-  type CompareTableRow,
-} from "@/components/viz/MergingMetricsTable";
-import type { BeliefRow } from "@/components/viz/BeliefEvolutionChart";
-import type { TargetsKnownRow } from "@/components/viz/TargetsKnownChart";
-import { cn } from "@/lib/utils";
-
-// ─── Dynamic (SSR-off) chart imports ─────────────────────────────────────────
-
-const ParetoScatter = dynamic(
-  () => import("@/components/viz/ParetoScatter"),
-  { ssr: false, loading: () => <ChartSkeleton height="h-72" /> }
-);
-
-const ParetoScatter3D = dynamic(
-  () => import("@/components/viz/ParetoScatter3D"),
-  { ssr: false, loading: () => <ChartSkeleton height="h-96" /> }
-);
-
-const BeliefEvolutionChart = dynamic(
-  () => import("@/components/viz/BeliefEvolutionChart"),
-  { ssr: false, loading: () => <ChartSkeleton height="h-64" /> }
-);
-
-const TargetsKnownChart = dynamic(
-  () => import("@/components/viz/TargetsKnownChart"),
-  { ssr: false, loading: () => <ChartSkeleton height="h-64" /> }
-);
+import { useScenarioSections } from "./useScenarioSections";
 
 // ─── Small utility components ─────────────────────────────────────────────────
-
-function ChartSkeleton({ height }: { height: string }) {
-  return <Skeleton className={cn("w-full rounded", height)} />;
-}
 
 function ExplorerSkeleton() {
   return (
@@ -98,287 +61,40 @@ function OfflinePanel({ message }: { message: string }) {
   );
 }
 
-// ─── MERGING TAB ─────────────────────────────────────────────────────────────
-
-const METRIC_NAMES = [
-  "Effective Mission Time",
-  "Detection Time",
-  "Inform Time",
-  "Time At Least One Drone Knows All Targets",
-];
-
-interface MergingTabProps {
-  source: ExplorerSource;
-  selectedIndex: number;
-}
-
-function MergingTab({ source, selectedIndex }: MergingTabProps) {
-  // Config state
-  const [timeModel, setTimeModel] = useState<"discrete" | "realtime">("discrete");
-  const [detProb, setDetProb] = useState(0.8);
-  const [faProb, setFaProb] = useState(0.1);
-  const [beliefThresh, setBeliefThresh] = useState(0.9);
-  const [targetsInput, setTargetsInput] = useState("12");
-
-  // Results state
-  const [comparing, setComparing] = useState(false);
-  const [tableRows, setTableRows] = useState<CompareTableRow[] | null>(null);
-  const [beliefRows, setBeliefRows] = useState<BeliefRow[] | null>(null);
-  const [knownRows, setKnownRows] = useState<TargetsKnownRow[] | null>(null);
-
-  // Validation
-  const pqInvalid = detProb <= faProb;
-  const targetList = targetsInput
-    .split(",")
-    .map((s) => parseInt(s.trim(), 10))
-    .filter((n) => !isNaN(n));
-
-  const canCompare = !pqInvalid && targetList.length > 0 && !comparing;
-
-  async function runCompare() {
-    if (!canCompare) return;
-    setComparing(true);
-    setTableRows(null);
-    setBeliefRows(null);
-    setKnownRows(null);
-
-    const baseConfig = {
-      time_model: timeModel,
-      detection_prob: detProb,
-      false_alarm_prob: faProb,
-      belief_threshold: beliefThresh,
-      target_locations: targetList,
-    };
-
-    const configs: SensingConfig[] = [
-      { ...baseConfig, merge_topology: "none" },
-      { ...baseConfig, merge_topology: "onboard" },
-      { ...baseConfig, merge_topology: "gcs" },
-    ];
-    const labels = ["none", "onboard", "gcs"];
-
-    try {
-      const res = await sourceCompare(source, {
-        index: selectedIndex,
-        configs,
-        labels,
-        model_key: null,
-      });
-
-      // Parse compare response
-      const rawTable = res.table as Record<string, string | number | null>[] | undefined;
-      if (rawTable) {
-        setTableRows(rawTable as CompareTableRow[]);
-      }
-
-      const rawRows = res.rows as Record<string, unknown>[] | undefined;
-      if (rawRows) {
-        const bRows: BeliefRow[] = rawRows.map((r, i) => ({
-          label: labels[i] ?? `config-${i}`,
-          cell_occupancy_probabilities: r.cell_occupancy_probabilities as number[][],
-          target_locations: r.target_locations as number[],
-          belief_threshold: r.belief_threshold as number,
-        }));
-        setBeliefRows(bRows);
-        setKnownRows(bRows as TargetsKnownRow[]);
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error("Comparison failed", { description: msg });
-    } finally {
-      setComparing(false);
-    }
-  }
-
+function ScenarioTitle({ label }: { label: string }) {
   return (
-    <div className="flex flex-col gap-6">
-      {/* Config builder card */}
-      <Card>
-        <CardHeader>
-          <CardTitle
-            className="text-xs font-semibold tracking-widest uppercase text-primary font-display"
-            style={{ fontFamily: "var(--font-display)" }}
-          >
-            SENSING CONFIG
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-5">
-          {/* Time model */}
-          <div className="flex flex-col gap-2">
-            <Label className="text-xs text-muted-foreground tracking-widest uppercase font-mono">
-              TIME MODEL
-            </Label>
-            <ToggleGroup
-              type="single"
-              value={timeModel}
-              onValueChange={(v) => {
-                if (v === "discrete" || v === "realtime") setTimeModel(v);
-              }}
-              className="justify-start gap-2"
-            >
-              <ToggleGroupItem
-                value="discrete"
-                className="h-7 text-xs font-mono tracking-widest uppercase"
-              >
-                DISCRETE
-              </ToggleGroupItem>
-              <ToggleGroupItem
-                value="realtime"
-                className="h-7 text-xs font-mono tracking-widest uppercase"
-              >
-                REALTIME
-              </ToggleGroupItem>
-            </ToggleGroup>
-          </div>
-
-          {/* Detection prob */}
-          <SliderField
-            label="DETECTION PROB (p)"
-            value={detProb}
-            onChange={setDetProb}
-            min={0.01}
-            max={0.99}
-            step={0.01}
-          />
-
-          {/* False alarm prob */}
-          <SliderField
-            label="FALSE ALARM PROB (q)"
-            value={faProb}
-            onChange={setFaProb}
-            min={0.01}
-            max={0.99}
-            step={0.01}
-          />
-          {pqInvalid && (
-            <p className="text-xs text-destructive font-mono">
-              ⚠ REQUIRES p &gt; q — adjust sliders
-            </p>
-          )}
-
-          {/* Belief threshold */}
-          <SliderField
-            label="BELIEF THRESHOLD (B)"
-            value={beliefThresh}
-            onChange={setBeliefThresh}
-            min={0.01}
-            max={0.99}
-            step={0.01}
-          />
-
-          {/* Target cells */}
-          <div className="flex flex-col gap-2">
-            <Label className="text-xs text-muted-foreground tracking-widest uppercase font-mono">
-              TARGET CELLS (COMMA-SEPARATED)
-            </Label>
-            <Input
-              value={targetsInput}
-              onChange={(e) => setTargetsInput(e.target.value)}
-              placeholder="e.g. 12,34,56"
-              className="h-7 text-xs font-mono"
-            />
-            {targetList.length === 0 && (
-              <p className="text-xs text-destructive font-mono">
-                ENTER AT LEAST ONE VALID CELL INDEX
-              </p>
-            )}
-          </div>
-
-          <Separator />
-
-          <Button
-            onClick={runCompare}
-            disabled={!canCompare}
-            size="sm"
-            className="w-full text-xs tracking-widest font-mono font-semibold"
-          >
-            {comparing ? "RUNNING COMPARE…" : "COMPARE MERGING STRATEGIES"}
-          </Button>
-
-          <p className="text-xs text-muted-foreground font-mono">
-            COMPARING: NONE vs ONBOARD vs GCS — SOLUTION INDEX {selectedIndex}
-          </p>
-        </CardContent>
-      </Card>
-
-      {/* Results */}
-      {comparing && (
-        <div className="flex flex-col gap-3">
-          <Skeleton className="h-32 w-full" />
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <Skeleton className="h-64 w-full" />
-            <Skeleton className="h-64 w-full" />
-          </div>
-        </div>
-      )}
-
-      {!comparing && tableRows && (
-        <>
-          {/* Time-metric results — table */}
-          <div className="flex flex-col gap-3">
-            <span
-              className="text-xs font-semibold tracking-widest uppercase text-primary font-display"
-              style={{ fontFamily: "var(--font-display)" }}
-            >
-              TIME METRICS
-            </span>
-            <MergingMetricsTable tableRows={tableRows} metricNames={METRIC_NAMES} />
-          </div>
-
-          {beliefRows && knownRows && (
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <Card>
-                <CardContent className="pt-4">
-                  <BeliefEvolutionChart rows={beliefRows} />
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="pt-4">
-                  <TargetsKnownChart rows={knownRows} />
-                </CardContent>
-              </Card>
-            </div>
-          )}
-        </>
-      )}
-    </div>
+    <h1
+      className="text-sm font-semibold tracking-widest uppercase text-primary font-display"
+      style={{ fontFamily: "var(--font-display)" }}
+    >
+      {label}
+    </h1>
   );
 }
 
-// ─── Slider field helper (used in MergingTab, defined at module scope) ────────
-
-function SliderField({
-  label,
-  value,
-  onChange,
-  min,
-  max,
-  step,
-}: {
-  label: string;
-  value: number;
-  onChange: (v: number) => void;
-  min: number;
-  max: number;
-  step: number;
-}) {
+function ScenarioBadges({ front }: { front: ParetoFront }) {
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex justify-between">
-        <Label className="text-xs text-muted-foreground tracking-widest uppercase font-mono">
-          {label}
-        </Label>
-        <span className="text-xs font-mono tabular-nums text-primary">
-          {value.toFixed(2)}
-        </span>
-      </div>
-      <Slider
-        min={min}
-        max={max}
-        step={step}
-        value={[value]}
-        onValueChange={([v]) => onChange(v)}
-      />
+    <div className="flex flex-wrap items-center gap-2">
+      <Badge variant="outline" className="text-xs font-mono tracking-widest">
+        {front.model_key}
+      </Badge>
+      <Badge variant="outline" className="text-xs font-mono tracking-widest">
+        {front.result_kind.toUpperCase()}
+      </Badge>
+      <Badge variant="outline" className="text-xs font-mono tracking-widest">
+        {front.n_solutions} SOLUTION{front.n_solutions !== 1 ? "S" : ""}
+      </Badge>
+      {front.objectives.map((obj) => (
+        <Badge
+          key={obj}
+          className="text-xs font-mono tracking-wide bg-secondary text-secondary-foreground"
+        >
+          {obj}
+          {front.polarities[obj] === -1 && (
+            <span className="ml-1 text-muted-foreground">(max)</span>
+          )}
+        </Badge>
+      ))}
     </div>
   );
 }
@@ -395,7 +111,7 @@ interface Props {
   showSummary?: boolean;
   /** Notified once the front loads — lets a parent build a back-link, etc. */
   onFrontLoaded?: (front: ParetoFront) => void;
-  /** Optional content rendered inside the Pareto-front card, below the scatter
+  /** Optional content rendered inside the Pareto-front card, below the plots
    *  (e.g. the model route's read-only run-details). Omitted ⇒ nothing extra. */
   paretoFooter?: ReactNode;
 }
@@ -407,26 +123,11 @@ export default function ScenarioExplorer({
   onFrontLoaded,
   paretoFooter,
 }: Props) {
-  const [front, setFront] = useState<ParetoFront | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  // Shared across tabs
-  const [selectedIndex, setSelectedIndex] = useState(0);
-
-  // 2D Pareto axis choice — lifted out of ParetoScatter so a future left panel
-  // can drive it too (see ParetoScatter's `xObj`/`yObj` props).
-  const [xObj, setXObj] = useState<string>("");
-  const [yObj, setYObj] = useState<string>("");
-
-  // 3D Pareto axis choice — INDEPENDENT of the 2D pair above (the future
-  // panel shows a separate "3D AXES" block so a fixed 3D view can be compared
-  // against a changing 2D slice), lifted out of ParetoScatter3D (see its
-  // `xObj`/`yObj`/`zObj` props). Named with a `3D` infix so no reader can
-  // mistake these for the 2D xObj/yObj.
-  const [x3DObj, setX3DObj] = useState<string>("");
-  const [y3DObj, setY3DObj] = useState<string>("");
-  const [z3DObj, setZ3DObj] = useState<string>("");
+  const { front, loading, error, sections } = useScenarioSections({
+    source,
+    onFrontLoaded,
+    paretoFooter,
+  });
 
   // Display label — was `scenario` before; derived for both source modes.
   const displayLabel =
@@ -434,92 +135,12 @@ export default function ScenarioExplorer({
       ? source.scenario
       : source.result.model.model_key ?? "uploaded run";
 
-  // Stable primitive key for the effect below (avoid re-fetch loops caused by
-  // a freshly-created `source` object identity on every render).
-  const sourceKey = source.mode === "seeded" ? source.scenario : "playground";
-
-  useEffect(() => {
-    if (source.mode === "seeded" && !source.scenario) return;
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-
-    sourceFront(source)
-      .then((data) => {
-        if (!cancelled) {
-          setFront(data);
-          // Default to first solution index from the data
-          setSelectedIndex(data.solutions[0]?.index ?? 0);
-          setLoading(false);
-          onFrontLoaded?.(data);
-        }
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
-          setLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sourceKey, onFrontLoaded]);
-
-  // Default axis values derived from the front's objective list. Plain consts
-  // (not memoized) so the effect below can list the primitive values it
-  // actually uses instead of `front` itself — exhaustive-deps then verifies
-  // the dependency array for us instead of us silencing it.
-  const defaultXObj = front?.objectives[0] ?? "";
-  const defaultYObj = front?.objectives[1] ?? front?.objectives[0] ?? "";
-  // The 3D chart only renders from 3 objectives up (see the guard around
-  // ParetoScatter3D below), and its axes are independent of the 2D pair
-  // above, so each defaults straight off its own index with no fallback
-  // chain — "" is a sane, inert default when that index doesn't exist.
-  const defaultX3DObj = front?.objectives[0] ?? "";
-  const defaultY3DObj = front?.objectives[1] ?? "";
-  const defaultZ3DObj = front?.objectives[2] ?? "";
-  // Full-list fingerprint. The per-index defaults above alone only notice a
-  // change to the entries they read — but a manually-selected axis can point
-  // at an objective at any index, which can go stale (renamed/removed) while
-  // the entries this effect reads stay the same. Depending on this too forces
-  // a reseed on ANY change to the list, so none of the five axis values below
-  // ever keep pointing at a key that's absent from the new front.
-  const objectivesKey = front?.objectives.join("|") ?? "";
-
-  // Seed the axes once the front arrives; the front can change under us when the
-  // parent switches combination, so re-seed whenever the objective list changes
-  // in any way (not just its first two entries), and not on every render.
-  useEffect(() => {
-    setXObj(defaultXObj);
-    setYObj(defaultYObj);
-    setX3DObj(defaultX3DObj);
-    setY3DObj(defaultY3DObj);
-    setZ3DObj(defaultZ3DObj);
-  }, [
-    defaultXObj, defaultYObj,
-    defaultX3DObj, defaultY3DObj, defaultZ3DObj,
-    objectivesKey,
-  ]);
-
-  const handleSelectIndex = useCallback((idx: number) => {
-    setSelectedIndex(idx);
-  }, []);
-
   if (source.mode === "seeded" && !source.scenario) return null;
   if (loading) return <ExplorerSkeleton />;
   if (error) {
     return (
       <div className="flex flex-col gap-3">
-        {showTitle && (
-          <h1
-            className="text-sm font-semibold tracking-widest uppercase text-primary font-display"
-            style={{ fontFamily: "var(--font-display)" }}
-          >
-            {displayLabel}
-          </h1>
-        )}
+        {showTitle && <ScenarioTitle label={displayLabel} />}
         <OfflinePanel message={error} />
       </div>
     );
@@ -530,161 +151,13 @@ export default function ScenarioExplorer({
     <div className="flex flex-col gap-6">
       {/* Scenario info header */}
       {(showTitle || showSummary) && (
-      <div className="flex flex-col gap-2">
-        {showTitle && (
-          <h1
-            className="text-sm font-semibold tracking-widest uppercase text-primary font-display"
-            style={{ fontFamily: "var(--font-display)" }}
-          >
-            {displayLabel}
-          </h1>
-        )}
-        {showSummary && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline" className="text-xs font-mono tracking-widest">
-            {front.model_key}
-          </Badge>
-          <Badge variant="outline" className="text-xs font-mono tracking-widest">
-            {front.result_kind.toUpperCase()}
-          </Badge>
-          <Badge variant="outline" className="text-xs font-mono tracking-widest">
-            {front.n_solutions} SOLUTION{front.n_solutions !== 1 ? "S" : ""}
-          </Badge>
-          {front.objectives.map((obj) => (
-            <Badge
-              key={obj}
-              className="text-xs font-mono tracking-wide bg-secondary text-secondary-foreground"
-            >
-              {obj}
-              {front.polarities[obj] === -1 && (
-                <span className="ml-1 text-muted-foreground">(max)</span>
-              )}
-            </Badge>
-          ))}
+        <div className="flex flex-col gap-2">
+          {showTitle && <ScenarioTitle label={displayLabel} />}
+          {showSummary && <ScenarioBadges front={front} />}
         </div>
-        )}
-      </div>
       )}
 
-      {/* Main tabs */}
-      <Tabs defaultValue="pareto" className="w-full">
-        <TabsList className="mb-4 font-mono text-xs tracking-widest">
-          <TabsTrigger
-            value="pareto"
-            className="text-xs font-mono tracking-widest uppercase"
-          >
-            PARETO
-          </TabsTrigger>
-          <TabsTrigger
-            value="merging"
-            className="text-xs font-mono tracking-widest uppercase"
-          >
-            MERGING
-          </TabsTrigger>
-          <TabsTrigger
-            value="animation"
-            className="text-xs font-mono tracking-widest uppercase"
-          >
-            ANIMATION
-          </TabsTrigger>
-        </TabsList>
-
-        {/* ── PARETO TAB ─────────────────────────────────────────────── */}
-        <TabsContent value="pareto">
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_280px]">
-            {/* Scatter chart card */}
-            <Card>
-              <CardHeader>
-                <CardTitle
-                  className="text-xs font-semibold tracking-widest uppercase text-primary font-display"
-                  style={{ fontFamily: "var(--font-display)" }}
-                >
-                  PARETO FRONT
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ParetoScatter
-                  front={front}
-                  selectedIndex={selectedIndex}
-                  onSelectIndex={handleSelectIndex}
-                  xObj={xObj}
-                  yObj={yObj}
-                  onXChange={setXObj}
-                  onYChange={setYObj}
-                />
-                {paretoFooter}
-              </CardContent>
-            </Card>
-
-            {/* Selector panel card */}
-            <Card>
-              <CardHeader>
-                <CardTitle
-                  className="text-xs font-semibold tracking-widest uppercase text-primary font-display"
-                  style={{ fontFamily: "var(--font-display)" }}
-                >
-                  SOLUTION SELECT
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <SolutionSelectorPanel
-                  source={source}
-                  front={front}
-                  selectedIndex={selectedIndex}
-                  onSelectIndex={handleSelectIndex}
-                />
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* 3D view of the same front — only meaningful from 3 objectives up,
-              so 2-objective scenarios keep the 2D plot alone. */}
-          {front.result_kind !== "single" && front.objectives.length >= 3 && (
-            <Card className="mt-4">
-              <CardHeader>
-                <CardTitle
-                  className="text-xs font-semibold tracking-widest uppercase text-primary font-display"
-                  style={{ fontFamily: "var(--font-display)" }}
-                >
-                  PARETO FRONT · 3D
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ParetoScatter3D
-                  objectives={front.objectives}
-                  points={front.solutions.map((s) => ({
-                    index: s.index,
-                    values: s.objectives_abs,
-                  }))}
-                  polarities={front.polarities}
-                  selectedIndex={selectedIndex}
-                  onSelectIndex={handleSelectIndex}
-                  xObj={x3DObj}
-                  yObj={y3DObj}
-                  zObj={z3DObj}
-                  onXChange={setX3DObj}
-                  onYChange={setY3DObj}
-                  onZChange={setZ3DObj}
-                />
-              </CardContent>
-            </Card>
-          )}
-        </TabsContent>
-
-        {/* ── MERGING TAB ────────────────────────────────────────────── */}
-        <TabsContent value="merging">
-          <MergingTab source={source} selectedIndex={selectedIndex} />
-        </TabsContent>
-
-        {/* ── ANIMATION TAB ──────────────────────────────────────────── */}
-        <TabsContent value="animation">
-          <GridPlayback
-            source={source}
-            front={front}
-            selectedIndex={selectedIndex}
-          />
-        </TabsContent>
-      </Tabs>
+      <SectionPanelLayout sections={sections} />
     </div>
   );
 }

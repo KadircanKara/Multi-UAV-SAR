@@ -982,8 +982,9 @@ export default function OptimizePage() {
     );
   }
 
-  // Stable identity: ScenarioExplorer keeps this in its front-fetch effect
-  // deps, so a new function each render would refetch in a loop.
+  // Stable identity: ScenarioExplorer keeps this in the deps of the effect
+  // that notifies us, so a new function each render would re-notify on every
+  // render (it can no longer refetch — that effect no longer sees this).
   const handleAnalysisFront = useCallback((f: ParetoFront) => {
     setAnalysisFront(f);
   }, []);

@@ -3,6 +3,10 @@
 /**
  * ParetoScatter — dynamic Recharts ScatterChart of the Pareto front.
  * Loaded via next/dynamic({ ssr: false }) from the explore page.
+ *
+ * The "N SOLUTIONS — CLICK POINT TO SELECT" caption is NOT printed here: it
+ * describes the whole Pareto card, whose 3D plot answers the same click, so
+ * ParetoFrontsCard prints it once below both plots.
  */
 
 import {
@@ -238,10 +242,6 @@ export default function ParetoScatter({
           </ScatterChart>
         </ResponsiveContainer>
       </div>
-
-      <p className="text-xs text-muted-foreground font-mono">
-        {front.n_solutions} SOLUTIONS — CLICK POINT TO SELECT
-      </p>
     </div>
   );
 }
