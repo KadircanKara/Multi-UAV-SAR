@@ -414,12 +414,19 @@ export default function ScenarioExplorer({
   // Shared across tabs
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  // Pareto axis choice — lifted out of ParetoScatter / ParetoScatter3D so a
-  // future left panel can drive it too (see their `xObj`/`yObj`/`zObj` props).
-  // X and Y are shared between the 2D and 3D charts; Z only exists in 3D.
+  // 2D Pareto axis choice — lifted out of ParetoScatter so a future left panel
+  // can drive it too (see ParetoScatter's `xObj`/`yObj` props).
   const [xObj, setXObj] = useState<string>("");
   const [yObj, setYObj] = useState<string>("");
-  const [zObj, setZObj] = useState<string>("");
+
+  // 3D Pareto axis choice — INDEPENDENT of the 2D pair above (the future
+  // panel shows a separate "3D AXES" block so a fixed 3D view can be compared
+  // against a changing 2D slice), lifted out of ParetoScatter3D (see its
+  // `xObj`/`yObj`/`zObj` props). Named with a `3D` infix so no reader can
+  // mistake these for the 2D xObj/yObj.
+  const [x3DObj, setX3DObj] = useState<string>("");
+  const [y3DObj, setY3DObj] = useState<string>("");
+  const [z3DObj, setZ3DObj] = useState<string>("");
 
   // Display label — was `scenario` before; derived for both source modes.
   const displayLabel =
@@ -467,15 +474,18 @@ export default function ScenarioExplorer({
   const defaultXObj = front?.objectives[0] ?? "";
   const defaultYObj = front?.objectives[1] ?? front?.objectives[0] ?? "";
   // The 3D chart only renders from 3 objectives up (see the guard around
-  // ParetoScatter3D below); below that, "" is a sane, inert default — there's
-  // no third objective to point at and nothing will read it.
-  const defaultZObj = front?.objectives[2] ?? "";
-  // Full-list fingerprint. defaultXObj/defaultYObj/defaultZObj alone only
-  // notice a change to the first three entries — but a manually-selected axis
-  // can point at an objective at any index, which can go stale (renamed/
-  // removed) while those first names stay the same. Depending on this too
-  // forces a reseed on ANY change to the list, so xObj/yObj/zObj never keep
-  // pointing at a key that's absent from the new front.
+  // ParetoScatter3D below), and its axes are independent of the 2D pair
+  // above, so each defaults straight off its own index with no fallback
+  // chain — "" is a sane, inert default when that index doesn't exist.
+  const defaultX3DObj = front?.objectives[0] ?? "";
+  const defaultY3DObj = front?.objectives[1] ?? "";
+  const defaultZ3DObj = front?.objectives[2] ?? "";
+  // Full-list fingerprint. The per-index defaults above alone only notice a
+  // change to the entries they read — but a manually-selected axis can point
+  // at an objective at any index, which can go stale (renamed/removed) while
+  // the entries this effect reads stay the same. Depending on this too forces
+  // a reseed on ANY change to the list, so none of the five axis values below
+  // ever keep pointing at a key that's absent from the new front.
   const objectivesKey = front?.objectives.join("|") ?? "";
 
   // Seed the axes once the front arrives; the front can change under us when the
@@ -484,8 +494,14 @@ export default function ScenarioExplorer({
   useEffect(() => {
     setXObj(defaultXObj);
     setYObj(defaultYObj);
-    setZObj(defaultZObj);
-  }, [defaultXObj, defaultYObj, defaultZObj, objectivesKey]);
+    setX3DObj(defaultX3DObj);
+    setY3DObj(defaultY3DObj);
+    setZ3DObj(defaultZ3DObj);
+  }, [
+    defaultXObj, defaultYObj,
+    defaultX3DObj, defaultY3DObj, defaultZ3DObj,
+    objectivesKey,
+  ]);
 
   const handleSelectIndex = useCallback((idx: number) => {
     setSelectedIndex(idx);
@@ -643,12 +659,12 @@ export default function ScenarioExplorer({
                   polarities={front.polarities}
                   selectedIndex={selectedIndex}
                   onSelectIndex={handleSelectIndex}
-                  xObj={xObj}
-                  yObj={yObj}
-                  zObj={zObj}
-                  onXChange={setXObj}
-                  onYChange={setYObj}
-                  onZChange={setZObj}
+                  xObj={x3DObj}
+                  yObj={y3DObj}
+                  zObj={z3DObj}
+                  onXChange={setX3DObj}
+                  onYChange={setY3DObj}
+                  onZChange={setZ3DObj}
                 />
               </CardContent>
             </Card>
