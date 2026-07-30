@@ -464,14 +464,21 @@ export default function ScenarioExplorer({
   // the dependency array for us instead of us silencing it.
   const defaultXObj = front?.objectives[0] ?? "";
   const defaultYObj = front?.objectives[1] ?? front?.objectives[0] ?? "";
+  // Full-list fingerprint. defaultXObj/defaultYObj alone only notice a change
+  // to the first two entries — but a manually-selected axis can point at an
+  // objective at index >= 2, which can go stale (renamed/removed) while the
+  // first two names stay the same. Depending on this too forces a reseed on
+  // ANY change to the list, so xObj/yObj never keep pointing at a key that's
+  // absent from the new front.
+  const objectivesKey = front?.objectives.join("|") ?? "";
 
   // Seed the axes once the front arrives; the front can change under us when the
   // parent switches combination, so re-seed whenever the objective list changes
-  // (comparing the derived defaults above, not on every render).
+  // in any way (not just its first two entries), and not on every render.
   useEffect(() => {
     setXObj(defaultXObj);
     setYObj(defaultYObj);
-  }, [defaultXObj, defaultYObj]);
+  }, [defaultXObj, defaultYObj, objectivesKey]);
 
   const handleSelectIndex = useCallback((idx: number) => {
     setSelectedIndex(idx);
