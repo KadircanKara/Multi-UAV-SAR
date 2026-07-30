@@ -414,6 +414,11 @@ export default function ScenarioExplorer({
   // Shared across tabs
   const [selectedIndex, setSelectedIndex] = useState(0);
 
+  // 2D Pareto axis choice — lifted out of ParetoScatter so a future left panel
+  // can drive it too (see ParetoScatter's `xObj`/`yObj` props).
+  const [xObj, setXObj] = useState<string>("");
+  const [yObj, setYObj] = useState<string>("");
+
   // Display label — was `scenario` before; derived for both source modes.
   const displayLabel =
     source.mode === "seeded"
@@ -452,6 +457,21 @@ export default function ScenarioExplorer({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceKey, onFrontLoaded]);
+
+  // Default axis values derived from the front's objective list. Plain consts
+  // (not memoized) so the effect below can list the primitive values it
+  // actually uses instead of `front` itself — exhaustive-deps then verifies
+  // the dependency array for us instead of us silencing it.
+  const defaultXObj = front?.objectives[0] ?? "";
+  const defaultYObj = front?.objectives[1] ?? front?.objectives[0] ?? "";
+
+  // Seed the axes once the front arrives; the front can change under us when the
+  // parent switches combination, so re-seed whenever the objective list changes
+  // (comparing the derived defaults above, not on every render).
+  useEffect(() => {
+    setXObj(defaultXObj);
+    setYObj(defaultYObj);
+  }, [defaultXObj, defaultYObj]);
 
   const handleSelectIndex = useCallback((idx: number) => {
     setSelectedIndex(idx);
@@ -557,6 +577,10 @@ export default function ScenarioExplorer({
                   front={front}
                   selectedIndex={selectedIndex}
                   onSelectIndex={handleSelectIndex}
+                  xObj={xObj}
+                  yObj={yObj}
+                  onXChange={setXObj}
+                  onYChange={setYObj}
                 />
                 {paretoFooter}
               </CardContent>

@@ -5,7 +5,6 @@
  * Loaded via next/dynamic({ ssr: false }) from the explore page.
  */
 
-import { useState } from "react";
 import {
   ScatterChart,
   Scatter,
@@ -18,13 +17,7 @@ import {
   Cell,
 } from "recharts";
 import type { ParetoFront } from "@/lib/types";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import ObjectiveAxisSelect from "@/components/viz/ObjectiveAxisSelect";
 import { alpha, axisStyles, useChartColors } from "@/hooks/useChartColors";
 import { isPercentObjective, percentString, percentTick } from "@/lib/objective-format";
 
@@ -34,6 +27,13 @@ interface Props {
   front: ParetoFront;
   selectedIndex: number;
   onSelectIndex: (idx: number) => void;
+  /** Axis choice is owned by the parent so the left panel can drive it. */
+  xObj: string;
+  yObj: string;
+  onXChange: (objective: string) => void;
+  onYChange: (objective: string) => void;
+  /** True when the parent renders the pickers itself (panel layout). */
+  hideAxisSelectors?: boolean;
 }
 
 // Dot-size constants for ZAxis (Recharts v3 uses area, not radius)
@@ -114,13 +114,19 @@ function ScatterTooltip({ active, payload }: { active?: boolean; payload?: Toolt
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function ParetoScatter({ front, selectedIndex, onSelectIndex }: Props) {
+export default function ParetoScatter({
+  front,
+  selectedIndex,
+  onSelectIndex,
+  xObj,
+  yObj,
+  onXChange,
+  onYChange,
+  hideAxisSelectors,
+}: Props) {
   const colors = useChartColors();
   const ax = axisStyles(colors);
   const objectives = front.objectives;
-
-  const [xObj, setXObj] = useState<string>(objectives[0] ?? "");
-  const [yObj, setYObj] = useState<string>(objectives[1] ?? objectives[0] ?? "");
 
   // Single-objective / single-solution — show readout instead
   if (front.result_kind === "single" || objectives.length < 2) {
@@ -148,46 +154,18 @@ export default function ParetoScatter({ front, selectedIndex, onSelectIndex }: P
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Axis selectors */}
-      <div className="flex flex-wrap gap-3">
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground tracking-widest font-mono">X:</span>
-          <Select value={xObj} onValueChange={setXObj}>
-            <SelectTrigger className="h-7 w-48 text-xs font-mono">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {objectives.map((obj) => (
-                <SelectItem key={obj} value={obj} className="text-xs font-mono">
-                  {obj}
-                  {front.polarities[obj] === -1 && (
-                    <span className="ml-1 text-muted-foreground">(max)</span>
-                  )}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      {!hideAxisSelectors && (
+        <div className="flex flex-wrap gap-3">
+          <ObjectiveAxisSelect
+            label="X:" value={xObj} onChange={onXChange}
+            objectives={objectives} polarities={front.polarities}
+          />
+          <ObjectiveAxisSelect
+            label="Y:" value={yObj} onChange={onYChange}
+            objectives={objectives} polarities={front.polarities}
+          />
         </div>
-
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground tracking-widest font-mono">Y:</span>
-          <Select value={yObj} onValueChange={setYObj}>
-            <SelectTrigger className="h-7 w-48 text-xs font-mono">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {objectives.map((obj) => (
-                <SelectItem key={obj} value={obj} className="text-xs font-mono">
-                  {obj}
-                  {front.polarities[obj] === -1 && (
-                    <span className="ml-1 text-muted-foreground">(max)</span>
-                  )}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+      )}
 
       {/* Chart */}
       <div className="h-80 w-full sm:h-96">
