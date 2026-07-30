@@ -7,9 +7,10 @@ export type PanelSection = {
   id: string;
   /** Shown as the panel header when this section is active. */
   label: string;
-  /** Rendered in the sticky left panel (or the Sheet below `lg`). Both may be
-   *  mounted concurrently, so this must be fully controlled from a shared
-   *  parent — no local `useState` — or the two copies will desync. */
+  /** Rendered in the sticky left panel at `lg` (>=1024px) and above, or in
+   *  the drawer Sheet below that. SectionPanelLayout picks one of the two by
+   *  media query (not CSS visibility), so exactly one instance of this tree
+   *  is ever mounted at a time. */
   controls: ReactNode;
   /** Rendered in the right column. Mounts on first intersection. */
   content: ReactNode;
