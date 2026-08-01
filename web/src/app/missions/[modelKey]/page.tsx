@@ -1,22 +1,39 @@
 "use client";
 
 /**
- * /missions/[modelKey] — Parameter-effect analysis + an in-page scenario explorer
- * for one model.
+ * /missions/[modelKey] — Parameter-effect analysis and a scenario deep-dive
+ * for one model, merged into ONE SectionPanelLayout (one sticky panel, one
+ * scrollspy) instead of this page's own card plus an embedded ScenarioExplorer
+ * running a second one.
  *
- * Layout: model overview → parameter-effect sweep plots (with optional multi-line
- * overlays) → EXPLORE COMBINATION (dependent Drones/Comm/n_visits dropdowns
- * driving an embedded ScenarioExplorer) → the full combination table. Clicking a
- * table row selects that combination in the explorer and scrolls to it.
+ * Section order: parameter-effect (this file's own sweep charts) → pareto /
+ * merging / animation (useScenarioSections, called directly — no
+ * <ScenarioExplorer> wrapper) → all-combinations (the full table; click a row
+ * to pick that combination and scroll up to Pareto). The combination picker
+ * (dependent Drones/Comm/n_visits dropdowns) is passed to the hook as
+ * `combinationControls` and renders inside the Pareto section's panel.
+ *
+ * useScenarioSections is called once, here, for the page's lifetime: a
+ * combination change now updates its `source` prop rather than remounting a
+ * keyed <ScenarioExplorer> subtree. Everything the hook itself owns
+ * (selectedIndex, the five axis choices) already resyncs from `front` via its
+ * own effects, so that costs nothing — except SolutionSelectorPanel, nested
+ * inside the Pareto section's controls, which seeds its BEST-objective /
+ * by-weights / by-index / detail state ONCE from the front and never
+ * resyncs. Losing the old remount would let a stale `detail` from the
+ * previous combination be shown as if it belonged to the new one, so the
+ * Pareto section's `controls` (only that one) is re-keyed on `selName` below.
  */
 
-import { useEffect, useState, useMemo, useRef, useCallback } from "react";
+import { Fragment, useEffect, useState, useMemo, useCallback } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { getModelGrid } from "@/lib/api";
 import type { ModelGrid, ModelGridScenario } from "@/lib/types";
-import ScenarioExplorer from "@/components/explore/ScenarioExplorer";
+import { useScenarioSections } from "@/components/explore/useScenarioSections";
+import SectionPanelLayout from "@/components/layout/SectionPanelLayout";
+import type { PanelSection } from "@/components/layout/PanelSection";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -550,6 +567,14 @@ function SweepControls({
   );
 }
 
+// Reserved scroll height for the CONTENT COLUMN before it mounts, px — the
+// same idea as PARETO_HEIGHT/MERGING_HEIGHT/ANIMATION_HEIGHT in
+// useScenarioSections. Parameter-effect is the sweep Card (header, up to a
+// 3-column chart grid, and the caption); all-combinations is the export
+// row's table (header row plus one row per combination).
+const PARAM_EFFECT_HEIGHT = 720;
+const ALL_COMBINATIONS_HEIGHT = 560;
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ModelPage() {
@@ -578,9 +603,8 @@ export default function ModelPage() {
   const [selGrid, setSelGrid] = useState<string[]>([]);
   const [selCell, setSelCell] = useState<string[]>([]);
 
-  // Selected combination for the embedded explorer
+  // Selected combination driving the Pareto/Merging/Animation sections.
   const [selName, setSelName] = useState<string>("");
-  const explorerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!modelKey) return;
@@ -592,7 +616,7 @@ export default function ModelPage() {
       .then((data) => {
         if (!cancelled) {
           setGrid(data);
-          // Default the embedded explorer to the first combination.
+          // Default the Pareto/Merging/Animation sections to the first combination.
           setSelName(data.scenarios[0]?.scenario ?? "");
           // Seed the overlay selections (one value each ⇒ a single line) from
           // the first scenario.
@@ -669,6 +693,23 @@ export default function ModelPage() {
     [grid, selName]
   );
 
+  // Pareto / Merging / Animation sections for the selected combination.
+  // Called unconditionally (grid may still be loading; selName is then "",
+  // which useScenarioFront treats as "nothing to fetch yet") so the hook's
+  // own state never has to survive a remount of its own — see the file doc
+  // comment for the one downstream piece (SolutionSelectorPanel) that still
+  // needs one.
+  const { sections: explorerSections } = useScenarioSections({
+    source: { mode: "seeded", scenario: selName },
+    combinationControls: grid ? (
+      <CombinationSelect
+        grid={grid}
+        selected={selectedScenario}
+        onSelectName={setSelName}
+      />
+    ) : undefined,
+  });
+
   // Distinct scenario-parameter values (parsed from scenario names), with units.
   const extraDimOpts = useMemo(() => {
     const sp = new Set<number>();
@@ -720,11 +761,16 @@ export default function ModelPage() {
     { label: "Cell", opts: extraDimOpts.cell, sel: selCell, set: setSelCell },
   ];
 
-  // Select a combination and bring the explorer into view (used by table rows).
+  // Select a combination and bring the Pareto section into view (used by
+  // rows in ALL COMBINATIONS, which sits below it). Targets the section's DOM
+  // id directly rather than a ref — its <section scroll-mt-20> already clears
+  // the sticky header, and the id is stable across combination changes.
   const selectCombination = useCallback((name: string) => {
     setSelName(name);
     requestAnimationFrame(() => {
-      explorerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      document
+        .getElementById("pareto")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   }, []);
 
@@ -878,6 +924,256 @@ export default function ModelPage() {
       ? "grid-cols-1 md:grid-cols-2"
       : "grid-cols-1 md:grid-cols-2 xl:grid-cols-3";
 
+  // One SectionPanelLayout for the whole page: this file's own
+  // parameter-effect analysis, then the explorer's Pareto/Merging/Animation,
+  // then this file's own all-combinations table. Only the Pareto section's
+  // `controls` is re-keyed on `selName` — SolutionSelectorPanel nested inside
+  // it seeds state once from the front and never resyncs (see the file doc
+  // comment) — everything else here (the other four sections' controls, and
+  // every section's content) already updates correctly from props alone, and
+  // re-keying the whole layout would also blow away the parameter-effect
+  // charts, the all-combinations table, and the scrollspy's seen/active state
+  // on every combination change for no reason.
+  const sections: PanelSection[] = grid
+    ? [
+        {
+          id: "parameter-effect",
+          label: "PARAMETER-EFFECT ANALYSIS",
+          estimatedHeight: PARAM_EFFECT_HEIGHT,
+          controls: (
+            <div className="flex flex-col gap-5">
+              <SweepControls
+                grid={filteredGrid ?? grid}
+                sweep={sweep}
+                onSweep={handleSweepChange}
+                selByDim={{
+                  drones: seriesDrones,
+                  comm_range: seriesComm,
+                  n_visits: seriesNVisits,
+                }}
+                onToggleDim={onToggleDim}
+                sweepValues={sweepValueSel}
+                onToggleSweepValues={onToggleSweepValues}
+              />
+
+              {/* Scenario-parameter filters (speed / grid / cell) — toggleable. */}
+              {extraDimOpts.speed.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  {filterRows.map(({ label, opts, sel, set }) => (
+                    <div key={label} className="flex flex-wrap items-center gap-2">
+                      <span className="w-16 text-xs font-mono tracking-widest text-muted-foreground uppercase">
+                        {label}
+                      </span>
+                      <ToggleGroup
+                        type="single"
+                        value={sel[0] ?? ""}
+                        onValueChange={(v: string) => {
+                          if (v) set([v]); // single-select; ignore deselect
+                        }}
+                        className="flex-wrap justify-start gap-1"
+                      >
+                        {opts.map((o) => (
+                          <ToggleGroupItem
+                            key={o.value}
+                            value={o.value}
+                            className="h-7 px-2.5 text-xs font-mono"
+                          >
+                            {o.label}
+                          </ToggleGroupItem>
+                        ))}
+                      </ToggleGroup>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ),
+          content: (
+            <Card>
+              <CardHeader>
+                <CardTitle
+                  className="text-xs font-semibold tracking-widest uppercase text-primary font-display"
+                  style={{ fontFamily: "var(--font-display)" }}
+                >
+                  PARAMETER-EFFECT ANALYSIS
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-5">
+                {/* One chart per objective, or a note if the filter yields nothing */}
+                {filteredGrid && filteredGrid.scenarios.length === 0 ? (
+                  <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-xs font-mono text-amber-700 dark:text-amber-400">
+                    ⚠ No saved mission matches the selected Speed / Grid / Cell —
+                    this combination may not have been run yet.
+                  </p>
+                ) : !hasAnyData ? (
+                  <p className="text-xs font-mono text-muted-foreground border border-dashed border-border rounded px-4 py-3">
+                    No data for this selection. Try different overlay values.
+                  </p>
+                ) : (
+                  <div className={cn("grid gap-6", gridColsClass)}>
+                    {grid.objectives.map((obj, idx) => {
+                      const objSeries = (seriesByObj[obj] ?? []).filter(
+                        (s) => s.points.length > 0
+                      );
+                      if (objSeries.length === 0) {
+                        return (
+                          <div key={obj} className="flex flex-col gap-1">
+                            <p className="text-xs font-mono tracking-wide text-foreground">
+                              {obj}
+                            </p>
+                            <p className="text-xs font-mono text-muted-foreground border border-dashed border-border rounded px-3 py-6 text-center">
+                              {obj.includes("TBV")
+                                ? "Requires n_visits > 1 — undefined when each cell is visited once."
+                                : "No data for the current selection."}
+                            </p>
+                          </div>
+                        );
+                      }
+                      return (
+                        <ParameterEffectChart
+                          key={obj}
+                          objective={obj}
+                          polarity={grid.polarities[obj] ?? 1}
+                          sweepLabel={SWEEP_LABELS[sweep]}
+                          series={objSeries}
+                          colorIndex={idx}
+                          heightClass={heightClass}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Caption */}
+                <p className="text-xs text-muted-foreground font-mono">
+                  Each point is the best achievable value of that objective for the
+                  given parameters.
+                  {lineCount > 1
+                    ? ` Overlaying ${lineCount} trend lines.`
+                    : ""}
+                </p>
+              </CardContent>
+            </Card>
+          ),
+        },
+        ...explorerSections.map((section) =>
+          section.id === "pareto"
+            ? {
+                ...section,
+                controls: <Fragment key={selName}>{section.controls}</Fragment>,
+              }
+            : section
+        ),
+        {
+          id: "all-combinations",
+          label: "ALL COMBINATIONS",
+          estimatedHeight: ALL_COMBINATIONS_HEIGHT,
+          controls: (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
+                Export
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={exportCombinationsCsv}
+                disabled={!grid || grid.scenarios.length === 0}
+                className="h-7 text-xs tracking-widest font-mono"
+              >
+                CSV
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={exportCombinationsXlsx}
+                disabled={!grid || grid.scenarios.length === 0}
+                className="h-7 text-xs tracking-widest font-mono"
+              >
+                XLSX
+              </Button>
+            </div>
+          ),
+          content: (
+            <div className="rounded border border-border overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
+                      Drones
+                    </TableHead>
+                    <TableHead className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
+                      Comm Range
+                    </TableHead>
+                    <TableHead className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
+                      n_visits
+                    </TableHead>
+                    <TableHead className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
+                      # Solutions
+                    </TableHead>
+                    {grid.objectives.map((obj) => (
+                      <TableHead
+                        key={obj}
+                        className="text-xs font-mono tracking-widest uppercase text-muted-foreground"
+                      >
+                        {obj}
+                        <span className="ml-1 text-muted-foreground normal-case tracking-normal font-normal">
+                          (best)
+                        </span>
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(filteredGrid ?? grid).scenarios.map((s) => (
+                    <TableRow
+                      key={s.scenario}
+                      onClick={() => selectCombination(s.scenario)}
+                      className={cn(
+                        "cursor-pointer hover:bg-primary/5 transition-colors",
+                        s.scenario === selName && "bg-primary/10"
+                      )}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          selectCombination(s.scenario);
+                        }
+                      }}
+                      aria-label={`Load scenario ${s.scenario}`}
+                    >
+                      <TableCell className="font-mono text-xs tabular-nums">
+                        {s.number_of_drones}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {s.comm_range != null ? commLabel(s.comm_range) : "—"}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs tabular-nums">
+                        {s.n_visits ?? "—"}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs tabular-nums text-chart-1">
+                        {s.n_solutions}
+                      </TableCell>
+                      {grid.objectives.map((obj) => (
+                        <TableCell
+                          key={obj}
+                          className="font-mono text-xs tabular-nums"
+                        >
+                          {tbvMeaningless(obj, s.n_visits)
+                            ? "—"
+                            : fmtObj(obj, s.objective_stats[obj]?.best)}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          ),
+        },
+      ]
+    : [];
+
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6">
       {/* Back link — a model page is reached from the mission browser, so return there. */}
@@ -938,268 +1234,7 @@ export default function ModelPage() {
             </div>
           </div>
 
-          {/* ── Parameter-effect analysis ─────────────────────────────────── */}
-          <Card>
-            <CardHeader>
-              <CardTitle
-                className="text-xs font-semibold tracking-widest uppercase text-primary font-display"
-                style={{ fontFamily: "var(--font-display)" }}
-              >
-                PARAMETER-EFFECT ANALYSIS
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-5">
-              {/* Sweep controls */}
-              <SweepControls
-                grid={filteredGrid ?? grid}
-                sweep={sweep}
-                onSweep={handleSweepChange}
-                selByDim={{
-                  drones: seriesDrones,
-                  comm_range: seriesComm,
-                  n_visits: seriesNVisits,
-                }}
-                onToggleDim={onToggleDim}
-                sweepValues={sweepValueSel}
-                onToggleSweepValues={onToggleSweepValues}
-              />
-
-              {/* Scenario-parameter filters (speed / grid / cell) — toggleable. */}
-              {extraDimOpts.speed.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  {filterRows.map(({ label, opts, sel, set }) => (
-                    <div key={label} className="flex flex-wrap items-center gap-2">
-                      <span className="w-16 text-xs font-mono tracking-widest text-muted-foreground uppercase">
-                        {label}
-                      </span>
-                      <ToggleGroup
-                        type="single"
-                        value={sel[0] ?? ""}
-                        onValueChange={(v: string) => {
-                          if (v) set([v]); // single-select; ignore deselect
-                        }}
-                        className="flex-wrap justify-start gap-1"
-                      >
-                        {opts.map((o) => (
-                          <ToggleGroupItem
-                            key={o.value}
-                            value={o.value}
-                            className="h-7 px-2.5 text-xs font-mono"
-                          >
-                            {o.label}
-                          </ToggleGroupItem>
-                        ))}
-                      </ToggleGroup>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* One chart per objective, or a note if the filter yields nothing */}
-              {filteredGrid && filteredGrid.scenarios.length === 0 ? (
-                <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-xs font-mono text-amber-700 dark:text-amber-400">
-                  ⚠ No saved mission matches the selected Speed / Grid / Cell —
-                  this combination may not have been run yet.
-                </p>
-              ) : !hasAnyData ? (
-                <p className="text-xs font-mono text-muted-foreground border border-dashed border-border rounded px-4 py-3">
-                  No data for this selection. Try different overlay values.
-                </p>
-              ) : (
-                <div className={cn("grid gap-6", gridColsClass)}>
-                  {grid.objectives.map((obj, idx) => {
-                    const objSeries = (seriesByObj[obj] ?? []).filter(
-                      (s) => s.points.length > 0
-                    );
-                    if (objSeries.length === 0) {
-                      return (
-                        <div key={obj} className="flex flex-col gap-1">
-                          <p className="text-xs font-mono tracking-wide text-foreground">
-                            {obj}
-                          </p>
-                          <p className="text-xs font-mono text-muted-foreground border border-dashed border-border rounded px-3 py-6 text-center">
-                            {obj.includes("TBV")
-                              ? "Requires n_visits > 1 — undefined when each cell is visited once."
-                              : "No data for the current selection."}
-                          </p>
-                        </div>
-                      );
-                    }
-                    return (
-                      <ParameterEffectChart
-                        key={obj}
-                        objective={obj}
-                        polarity={grid.polarities[obj] ?? 1}
-                        sweepLabel={SWEEP_LABELS[sweep]}
-                        series={objSeries}
-                        colorIndex={idx}
-                        heightClass={heightClass}
-                      />
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Caption */}
-              <p className="text-xs text-muted-foreground font-mono">
-                Each point is the best achievable value of that objective for the
-                given parameters.
-                {lineCount > 1
-                  ? ` Overlaying ${lineCount} trend lines.`
-                  : ""}
-              </p>
-            </CardContent>
-          </Card>
-
-          {/* ── Explore a combination (dropdowns + embedded deep-dive) ─────── */}
-          <div ref={explorerRef} className="flex flex-col gap-4 scroll-mt-6">
-            <div>
-              <h2
-                className="text-xs font-semibold tracking-widest uppercase text-primary font-display"
-                style={{ fontFamily: "var(--font-display)" }}
-              >
-                EXPLORE A COMBINATION
-              </h2>
-              <p className="text-xs text-muted-foreground font-mono mt-0.5">
-                Pick a parameter combination to load its Pareto front, merging
-                comparison, and mission animation.
-              </p>
-            </div>
-
-            <Card>
-              <CardContent className="pt-5">
-                <CombinationSelect
-                  grid={grid}
-                  selected={selectedScenario}
-                  onSelectName={setSelName}
-                />
-              </CardContent>
-            </Card>
-
-            {selName ? (
-              <ScenarioExplorer
-                key={selName}
-                source={{ mode: "seeded", scenario: selName }}
-                showTitle={false}
-              />
-            ) : null}
-          </div>
-
-          {/* ── Parameter-combination table ───────────────────────────────── */}
-          <div className="flex flex-col gap-3">
-            <div className="flex items-end justify-between gap-3">
-              <div>
-                <h2
-                  className="text-xs font-semibold tracking-widest uppercase text-primary font-display"
-                  style={{ fontFamily: "var(--font-display)" }}
-                >
-                  ALL PARAMETER COMBINATIONS
-                </h2>
-                <p className="text-xs text-muted-foreground font-mono mt-0.5">
-                  Click a row to load that combination in the explorer above.
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <span className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
-                  Export
-                </span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={exportCombinationsCsv}
-                  disabled={!grid || grid.scenarios.length === 0}
-                  className="h-7 text-xs tracking-widest font-mono"
-                >
-                  CSV
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={exportCombinationsXlsx}
-                  disabled={!grid || grid.scenarios.length === 0}
-                  className="h-7 text-xs tracking-widest font-mono"
-                >
-                  XLSX
-                </Button>
-              </div>
-            </div>
-
-            <div className="rounded border border-border overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
-                      Drones
-                    </TableHead>
-                    <TableHead className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
-                      Comm Range
-                    </TableHead>
-                    <TableHead className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
-                      n_visits
-                    </TableHead>
-                    <TableHead className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
-                      # Solutions
-                    </TableHead>
-                    {grid.objectives.map((obj) => (
-                      <TableHead
-                        key={obj}
-                        className="text-xs font-mono tracking-widest uppercase text-muted-foreground"
-                      >
-                        {obj}
-                        <span className="ml-1 text-muted-foreground normal-case tracking-normal font-normal">
-                          (best)
-                        </span>
-                      </TableHead>
-                    ))}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {(filteredGrid ?? grid).scenarios.map((s) => (
-                    <TableRow
-                      key={s.scenario}
-                      onClick={() => selectCombination(s.scenario)}
-                      className={cn(
-                        "cursor-pointer hover:bg-primary/5 transition-colors",
-                        s.scenario === selName && "bg-primary/10"
-                      )}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          selectCombination(s.scenario);
-                        }
-                      }}
-                      aria-label={`Load scenario ${s.scenario} in the explorer`}
-                    >
-                      <TableCell className="font-mono text-xs tabular-nums">
-                        {s.number_of_drones}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {s.comm_range != null ? commLabel(s.comm_range) : "—"}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs tabular-nums">
-                        {s.n_visits ?? "—"}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs tabular-nums text-chart-1">
-                        {s.n_solutions}
-                      </TableCell>
-                      {grid.objectives.map((obj) => (
-                        <TableCell
-                          key={obj}
-                          className="font-mono text-xs tabular-nums"
-                        >
-                          {tbvMeaningless(obj, s.n_visits)
-                            ? "—"
-                            : fmtObj(obj, s.objective_stats[obj]?.best)}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </div>
+          <SectionPanelLayout sections={sections} />
         </>
       ) : null}
     </div>
