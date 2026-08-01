@@ -1,9 +1,15 @@
 "use client";
 
 /**
- * MergingControls — the MERGING section's sticky-panel half: pick which
- * solution is under analysis (SolutionMiniFront), then build the sensing
- * config the Compare button runs.
+ * MergingControls — the MERGING section's sticky-panel half: report which
+ * solution is under analysis (SelectedSolutionReadout), then build the
+ * sensing config the Compare button runs.
+ *
+ * Picking a different solution happens in the Pareto section only — both
+ * fronts render at full width there, where a chart is actually usable; a
+ * 320px panel is not. This panel only reports the shared selection, so a
+ * reader on Merging is never confused about which solution the metrics below
+ * describe.
  *
  * Owns no state itself. The sensing config and the compare result it
  * produces are both read by MergingContent too (the config to know what
@@ -20,24 +26,13 @@ import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { ParetoFront } from "@/lib/types";
-import SolutionMiniFront from "./SolutionMiniFront";
+import SelectedSolutionReadout from "./SelectedSolutionReadout";
 
 interface Props {
-  // Selection + axis state — shared with the Pareto section; see
-  // useScenarioSections. Forwarded straight through to SolutionMiniFront.
+  // Selection — shared with the Pareto section; see useScenarioSections.
+  // Picking happens there; this panel only reports it.
   front: ParetoFront;
   selectedIndex: number;
-  onSelectIndex: (idx: number) => void;
-  xObj: string;
-  yObj: string;
-  onXChange: (objective: string) => void;
-  onYChange: (objective: string) => void;
-  x3DObj: string;
-  y3DObj: string;
-  z3DObj: string;
-  onX3DChange: (objective: string) => void;
-  onY3DChange: (objective: string) => void;
-  onZ3DChange: (objective: string) => void;
 
   // Sensing config + its validation, and the compare it drives — shared with
   // MergingContent's result half; see useScenarioSections.
@@ -61,17 +56,6 @@ interface Props {
 export default function MergingControls({
   front,
   selectedIndex,
-  onSelectIndex,
-  xObj,
-  yObj,
-  onXChange,
-  onYChange,
-  x3DObj,
-  y3DObj,
-  z3DObj,
-  onX3DChange,
-  onY3DChange,
-  onZ3DChange,
   timeModel,
   onTimeModelChange,
   detProb,
@@ -90,21 +74,7 @@ export default function MergingControls({
 }: Props) {
   return (
     <div className="flex flex-col gap-4">
-      <SolutionMiniFront
-        front={front}
-        selectedIndex={selectedIndex}
-        onSelectIndex={onSelectIndex}
-        xObj={xObj}
-        yObj={yObj}
-        onXChange={onXChange}
-        onYChange={onYChange}
-        x3DObj={x3DObj}
-        y3DObj={y3DObj}
-        z3DObj={z3DObj}
-        onX3DChange={onX3DChange}
-        onY3DChange={onY3DChange}
-        onZ3DChange={onZ3DChange}
-      />
+      <SelectedSolutionReadout front={front} selectedIndex={selectedIndex} />
 
       <Separator />
 

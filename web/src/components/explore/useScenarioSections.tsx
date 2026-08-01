@@ -316,17 +316,6 @@ export function useScenarioSections({
             <MergingControls
               front={front}
               selectedIndex={selectedIndex}
-              onSelectIndex={handleSelectIndex}
-              xObj={xObj}
-              yObj={yObj}
-              onXChange={setXObj}
-              onYChange={setYObj}
-              x3DObj={x3DObj}
-              y3DObj={y3DObj}
-              z3DObj={z3DObj}
-              onX3DChange={setX3DObj}
-              onY3DChange={setY3DObj}
-              onZ3DChange={setZ3DObj}
               timeModel={timeModel}
               onTimeModelChange={setTimeModel}
               detProb={detProb}
