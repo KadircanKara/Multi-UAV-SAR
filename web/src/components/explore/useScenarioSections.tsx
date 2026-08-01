@@ -17,29 +17,26 @@
  * highlighted point on the 2D plot AND the 3D plot, and is the same solution
  * the Merging comparison and the Animation replay run on.
  *
- * Merging's controls/content are split into MergingControls (panel) +
- * MergingContent (column); its sensing config and the compare result that
- * config produces live here for the same reason `selectedIndex` does — both
- * halves read them (see the "Merging section state" block below). Animation
- * still carries its pre-refactor content and no controls of its own;
- * splitting it is the next task.
+ * Merging's panel is `SelectedSolutionReadout` — it only reports the shared
+ * selection, so it needs nothing beyond `front`/`selectedIndex` from here.
+ * The sensing config and the compare result it produces are Merging-only
+ * state now that the config builder and its result share one place
+ * (`MergingContent`, the column), so both live there instead of here — see
+ * that file's doc comment. Animation still carries its pre-refactor content
+ * and no controls of its own; splitting it is a separate task.
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import dynamic from "next/dynamic";
-import { toast } from "sonner";
-import { sourceCompare, type ExplorerSource } from "@/lib/source";
-import type { ParetoFront, SensingConfig } from "@/lib/types";
+import type { ExplorerSource } from "@/lib/source";
+import type { ParetoFront } from "@/lib/types";
 import type { PanelSection } from "@/components/layout/PanelSection";
 import GridPlayback from "@/components/viz/GridPlayback/GridPlayback";
-import type { BeliefRow } from "@/components/viz/BeliefEvolutionChart";
-import type { CompareTableRow } from "@/components/viz/MergingMetricsTable";
-import type { TargetsKnownRow } from "@/components/viz/TargetsKnownChart";
 import ChartSkeleton from "./ChartSkeleton";
 import MergingContent, { MERGING_HEIGHT } from "./MergingContent";
-import MergingControls from "./MergingControls";
 import ParetoControls from "./ParetoControls";
 import ParetoFrontsCard, { has3DView } from "./ParetoFrontsCard";
+import SelectedSolutionReadout from "./SelectedSolutionReadout";
 import { useScenarioFront } from "./useScenarioFront";
 
 // ─── Dynamic (SSR-off) chart imports ─────────────────────────────────────────
@@ -172,87 +169,6 @@ export function useScenarioSections({
     setSelectedIndex(idx);
   }, []);
 
-  // ─── Merging section state ─────────────────────────────────────────────────
-  // Not shared with Pareto or Animation (unlike selectedIndex and the axis
-  // state above) — this is local to Merging, but split across the same
-  // panel/column boundary as everything else here: MergingControls (panel)
-  // writes the sensing config and triggers the compare, MergingContent
-  // (column) reads the result, and `comparing` gates both a disabled/labelled
-  // button in the former and a loading skeleton in the latter. Neither half
-  // alone sees both ends, so the state sits here.
-  const [timeModel, setTimeModel] = useState<"discrete" | "realtime">("discrete");
-  const [detProb, setDetProb] = useState(0.8);
-  const [faProb, setFaProb] = useState(0.1);
-  const [beliefThresh, setBeliefThresh] = useState(0.9);
-  const [targetsInput, setTargetsInput] = useState("12");
-
-  const [comparing, setComparing] = useState(false);
-  const [tableRows, setTableRows] = useState<CompareTableRow[] | null>(null);
-  const [beliefRows, setBeliefRows] = useState<BeliefRow[] | null>(null);
-  const [knownRows, setKnownRows] = useState<TargetsKnownRow[] | null>(null);
-
-  const pqInvalid = detProb <= faProb;
-  const targetList = targetsInput
-    .split(",")
-    .map((s) => parseInt(s.trim(), 10))
-    .filter((n) => !isNaN(n));
-  const canCompare = !pqInvalid && targetList.length > 0 && !comparing;
-
-  async function runCompare() {
-    if (!canCompare) return;
-    setComparing(true);
-    setTableRows(null);
-    setBeliefRows(null);
-    setKnownRows(null);
-
-    const baseConfig = {
-      time_model: timeModel,
-      detection_prob: detProb,
-      false_alarm_prob: faProb,
-      belief_threshold: beliefThresh,
-      target_locations: targetList,
-    };
-
-    const configs: SensingConfig[] = [
-      { ...baseConfig, merge_topology: "none" },
-      { ...baseConfig, merge_topology: "onboard" },
-      { ...baseConfig, merge_topology: "gcs" },
-    ];
-    const labels = ["none", "onboard", "gcs"];
-
-    try {
-      const res = await sourceCompare(source, {
-        index: selectedIndex,
-        configs,
-        labels,
-        model_key: null,
-      });
-
-      // Parse compare response
-      const rawTable = res.table as Record<string, string | number | null>[] | undefined;
-      if (rawTable) {
-        setTableRows(rawTable as CompareTableRow[]);
-      }
-
-      const rawRows = res.rows as Record<string, unknown>[] | undefined;
-      if (rawRows) {
-        const bRows: BeliefRow[] = rawRows.map((r, i) => ({
-          label: labels[i] ?? `config-${i}`,
-          cell_occupancy_probabilities: r.cell_occupancy_probabilities as number[][],
-          target_locations: r.target_locations as number[],
-          belief_threshold: r.belief_threshold as number,
-        }));
-        setBeliefRows(bRows);
-        setKnownRows(bRows as TargetsKnownRow[]);
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error("Comparison failed", { description: msg });
-    } finally {
-      setComparing(false);
-    }
-  }
-
   const sections: PanelSection[] = front
     ? [
         {
@@ -313,33 +229,10 @@ export function useScenarioSections({
           label: "MERGING",
           estimatedHeight: MERGING_HEIGHT,
           controls: (
-            <MergingControls
-              front={front}
-              selectedIndex={selectedIndex}
-              timeModel={timeModel}
-              onTimeModelChange={setTimeModel}
-              detProb={detProb}
-              onDetProbChange={setDetProb}
-              faProb={faProb}
-              onFaProbChange={setFaProb}
-              beliefThresh={beliefThresh}
-              onBeliefThreshChange={setBeliefThresh}
-              targetsInput={targetsInput}
-              onTargetsInputChange={setTargetsInput}
-              pqInvalid={pqInvalid}
-              targetList={targetList}
-              canCompare={canCompare}
-              comparing={comparing}
-              onCompare={runCompare}
-            />
+            <SelectedSolutionReadout front={front} selectedIndex={selectedIndex} />
           ),
           content: (
-            <MergingContent
-              comparing={comparing}
-              tableRows={tableRows}
-              beliefRows={beliefRows}
-              knownRows={knownRows}
-            />
+            <MergingContent source={source} selectedIndex={selectedIndex} />
           ),
         },
         {
