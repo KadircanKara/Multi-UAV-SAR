@@ -22,8 +22,12 @@
  * The sensing config and the compare result it produces are Merging-only
  * state now that the config builder and its result share one place
  * (`MergingContent`, the column), so both live there instead of here — see
- * that file's doc comment. Animation still carries its pre-refactor content
- * and no controls of its own; splitting it is a separate task.
+ * that file's doc comment. Animation's panel is the same `SelectedSolutionReadout`:
+ * a config split into a panel `AnimationControls` was planned but ruled out
+ * once the Merging round-trip above showed what a 320px column of sliders
+ * looks like, so Animation's config (merge topology, time model, p/q/B
+ * sliders, target cells, stride, LOAD ANIMATION) stays where it always was —
+ * inside `GridPlayback`, in the content column.
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
@@ -239,7 +243,9 @@ export function useScenarioSections({
           id: "animation",
           label: "ANIMATION",
           estimatedHeight: ANIMATION_HEIGHT,
-          controls: null,
+          controls: (
+            <SelectedSolutionReadout front={front} selectedIndex={selectedIndex} />
+          ),
           content: (
             <GridPlayback
               source={source}
