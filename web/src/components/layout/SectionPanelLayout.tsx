@@ -88,18 +88,27 @@ export default function SectionPanelLayout({ sections, stickyOffset = 0 }: Props
     </div>
   );
 
-  // Sections are allowed to have nothing to configure. Showing the panel for
-  // one renders an empty bordered box as tall as the section beside it, so it
-  // is dropped altogether and the grid collapses to the content column alone.
+  // Sections are allowed to have nothing to configure — the combinations table
+  // is one. The panel is dropped for those, so it does not trail past the last
+  // section that had any use for it.
   const hasControls = Boolean(active?.controls);
+  // The COLUMN, though, is kept for as long as any section wants one. Letting
+  // the grid collapse instead would re-lay-out every section above at a new
+  // width the moment the reader scrolled into a section without controls —
+  // chart grids reflow, the document changes height, and the scroll position
+  // slides out from under them.
+  const anyControls = sections.some((s) => Boolean(s.controls));
 
   return (
     <div
       className={cn(
         "flex flex-col gap-6",
-        hasControls && "lg:grid lg:grid-cols-[360px_1fr] lg:items-start lg:gap-6"
+        anyControls && "lg:grid lg:grid-cols-[360px_1fr] lg:items-start lg:gap-6"
       )}
     >
+      {/* Holds the column open when the active section has no controls. */}
+      {anyControls && !hasControls && <div aria-hidden="true" />}
+
       {hasControls && (isDesktop ? (
         <aside
           style={{ top: stickyTop, maxHeight: panelMaxHeight }}

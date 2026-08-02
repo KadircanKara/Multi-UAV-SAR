@@ -191,9 +191,15 @@ export default function GridPlayback({ source, front, selectedIndex }: Props) {
   const targetsKnown = payload?.targets_known[displayStep] ?? 0;
   const totalTargets = payload?.targets.length ?? 0;
 
+  // The playback takes the place of the config rather than sitting under it —
+  // the reader is done configuring once the mission is loaded, and the config
+  // is a screen of sliders to scroll past otherwise. BACK returns to it.
+  const showPlayback = Boolean(payload) && !loadingPayload;
+
   return (
     <div className="flex flex-col gap-6">
       {/* ── Config card ──────────────────────────────────────────────────── */}
+      {!showPlayback && (
       <Card>
         <CardHeader>
           <CardTitle
@@ -347,6 +353,7 @@ export default function GridPlayback({ source, front, selectedIndex }: Props) {
           </p>
         </CardContent>
       </Card>
+      )}
 
       {/* ── Loading skeleton ──────────────────────────────────────────────── */}
       {loadingPayload && (
@@ -366,8 +373,22 @@ export default function GridPlayback({ source, front, selectedIndex }: Props) {
               style={{ fontFamily: "var(--font-display)" }}
             >
               <span>MISSION PLAYBACK</span>
-              <span className="font-mono tabular-nums text-muted-foreground font-normal text-xs">
-                {payload.time_model.toUpperCase()} · {payload.merge_topology.toUpperCase()} · STRIDE {payload.stride}
+              <span className="flex items-center gap-3">
+                <span className="font-mono tabular-nums text-muted-foreground font-normal text-xs">
+                  {payload.time_model.toUpperCase()} · {payload.merge_topology.toUpperCase()} · STRIDE {payload.stride}
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setPlaying(false);
+                    setPayload(null);
+                  }}
+                  className="h-7 text-xs tracking-widest font-mono font-normal"
+                >
+                  ← ANIMATION CONFIG
+                </Button>
               </span>
             </CardTitle>
           </CardHeader>

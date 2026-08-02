@@ -1080,44 +1080,49 @@ export default function ModelPage() {
           id: "all-combinations",
           label: "ALL COMBINATIONS",
           estimatedHeight: ALL_COMBINATIONS_HEIGHT,
-          controls: (
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
-                Export
-              </span>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={exportCombinationsCsv}
-                disabled={(filteredGrid ?? grid).scenarios.length === 0}
-                className="h-7 text-xs tracking-widest font-mono"
-              >
-                CSV
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={exportCombinationsXlsx}
-                disabled={(filteredGrid ?? grid).scenarios.length === 0}
-                className="h-7 text-xs tracking-widest font-mono"
-              >
-                XLSX
-              </Button>
-            </div>
-          ),
+          // No panel for this section: the exports sit on the table they act
+          // on, and everything else here is the table itself. Dropping the
+          // controls is what stops the sticky panel trailing down past the
+          // last section that had any use for it.
+          controls: null,
           content: (
             <div className="flex flex-col gap-2">
-              {/* The rows are the page's other way in to a combination, and
-                  nothing else says so: they look like a read-only table, and
-                  clicking one now scrolls several sections UP to the Pareto
-                  front rather than to a block directly below. */}
-              <p
-                id="all-combinations-hint"
-                className="text-xs text-muted-foreground font-mono"
-              >
-                Click a row to load that combination in the Pareto front,
-                Merging and Animation sections above.
-              </p>
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                {/* The rows are the page's other way in to a combination, and
+                    nothing else says so: they look like a read-only table, and
+                    clicking one scrolls several sections UP to the Pareto
+                    front rather than to a block directly below. */}
+                <p
+                  id="all-combinations-hint"
+                  className="text-xs text-muted-foreground font-mono"
+                >
+                  Click a row to load that combination in the Pareto front,
+                  Merging and Animation sections above.
+                </p>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
+                    Export
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={exportCombinationsCsv}
+                    disabled={(filteredGrid ?? grid).scenarios.length === 0}
+                    className="h-7 text-xs tracking-widest font-mono"
+                  >
+                    CSV
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={exportCombinationsXlsx}
+                    disabled={(filteredGrid ?? grid).scenarios.length === 0}
+                    className="h-7 text-xs tracking-widest font-mono"
+                  >
+                    XLSX
+                  </Button>
+                </div>
+              </div>
               <div className="rounded border border-border overflow-hidden">
               <Table>
                 <TableHeader>

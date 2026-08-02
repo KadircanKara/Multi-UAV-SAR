@@ -67,18 +67,12 @@ const METRIC_NAMES = [
 ];
 
 /**
- * Reserved height, px, for the result area BELOW the sensing-config card —
- * used as a `minHeight` floor on both the in-flight skeleton and the
- * pre-Compare placeholder, and imported by useScenarioSections as the whole
- * Merging section's `estimatedHeight` for its pre-mount skeleton. Those are
- * two different things (this file's own result-area floor vs. the whole
- * section, config card included) that happen to share one number: the config
- * card was in the panel — uncounted here — when this constant was chosen, so
- * treat the pre-mount estimate as a bit conservative now that the card is
- * real, unconditional content in this same column. Ballparked from a
- * populated result (the TIME METRICS label and table with its footnote, plus
- * the two belief/known charts at their loaded height) — not measured in a
- * browser either way.
+ * Reserved height, px, for the whole Merging section before it mounts —
+ * imported by useScenarioSections as its `estimatedHeight`. No longer used as
+ * a `minHeight` floor anywhere in this file: the floors propped open a result
+ * area that had nothing in it, and the config card the section now always
+ * starts with gives it real height on its own. Ballparked from the sensing
+ * config card, which is what the section shows until a comparison is run.
  */
 export const MERGING_HEIGHT = 620;
 
@@ -203,9 +197,16 @@ export default function MergingContent({ source, selectedIndex }: Props) {
     }
   }
 
+  // Results take the place of the config rather than sitting under it. The
+  // reader is done configuring once they have a result, and the alternative —
+  // what this replaced — was a dashed placeholder box holding open a screen of
+  // empty space for a comparison nobody had asked for yet.
+  const showResults = Boolean(tableRows) && !comparing;
+
   return (
     <div className="flex flex-col gap-6">
       {/* Sensing-config card */}
+      {!showResults && (
       <Card>
         <CardHeader>
           <CardTitle
@@ -313,43 +314,47 @@ export default function MergingContent({ source, selectedIndex }: Props) {
           </p>
         </CardContent>
       </Card>
+      )}
 
-      {/* Result */}
-      {comparing ? (
-        <div style={{ minHeight: MERGING_HEIGHT }} className="flex flex-col gap-3">
+      {/* In flight — below the config, which stays put so the settings being
+          run are still readable. A failed compare leaves tableRows null and
+          `comparing` false, so the config simply remains: there is no separate
+          error state to render, and the toast has already said what failed. */}
+      {comparing && (
+        <div className="flex flex-col gap-3">
           <Skeleton className="h-32 w-full" />
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Skeleton className="h-64 w-full" />
             <Skeleton className="h-64 w-full" />
           </div>
         </div>
-      ) : !tableRows ? (
-        // Reachable before the first Compare, and again after a failed one:
-        // the request rejects before any of tableRows/beliefRows/knownRows
-        // are set, and `comparing` is already back to false in the `finally`
-        // above — there is no separate error flag, so a failed compare shows
-        // the same placeholder a never-run one does, rather than collapsing
-        // to nothing.
-        <div
-          style={{ minHeight: MERGING_HEIGHT }}
-          className="flex flex-col items-center justify-center rounded border border-dashed border-border px-4 py-6 text-center"
-        >
-          <p className="text-xs font-mono text-muted-foreground">
-            Configure the sensing parameters above, then run the comparison to
-            see time metrics, belief evolution, and targets known for the
-            selected solution.
-          </p>
-        </div>
-      ) : (
+      )}
+
+      {!comparing && tableRows && (
         <div className="flex flex-col gap-6">
           {/* Time-metric results — table */}
           <div className="flex flex-col gap-3">
-            <span
-              className="text-xs font-semibold tracking-widest uppercase text-primary font-display"
-              style={{ fontFamily: "var(--font-display)" }}
-            >
-              TIME METRICS
-            </span>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span
+                className="text-xs font-semibold tracking-widest uppercase text-primary font-display"
+                style={{ fontFamily: "var(--font-display)" }}
+              >
+                TIME METRICS
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setTableRows(null);
+                  setBeliefRows(null);
+                  setKnownRows(null);
+                }}
+                className="h-7 text-xs tracking-widest font-mono"
+              >
+                ← SENSING CONFIG
+              </Button>
+            </div>
             <MergingMetricsTable tableRows={tableRows} metricNames={METRIC_NAMES} />
           </div>
 
