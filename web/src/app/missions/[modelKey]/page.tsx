@@ -384,14 +384,18 @@ function CombinationSelect({ grid, selected, onSelectName }: CombinationSelectPr
   }
 
   return (
-    <div className="flex flex-wrap items-end gap-4">
+    // One row, not three stacked. Fixed widths (w-24/w-44) wrapped to three
+    // rows inside the 360px panel and cost ~130px of the height the strategy
+    // controls below need; the columns are proportional instead, with Comm
+    // given the extra because its label carries both cells and metres.
+    <div className="grid grid-cols-[1fr_1.75fr_1fr] items-end gap-2">
       {/* Drones */}
-      <div className="flex flex-col gap-1.5">
+      <div className="flex min-w-0 flex-col gap-1.5">
         <span className="text-xs font-mono tracking-widest text-muted-foreground uppercase">
           Drones
         </span>
         <Select value={String(selected.number_of_drones)} onValueChange={selectDrones}>
-          <SelectTrigger className="h-8 w-24 text-xs font-mono">
+          <SelectTrigger className="h-8 w-full min-w-0 text-xs font-mono">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -405,12 +409,15 @@ function CombinationSelect({ grid, selected, onSelectName }: CombinationSelectPr
       </div>
 
       {/* Comm range */}
-      <div className="flex flex-col gap-1.5">
+      <div className="flex min-w-0 flex-col gap-1.5">
         <span className="text-xs font-mono tracking-widest text-muted-foreground uppercase">
-          Comm Range
+          Comm
         </span>
         <Select value={selected.comm_range ?? ""} onValueChange={selectComm}>
-          <SelectTrigger className="h-8 w-44 text-xs font-mono">
+          <SelectTrigger
+            className="h-8 w-full min-w-0 text-xs font-mono"
+            title={selected.comm_range ? commLabel(selected.comm_range) : undefined}
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -425,12 +432,12 @@ function CombinationSelect({ grid, selected, onSelectName }: CombinationSelectPr
 
       {/* n_visits */}
       {hasNVisits && (
-        <div className="flex flex-col gap-1.5">
+        <div className="flex min-w-0 flex-col gap-1.5">
           <span className="text-xs font-mono tracking-widest text-muted-foreground uppercase">
-            n_visits
+            Visits
           </span>
           <Select value={nvKey(selected.n_visits)} onValueChange={selectNVisits}>
-            <SelectTrigger className="h-8 w-24 text-xs font-mono">
+            <SelectTrigger className="h-8 w-full min-w-0 text-xs font-mono">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

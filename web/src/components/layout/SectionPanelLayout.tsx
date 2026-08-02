@@ -97,7 +97,7 @@ export default function SectionPanelLayout({ sections, stickyOffset = 0 }: Props
     <div
       className={cn(
         "flex flex-col gap-6",
-        hasControls && "lg:grid lg:grid-cols-[320px_1fr] lg:items-start lg:gap-6"
+        hasControls && "lg:grid lg:grid-cols-[360px_1fr] lg:items-start lg:gap-6"
       )}
     >
       {hasControls && (isDesktop ? (
