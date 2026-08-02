@@ -23,17 +23,21 @@
  * a single column, so the section's content gets the full width instead of
  * sitting beside a tall empty outlined box.
  *
- * The LAST section of several carries a viewport-height floor, unless the page
- * says it renders something after this layout. A section only becomes active
- * once its top scrolls above the nav, and if nothing follows the last one there
- * is nothing left to scroll it up there: a final section shorter than the
- * viewport keeps its top far down the screen even at maximum scroll, so it can
- * never be selected and its controls are unreachable — the same "a section the
- * panel can't reach" failure as a zero-height section, arriving from the other
- * end. The floor is a no-op for a section already taller than the viewport,
- * which is the normal case, and wrong when the page has its own content below
- * (that content does the scrolling instead, and the floor would only open a gap
- * before it).
+ * The LAST section of several may carry a viewport-height floor. A section only
+ * becomes active once its top scrolls above the nav, and if nothing follows the
+ * last one there is nothing left to scroll it up there: a final section shorter
+ * than the viewport keeps its top far down the screen even at maximum scroll,
+ * so it can never be selected and its controls are unreachable — the same "a
+ * section the panel can't reach" failure as a zero-height section, arriving
+ * from the other end.
+ *
+ * The floor is only worth its cost — a screen of blank space — when reaching
+ * that section would actually change the panel. It is therefore skipped when
+ * the page renders its own content below (that content does the scrolling
+ * instead), and when the last section shares its panel with the one before it,
+ * where never becoming active costs nothing but the header text. It is a no-op
+ * anyway for a section already taller than the viewport, which is the common
+ * case.
  */
 
 import { Menu } from "lucide-react";
@@ -116,6 +120,20 @@ export default function SectionPanelLayout({
   // slides out from under them.
   const anyControls = sections.some((s) => Boolean(s.controls));
 
+  // See the file comment. Reaching the last section only matters when its panel
+  // differs from its predecessor's; when they share one (Pareto / Sensing /
+  // Animation all drive the same run-and-solution controls) the floor would buy
+  // a header change at the price of a blank screen.
+  const lastIndex = sections.length - 1;
+  const panelKeyAt = (i: number) => {
+    const s = sections[i];
+    return s ? (s.controlsKey ?? s.id) : null;
+  };
+  const floorLastSection =
+    !hasContentBelow &&
+    sections.length > 1 &&
+    panelKeyAt(lastIndex) !== panelKeyAt(lastIndex - 1);
+
   return (
     <div
       className={cn(
@@ -184,10 +202,7 @@ export default function SectionPanelLayout({
               // floor — it is the scrollspy's fallback, so it is active from
               // the first paint whatever its height, and padding it out would
               // only leave dead space below a one-section page.
-              sections.length > 1 &&
-                i === sections.length - 1 &&
-                !hasContentBelow &&
-                "min-h-[calc(100vh-3.5rem)]"
+              floorLastSection && i === lastIndex && "min-h-[calc(100vh-3.5rem)]"
             )}
           >
             {seenIds.has(section.id) ? (
