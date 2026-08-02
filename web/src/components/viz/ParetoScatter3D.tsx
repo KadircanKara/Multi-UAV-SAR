@@ -21,7 +21,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ObjectiveAxisSelect from "@/components/viz/ObjectiveAxisSelect";
 import { useChartColors } from "@/hooks/useChartColors";
 import { useCanvasDPR } from "@/hooks/useCanvasDPR";
-import { isPercentObjective, percentString, percentTick } from "@/lib/objective-format";
+import {
+  isPercentObjective,
+  objectiveAxisLabel,
+  percentString,
+  percentTick,
+} from "@/lib/objective-format";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -334,10 +339,9 @@ export default function ParetoScatter3D({
       ctx.fillStyle = colors.foreground;
       ctx.textAlign = ux < -4 ? "right" : ux > 4 ? "left" : "center";
       ctx.textBaseline = uy > 4 ? "bottom" : uy < -4 ? "top" : "middle";
-      const isMax = polarities?.[obj] === -1;
       const nx = Math.max(6, Math.min(w - 6, midProj.sx + ux * 2.6));
       const ny = Math.max(10, Math.min(h - 6, midProj.sy + uy * 2.6));
-      ctx.fillText(`${obj}${isMax ? " (max)" : ""}`, nx, ny);
+      ctx.fillText(objectiveAxisLabel(obj, polarities?.[obj]), nx, ny);
       ctx.restore();
     }
 

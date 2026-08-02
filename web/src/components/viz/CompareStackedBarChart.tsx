@@ -19,7 +19,12 @@ import {
 } from "recharts";
 import { alpha, axisStyles, useChartColors } from "@/hooks/useChartColors";
 import { cn } from "@/lib/utils";
-import { isPercentObjective, percentString, percentTick } from "@/lib/objective-format";
+import {
+  isPercentObjective,
+  objectiveUnit,
+  percentString,
+  percentTick,
+} from "@/lib/objective-format";
 import type { StackedRow } from "@/components/compare/buildStackedBars";
 
 // Palette: theme tokens first, then golden-angle hues (mirrors ParameterEffectChart).
@@ -96,6 +101,7 @@ export default function CompareStackedBarChart({
   const palette = buildPalette(colors.series, models.length);
   const colorFor = (i: number) => palette[i] ?? colors.series[0]!;
   const betterHint = polarity === -1 ? "higher is better" : "lower is better";
+  const unit = objectiveUnit(metric);
 
   // X-axis labels steepen and shrink as bars pack in, so the full-width
   // (one-per-row) layout stays legible up to ~36 combos. At ~1168px wide that's
@@ -111,8 +117,10 @@ export default function CompareStackedBarChart({
     <div className="flex flex-col gap-1">
       <p className="text-xs font-medium text-foreground">
         {metric}
+        {/* Unit and polarity share one bracket, as on the other charts. */}
         <span className="ml-2 font-normal text-muted-foreground">
-          ({betterHint})
+          ({unit ? `${unit}, ` : ""}
+          {betterHint})
         </span>
       </p>
 

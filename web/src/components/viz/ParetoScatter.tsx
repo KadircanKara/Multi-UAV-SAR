@@ -31,7 +31,12 @@ import {
 import type { ParetoFront } from "@/lib/types";
 import ObjectiveAxisSelect from "@/components/viz/ObjectiveAxisSelect";
 import { alpha, axisStyles, useChartColors } from "@/hooks/useChartColors";
-import { isPercentObjective, percentString, percentTick } from "@/lib/objective-format";
+import {
+  isPercentObjective,
+  objectiveAxisLabel,
+  percentString,
+  percentTick,
+} from "@/lib/objective-format";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -341,9 +346,6 @@ export default function ParetoScatter({
     return <SingleObjectiveReadout front={front} />;
   }
 
-  const xIsMax = front.polarities[xObj] === -1;
-  const yIsMax = front.polarities[yObj] === -1;
-
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function handleClick(data: any) {
     // The pointer-up that ended a pan is followed by a click on whatever point
@@ -405,7 +407,7 @@ export default function ParetoScatter({
               tickMargin={8}
               tickFormatter={isPercentObjective(xObj) ? percentTick : undefined}
               label={{
-                value: xObj + (xIsMax ? " (max)" : ""),
+                value: objectiveAxisLabel(xObj, front.polarities[xObj]),
                 position: "insideBottom",
                 offset: -2,
                 style: { ...ax.label, textAnchor: "middle" },
@@ -424,7 +426,7 @@ export default function ParetoScatter({
               tickMargin={8}
               tickFormatter={isPercentObjective(yObj) ? percentTick : undefined}
               label={{
-                value: yObj + (yIsMax ? " (max)" : ""),
+                value: objectiveAxisLabel(yObj, front.polarities[yObj]),
                 angle: -90,
                 position: "insideLeft",
                 offset: 12,
