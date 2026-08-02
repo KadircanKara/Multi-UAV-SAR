@@ -173,12 +173,48 @@ export default function ParetoScatter({
   // Declared before the single-objective early return below, so the hook order
   // is the same on every render whatever the front turns out to be.
 
-  const [viewport, setViewport] = useState<Viewport | null>(null);
+  const [viewport, setViewportState] = useState<Viewport | null>(null);
+  const [dragging, setDragging] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   // Set on pointer-down, raised once travel passes the slop. Read (and reset)
   // by the point-click handler, which fires after the pointer-up.
   const draggedRef = useRef(false);
-  const dragRef = useRef<{ px: number; py: number; from: Viewport } | null>(null);
+  const dragRef = useRef<{
+    px: number;
+    py: number;
+    from: Viewport;
+    /** Plot size captured at pointer-down. Reading it per move would force a
+     *  layout on every frame of a gesture that cannot change it. */
+    w: number;
+    h: number;
+  } | null>(null);
+
+  // The viewport handlers read, updated synchronously; React state trails it by
+  // at most one frame. A pointer-move fires far more often than a frame, and
+  // each commit re-renders the whole chart, so committing per event made the
+  // pan lag the cursor. Coalescing to one commit per frame is what makes it
+  // track. The ref also keeps the wheel listener below off `viewport`, so it is
+  // registered once instead of being torn down and rebuilt every notch.
+  const viewportRef = useRef<Viewport | null>(null);
+  const frameRef = useRef<number | null>(null);
+  const pendingRef = useRef<Viewport | null>(null);
+
+  const setViewport = useCallback((next: Viewport | null) => {
+    viewportRef.current = next;
+    pendingRef.current = next;
+    if (frameRef.current != null) return;
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null;
+      setViewportState(pendingRef.current);
+    });
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (frameRef.current != null) cancelAnimationFrame(frameRef.current);
+    },
+    []
+  );
 
   const pointData = useMemo(
     () =>
@@ -206,11 +242,36 @@ export default function ParetoScatter({
     };
   }, [pointData]);
 
+  // One <Cell> per solution, rebuilt only when the colouring can actually
+  // differ. Panning re-renders this component every frame; without the memo
+  // each of those frames also allocated a few hundred elements for React to
+  // diff, none of which had changed.
+  const cells = useMemo(
+    () =>
+      pointData.map((point) => {
+        const isSelected = point.index === selectedIndex;
+        return (
+          <Cell
+            key={point.index}
+            fill={
+              isSelected
+                ? colors.series[0]   // --chart-1 amber (selected)
+                : colors.series[4]   // --chart-5 muted grey
+            }
+            stroke={isSelected ? colors.series[0] : "transparent"}
+            strokeWidth={isSelected ? 2 : 0}
+            opacity={isSelected ? 1 : 0.55}
+          />
+        );
+      }),
+    [pointData, selectedIndex, colors]
+  );
+
   // A zoom is a statement about two specific objectives. Changing either axis
   // — or loading another front — makes it meaningless, so drop it.
   useEffect(() => {
     setViewport(null);
-  }, [xObj, yObj, front]);
+  }, [xObj, yObj, front, setViewport]);
 
   /** Pointer position → data coordinates, or null if outside the plot rect. */
   const toData = useCallback(
@@ -242,7 +303,7 @@ export default function ParetoScatter({
     if (!el) return;
 
     function onWheel(e: WheelEvent) {
-      const from = viewport ?? base;
+      const from = viewportRef.current ?? base;
       const at = toData(e.clientX, e.clientY, from);
       if (!at) return;
       e.preventDefault();
@@ -276,31 +337,37 @@ export default function ParetoScatter({
 
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [viewport, base, toData]);
+  }, [base, toData, setViewport]);
 
   function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    const el = wrapRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
     draggedRef.current = false;
-    dragRef.current = { px: e.clientX, py: e.clientY, from: viewport ?? base };
+    dragRef.current = {
+      px: e.clientX,
+      py: e.clientY,
+      from: viewportRef.current ?? base,
+      w: r.width - PLOT_LEFT - PLOT_RIGHT,
+      h: r.height - PLOT_TOP - PLOT_BOTTOM,
+    };
+    // Keep receiving moves when the pointer leaves the chart mid-drag.
+    el.setPointerCapture?.(e.pointerId);
   }
 
   function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
     const drag = dragRef.current;
-    if (!drag) return;
+    if (!drag || drag.w <= 0 || drag.h <= 0) return;
     const dx = e.clientX - drag.px;
     const dy = e.clientY - drag.py;
     if (!draggedRef.current) {
       if (Math.abs(dx) < DRAG_SLOP_PX && Math.abs(dy) < DRAG_SLOP_PX) return;
       draggedRef.current = true;
+      setDragging(true);
     }
-    const el = wrapRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const w = r.width - PLOT_LEFT - PLOT_RIGHT;
-    const h = r.height - PLOT_TOP - PLOT_BOTTOM;
-    if (w <= 0 || h <= 0) return;
 
-    const shiftX = (-dx / w) * (drag.from.x[1] - drag.from.x[0]);
-    const shiftY = (dy / h) * (drag.from.y[1] - drag.from.y[0]);
+    const shiftX = (-dx / drag.w) * (drag.from.x[1] - drag.from.x[0]);
+    const shiftY = (dy / drag.h) * (drag.from.y[1] - drag.from.y[0]);
     setViewport({
       x: [drag.from.x[0] + shiftX, drag.from.x[1] + shiftX],
       y: [drag.from.y[0] + shiftY, drag.from.y[1] + shiftY],
@@ -309,6 +376,7 @@ export default function ParetoScatter({
 
   function endDrag() {
     dragRef.current = null;
+    setDragging(false);
   }
 
   // Single-objective / single-solution — show readout instead
@@ -363,7 +431,7 @@ export default function ParetoScatter({
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={endDrag}
-        onPointerLeave={endDrag}
+        onPointerCancel={endDrag}
         className="h-80 w-full touch-none cursor-grab active:cursor-grabbing sm:h-96"
       >
         <ResponsiveContainer width="100%" height="100%">
@@ -410,32 +478,26 @@ export default function ParetoScatter({
               axisLine={ax.axisLine}
             />
             <ZAxis type="number" dataKey="size" range={[SIZE_DEFAULT, SIZE_SELECTED]} />
-            <RechartsTooltip
-              content={<ScatterTooltip />}
-              cursor={{ stroke: alpha(colors.reference, 0.4) }}
-            />
+            {/* Dropped while panning: Recharts hit-tests every point against
+                the pointer on each move, and the readout is noise during a
+                gesture whose whole purpose is to move the pointer. */}
+            {!dragging && (
+              <RechartsTooltip
+                content={<ScatterTooltip />}
+                cursor={{ stroke: alpha(colors.reference, 0.4) }}
+              />
+            )}
             <Scatter
               data={pointData}
               onClick={handleClick}
               style={{ cursor: "pointer" }}
+              // Recharts eases points to their new positions on any data or
+              // domain change. Under zoom and pan that is a ~400ms animation
+              // restarted every frame, so the cloud visibly trails the cursor
+              // and never quite arrives. The gesture IS the animation.
+              isAnimationActive={false}
             >
-              {pointData.map((point) => (
-                <Cell
-                  key={point.index}
-                  fill={
-                    point.index === selectedIndex
-                      ? colors.series[0]   // --chart-1 amber (selected)
-                      : colors.series[4]   // --chart-5 muted grey
-                  }
-                  stroke={
-                    point.index === selectedIndex
-                      ? colors.series[0]
-                      : "transparent"
-                  }
-                  strokeWidth={point.index === selectedIndex ? 2 : 0}
-                  opacity={point.index === selectedIndex ? 1 : 0.55}
-                />
-              ))}
+              {cells}
             </Scatter>
           </ScatterChart>
         </ResponsiveContainer>
