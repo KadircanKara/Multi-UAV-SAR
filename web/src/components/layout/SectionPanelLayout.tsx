@@ -23,14 +23,17 @@
  * a single column, so the section's content gets the full width instead of
  * sitting beside a tall empty outlined box.
  *
- * The LAST section of several carries a viewport-height floor. A section only
- * becomes active once its top scrolls above the nav, and there is nothing
- * below the last one to scroll it up there: a final section shorter than the
- * viewport sits with its top far down the screen even at maximum scroll, so it
- * can never be selected and its controls are unreachable — the same "a section
- * the panel can't reach" failure as a zero-height section, arriving from the
- * other end. The floor is a no-op for any section already taller than the
- * viewport, which is the normal case.
+ * The LAST section of several carries a viewport-height floor, unless the page
+ * says it renders something after this layout. A section only becomes active
+ * once its top scrolls above the nav, and if nothing follows the last one there
+ * is nothing left to scroll it up there: a final section shorter than the
+ * viewport keeps its top far down the screen even at maximum scroll, so it can
+ * never be selected and its controls are unreachable — the same "a section the
+ * panel can't reach" failure as a zero-height section, arriving from the other
+ * end. The floor is a no-op for a section already taller than the viewport,
+ * which is the normal case, and wrong when the page has its own content below
+ * (that content does the scrolling instead, and the floor would only open a gap
+ * before it).
  */
 
 import { Menu } from "lucide-react";
@@ -71,9 +74,17 @@ interface Props {
    * it and sizes itself to the space that is actually left.
    */
   stickyOffset?: number;
+  /** True when the page renders its own content BELOW this layout. Drops the
+   *  last section's viewport-height floor, which exists only to make a short
+   *  final section reachable when the layout is the end of the page. */
+  hasContentBelow?: boolean;
 }
 
-export default function SectionPanelLayout({ sections, stickyOffset = 0 }: Props) {
+export default function SectionPanelLayout({
+  sections,
+  stickyOffset = 0,
+  hasContentBelow = false,
+}: Props) {
   const ids = sections.map((s) => s.id);
   const { activeId, seenIds, register } = useScrollSpy(ids, stickyOffset + HEADER_GAP_PX);
   const active = sections.find((s) => s.id === activeId) ?? sections[0];
@@ -169,6 +180,7 @@ export default function SectionPanelLayout({ sections, stickyOffset = 0 }: Props
               // only leave dead space below a one-section page.
               sections.length > 1 &&
                 i === sections.length - 1 &&
+                !hasContentBelow &&
                 "min-h-[calc(100vh-3.5rem)]"
             )}
           >

@@ -576,15 +576,15 @@ function SweepControls({
 
 // Reserved scroll height for the CONTENT COLUMN before it mounts, px — the
 // same idea as PARETO_HEIGHT/MERGING_HEIGHT/ANIMATION_HEIGHT in
-// useScenarioSections. Parameter-effect is the sweep Card (header, up to a
-// 3-column chart grid, and the caption); all-combinations is the hint, the
-// table header row and one row per combination — 36 of them for every seeded
-// model. Both are measured-ish rather than conservative: `containIntrinsicSize`
-// is a fixed length, so a section snaps back to its estimate every time it
-// leaves the viewport, and an estimate half the real height makes the document
-// height lurch by that difference on each scroll past.
+// useScenarioSections. Parameter-effect is the sweep Card: header, up to a
+// 3-column chart grid, and the caption, for every seeded
+// model. Measured-ish rather than conservative: `containIntrinsicSize` is a
+// fixed length, so a section snaps back to its estimate every time it leaves
+// the viewport, and an estimate half the real height makes the document height
+// lurch by that difference on each scroll past. The combinations table needs no
+// such number — it is rendered outside the panel layout and so is never
+// content-visibility-skipped.
 const PARAM_EFFECT_HEIGHT = 1200;
-const ALL_COMBINATIONS_HEIGHT = 1400;
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -1076,134 +1076,132 @@ export default function ModelPage() {
         // would take the parameter-effect charts and the scroll position with
         // it, which is exactly what this layout exists to avoid.
         ...explorerSections,
-        {
-          id: "all-combinations",
-          label: "ALL COMBINATIONS",
-          estimatedHeight: ALL_COMBINATIONS_HEIGHT,
-          // No panel for this section: the exports sit on the table they act
-          // on, and everything else here is the table itself. Dropping the
-          // controls is what stops the sticky panel trailing down past the
-          // last section that had any use for it.
-          controls: null,
-          content: (
-            <div className="flex flex-col gap-2">
-              <div className="flex flex-wrap items-end justify-between gap-3">
-                {/* The rows are the page's other way in to a combination, and
-                    nothing else says so: they look like a read-only table, and
-                    clicking one scrolls several sections UP to the Pareto
-                    front rather than to a block directly below. */}
-                <p
-                  id="all-combinations-hint"
-                  className="text-xs text-muted-foreground font-mono"
-                >
-                  Click a row to load that combination in the Pareto front,
-                  Merging and Animation sections above.
-                </p>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
-                    Export
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={exportCombinationsCsv}
-                    disabled={(filteredGrid ?? grid).scenarios.length === 0}
-                    className="h-7 text-xs tracking-widest font-mono"
-                  >
-                    CSV
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={exportCombinationsXlsx}
-                    disabled={(filteredGrid ?? grid).scenarios.length === 0}
-                    className="h-7 text-xs tracking-widest font-mono"
-                  >
-                    XLSX
-                  </Button>
-                </div>
-              </div>
-              <div className="rounded border border-border overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
-                      Drones
-                    </TableHead>
-                    <TableHead className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
-                      Comm Range
-                    </TableHead>
-                    <TableHead className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
-                      n_visits
-                    </TableHead>
-                    <TableHead className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
-                      # Solutions
-                    </TableHead>
-                    {grid.objectives.map((obj) => (
-                      <TableHead
-                        key={obj}
-                        className="text-xs font-mono tracking-widest uppercase text-muted-foreground"
-                      >
-                        {obj}
-                        <span className="ml-1 text-muted-foreground normal-case tracking-normal font-normal">
-                          (best)
-                        </span>
-                      </TableHead>
-                    ))}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {(filteredGrid ?? grid).scenarios.map((s) => (
-                    <TableRow
-                      key={s.scenario}
-                      onClick={() => selectCombination(s.scenario)}
-                      className={cn(
-                        "cursor-pointer hover:bg-primary/5 transition-colors",
-                        s.scenario === selName && "bg-primary/10"
-                      )}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          selectCombination(s.scenario);
-                        }
-                      }}
-                      aria-label={`Load scenario ${s.scenario} in the sections above`}
-                      aria-describedby="all-combinations-hint"
-                    >
-                      <TableCell className="font-mono text-xs tabular-nums">
-                        {s.number_of_drones}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {s.comm_range != null ? commLabel(s.comm_range) : "—"}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs tabular-nums">
-                        {s.n_visits ?? "—"}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs tabular-nums text-chart-1">
-                        {s.n_solutions}
-                      </TableCell>
-                      {grid.objectives.map((obj) => (
-                        <TableCell
-                          key={obj}
-                          className="font-mono text-xs tabular-nums"
-                        >
-                          {tbvMeaningless(obj, s.n_visits)
-                            ? "—"
-                            : fmtObj(obj, s.objective_stats[obj]?.best)}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              </div>
-            </div>
-          ),
-        },
       ]
     : [];
+
+  // The combinations table is NOT one of the panel layout's sections. It has
+  // nothing to configure, and being inside the layout meant it sat in the
+  // content column with the previous section's panel still pinned beside it —
+  // a leftover box next to a table that wants the full width. Rendering it
+  // after the layout ends both problems at once: the sticky panel is released
+  // at its own container's end, and the table gets the whole page width.
+  const combinationsTable = grid ? (
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            {/* The rows are the page's other way in to a combination, and
+                nothing else says so: they look like a read-only table, and
+                clicking one scrolls several sections UP to the Pareto
+                front rather than to a block directly below. */}
+            <p
+              id="all-combinations-hint"
+              className="text-xs text-muted-foreground font-mono"
+            >
+              Click a row to load that combination in the Pareto front,
+              Merging and Animation sections above.
+            </p>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
+                Export
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={exportCombinationsCsv}
+                disabled={(filteredGrid ?? grid).scenarios.length === 0}
+                className="h-7 text-xs tracking-widest font-mono"
+              >
+                CSV
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={exportCombinationsXlsx}
+                disabled={(filteredGrid ?? grid).scenarios.length === 0}
+                className="h-7 text-xs tracking-widest font-mono"
+              >
+                XLSX
+              </Button>
+            </div>
+          </div>
+          <div className="rounded border border-border overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
+                  Drones
+                </TableHead>
+                <TableHead className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
+                  Comm Range
+                </TableHead>
+                <TableHead className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
+                  n_visits
+                </TableHead>
+                <TableHead className="text-xs font-mono tracking-widest uppercase text-muted-foreground">
+                  # Solutions
+                </TableHead>
+                {grid.objectives.map((obj) => (
+                  <TableHead
+                    key={obj}
+                    className="text-xs font-mono tracking-widest uppercase text-muted-foreground"
+                  >
+                    {obj}
+                    <span className="ml-1 text-muted-foreground normal-case tracking-normal font-normal">
+                      (best)
+                    </span>
+                  </TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(filteredGrid ?? grid).scenarios.map((s) => (
+                <TableRow
+                  key={s.scenario}
+                  onClick={() => selectCombination(s.scenario)}
+                  className={cn(
+                    "cursor-pointer hover:bg-primary/5 transition-colors",
+                    s.scenario === selName && "bg-primary/10"
+                  )}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      selectCombination(s.scenario);
+                    }
+                  }}
+                  aria-label={`Load scenario ${s.scenario} in the sections above`}
+                  aria-describedby="all-combinations-hint"
+                >
+                  <TableCell className="font-mono text-xs tabular-nums">
+                    {s.number_of_drones}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {s.comm_range != null ? commLabel(s.comm_range) : "—"}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs tabular-nums">
+                    {s.n_visits ?? "—"}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs tabular-nums text-chart-1">
+                    {s.n_solutions}
+                  </TableCell>
+                  {grid.objectives.map((obj) => (
+                    <TableCell
+                      key={obj}
+                      className="font-mono text-xs tabular-nums"
+                    >
+                      {tbvMeaningless(obj, s.n_visits)
+                        ? "—"
+                        : fmtObj(obj, s.objective_stats[obj]?.best)}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          </div>
+        </div>
+  ) : null;
+
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6">
@@ -1271,7 +1269,12 @@ export default function ModelPage() {
             </div>
           </div>
 
-          <SectionPanelLayout sections={sections} stickyOffset={headerHeight} />
+          <SectionPanelLayout
+            sections={sections}
+            stickyOffset={headerHeight}
+            hasContentBelow
+          />
+          {combinationsTable}
         </>
       ) : null}
     </div>
