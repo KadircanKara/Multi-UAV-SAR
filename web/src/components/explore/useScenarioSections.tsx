@@ -17,17 +17,19 @@
  * highlighted point on the 2D plot AND the 3D plot, and is the same solution
  * the Merging comparison and the Animation replay run on.
  *
- * Merging's panel is `SelectedSolutionReadout` — it only reports the shared
- * selection, so it needs nothing beyond `front`/`selectedIndex` from here.
- * The sensing config and the compare result it produces are Merging-only
- * state now that the config builder and its result share one place
- * (`MergingContent`, the column), so both live there instead of here — see
- * that file's doc comment. Animation's panel is the same `SelectedSolutionReadout`:
- * a config split into a panel `AnimationControls` was planned but ruled out
- * once the Merging round-trip above showed what a 320px column of sliders
- * looks like, so Animation's config (merge topology, time model, p/q/B
- * sliders, target cells, stride, LOAD ANIMATION) stays where it always was —
- * inside `GridPlayback`, in the content column.
+ * All three sections share ONE panel — the combination picker, the solution
+ * selector and the active-solution readout — because they are three views of
+ * the same two decisions: which run, and which solution in it. Only the header
+ * changes between them, to say where the reader is. Earlier revisions gave
+ * Sensing and Animation a cut-down read-only readout instead; that meant the
+ * reader had to scroll back up to the Pareto section to change the very
+ * solution the section below was analysing.
+ *
+ * The per-section CONFIG is not here and does not belong here: Sensing's
+ * config with the compare result it produces (`MergingContent`) and
+ * Animation's config with the playback it drives (`GridPlayback`) each live in
+ * the content column, next to their own output. A 360px column of sliders was
+ * tried and ruled out.
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
@@ -41,7 +43,6 @@ import { ExplorerSkeleton, OfflinePanel } from "./ExplorerStates";
 import MergingContent, { MERGING_HEIGHT } from "./MergingContent";
 import ParetoControls from "./ParetoControls";
 import ParetoFrontsCard, { has3DView } from "./ParetoFrontsCard";
-import SelectedSolutionReadout from "./SelectedSolutionReadout";
 import { useScenarioFront } from "./useScenarioFront";
 
 // ─── Dynamic (SSR-off) chart imports ─────────────────────────────────────────
@@ -203,20 +204,30 @@ export function useScenarioSections({
       </div>
     );
 
+  // ONE panel for all three sections. They are three views of a single choice
+  // — which run, and which solution in it — so the controls that make that
+  // choice do not change as the reader moves between them; only the header
+  // does, to say where they are. `controlsKey` below keeps it the same mounted
+  // instance across the three, so a selection mode or a set of weights chosen
+  // on one is still there on the next.
+  const solutionControls = (
+    <ParetoControls
+      source={source}
+      front={front}
+      selectedIndex={selectedIndex}
+      onSelectIndex={handleSelectIndex}
+      combinationControls={combinationControls}
+    />
+  );
+  const SOLUTION_PANEL = "solution";
+
   const sections: PanelSection[] = [
     {
       id: "pareto",
       label: "PARETO FRONT",
       estimatedHeight: PARETO_HEIGHT,
-      controls: (
-        <ParetoControls
-          source={source}
-          front={front}
-          selectedIndex={selectedIndex}
-          onSelectIndex={handleSelectIndex}
-          combinationControls={combinationControls}
-        />
-      ),
+      controls: solutionControls,
+      controlsKey: SOLUTION_PANEL,
       content: !front ? (
         noFront(PARETO_HEIGHT)
       ) : (
@@ -267,9 +278,8 @@ export function useScenarioSections({
       // and the scrollspy key are unaffected.
       label: "SENSING",
       estimatedHeight: MERGING_HEIGHT,
-      controls: front ? (
-        <SelectedSolutionReadout front={front} selectedIndex={selectedIndex} />
-      ) : null,
+      controls: solutionControls,
+      controlsKey: SOLUTION_PANEL,
       content: !front ? (
         noFront(MERGING_HEIGHT)
       ) : (
@@ -280,9 +290,8 @@ export function useScenarioSections({
       id: "animation",
       label: "ANIMATION",
       estimatedHeight: ANIMATION_HEIGHT,
-      controls: front ? (
-        <SelectedSolutionReadout front={front} selectedIndex={selectedIndex} />
-      ) : null,
+      controls: solutionControls,
+      controlsKey: SOLUTION_PANEL,
       content: !front ? (
         noFront(ANIMATION_HEIGHT)
       ) : (

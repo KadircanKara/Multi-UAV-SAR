@@ -10,13 +10,12 @@
  * used to live in useScenarioSections, because the config builder and the
  * result were split across two different places — MergingControls (panel)
  * and this file (column) — and each half read part of the same state. The
- * owner has since moved the whole builder back into this column (see
- * task-7-report.md's "Amendment round 2"), so nothing outside this component
- * reads any of it any more — MergingControls is deleted, and the panel now
- * renders only `SelectedSolutionReadout` (front + selectedIndex, unrelated to
- * this state). `selectedIndex` itself stays up in useScenarioSections and
- * arrives here as a prop, because it is still genuinely shared with Pareto
- * and Animation.
+ * owner has since moved the whole builder back into this column, so nothing
+ * outside this component reads any of it any more — MergingControls is
+ * deleted, and the panel shows the shared run/solution controls, which have
+ * nothing to do with this state. `selectedIndex` itself stays up in
+ * useScenarioSections and arrives here as a prop, because it is genuinely
+ * shared with Pareto and Animation.
  *
  * Every result branch below reserves at least MERGING_HEIGHT of vertical
  * space. Before the config card existed here, the pre-Compare state rendered

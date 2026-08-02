@@ -93,8 +93,14 @@ export default function SectionPanelLayout({
   const stickyTop = NAV_PX + (stickyOffset > 0 ? stickyOffset + HEADER_GAP_PX : 0);
   const panelMaxHeight = `calc(100vh - ${stickyTop + PANEL_BOTTOM_PX}px)`;
 
+  // Keyed on the CONTROLS, not the section: sections that share one panel say
+  // so with `controlsKey`, and scrolling between them then keeps the same
+  // mounted instance (and skips the fade, since nothing changed).
   const panelBody = active && (
-    <div key={active.id} className="animate-hud-rise flex flex-col gap-4">
+    <div
+      key={active.controlsKey ?? active.id}
+      className="animate-hud-rise flex flex-col gap-4"
+    >
       {active.controls}
     </div>
   );
