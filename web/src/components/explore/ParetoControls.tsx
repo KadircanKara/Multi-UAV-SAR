@@ -15,17 +15,25 @@
  * The selection this panel writes is shared: one `selectedIndex` behind both
  * plots, which is what makes BEST / BALANCED / KNEE / by-index / by-weights
  * move the highlighted point on both at once.
+ *
+ * `combinationControls` renders whether or not a front exists, and stays in
+ * the same position either way. That is deliberate on both counts: a run whose
+ * front failed to load is precisely when the reader needs the picker in order
+ * to leave it, and moving the picker between two parents as the front resolves
+ * would remount it mid-interaction.
  */
 
 import type { ReactNode } from "react";
 import { Separator } from "@/components/ui/separator";
 import SolutionSelectorPanel from "@/components/SolutionSelectorPanel";
-import type { ExplorerSource } from "@/lib/source";
+import { sourceKey, type ExplorerSource } from "@/lib/source";
 import type { ParetoFront } from "@/lib/types";
 
 interface Props {
   source: ExplorerSource;
-  front: ParetoFront;
+  /** Null while the front is loading or after it failed — the picker below
+   *  still renders, the solution selector does not. */
+  front: ParetoFront | null;
   selectedIndex: number;
   onSelectIndex: (idx: number) => void;
   /** The route's own picker for which run this section is showing (the model
@@ -49,12 +57,19 @@ export default function ParetoControls({
         </>
       )}
 
-      <SolutionSelectorPanel
-        source={source}
-        front={front}
-        selectedIndex={selectedIndex}
-        onSelectIndex={onSelectIndex}
-      />
+      {front && (
+        // Keyed on the run, not the front: this panel seeds weight sliders and
+        // an index input from the front it mounted with and has no effect that
+        // re-seeds them, so switching combination has to give it a new
+        // instance or it keeps offering the previous run's weights.
+        <SolutionSelectorPanel
+          key={sourceKey(source)}
+          source={source}
+          front={front}
+          selectedIndex={selectedIndex}
+          onSelectIndex={onSelectIndex}
+        />
+      )}
     </div>
   );
 }

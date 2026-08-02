@@ -22,6 +22,15 @@
  * the drawer trigger is rendered for one, and the two-column grid collapses to
  * a single column, so the section's content gets the full width instead of
  * sitting beside a tall empty outlined box.
+ *
+ * The LAST section of several carries a viewport-height floor. A section only
+ * becomes active once its top scrolls above the nav, and there is nothing
+ * below the last one to scroll it up there: a final section shorter than the
+ * viewport sits with its top far down the screen even at maximum scroll, so it
+ * can never be selected and its controls are unreachable — the same "a section
+ * the panel can't reach" failure as a zero-height section, arriving from the
+ * other end. The floor is a no-op for any section already taller than the
+ * viewport, which is the normal case.
  */
 
 import { Menu } from "lucide-react";
@@ -98,7 +107,7 @@ export default function SectionPanelLayout({ sections }: { sections: PanelSectio
 
       {/* Content column */}
       <div className="flex min-w-0 flex-col gap-10">
-        {sections.map((section) => (
+        {sections.map((section, i) => (
           <section
             key={section.id}
             id={section.id}
@@ -107,7 +116,18 @@ export default function SectionPanelLayout({ sections }: { sections: PanelSectio
               contentVisibility: "auto",
               containIntrinsicSize: `${section.estimatedHeight ?? DEFAULT_ESTIMATED_HEIGHT}px`,
             }}
-            className="scroll-mt-20"
+            className={cn(
+              "scroll-mt-20",
+              // See the file comment: without this the last section is
+              // unreachable by the scrollspy whenever it is shorter than the
+              // viewport, taking its controls with it. A lone section needs no
+              // floor — it is the scrollspy's fallback, so it is active from
+              // the first paint whatever its height, and padding it out would
+              // only leave dead space below a one-section page.
+              sections.length > 1 &&
+                i === sections.length - 1 &&
+                "min-h-[calc(100vh-3.5rem)]"
+            )}
           >
             {seenIds.has(section.id) ? (
               section.content

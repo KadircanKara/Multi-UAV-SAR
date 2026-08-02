@@ -32,11 +32,12 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import dynamic from "next/dynamic";
-import type { ExplorerSource } from "@/lib/source";
+import { sourceKey, type ExplorerSource } from "@/lib/source";
 import type { ParetoFront } from "@/lib/types";
 import type { PanelSection } from "@/components/layout/PanelSection";
 import GridPlayback from "@/components/viz/GridPlayback/GridPlayback";
 import ChartSkeleton from "./ChartSkeleton";
+import { ExplorerSkeleton, OfflinePanel } from "./ExplorerStates";
 import MergingContent, { MERGING_HEIGHT } from "./MergingContent";
 import ParetoControls from "./ParetoControls";
 import ParetoFrontsCard, { has3DView } from "./ParetoFrontsCard";
@@ -82,7 +83,15 @@ export interface ScenarioSections {
   front: ParetoFront | null;
   loading: boolean;
   error: string | null;
-  /** Empty until the front loads — a section cannot be built without it. */
+  /**
+   * Always the same three sections in the same order, whatever the front is
+   * doing. A section whose front hasn't arrived renders a skeleton, and one
+   * whose fetch failed renders the offline panel — but it still exists, with
+   * its id and its reserved height. Returning `[]` instead (as this did) meant
+   * a caller that splices these between its own sections re-laid-out the page
+   * every time a front resolved, and — worse — silently dropped the deep-dive
+   * with no error anywhere when a fetch failed.
+   */
   sections: PanelSection[];
 }
 
@@ -173,89 +182,115 @@ export function useScenarioSections({
     setSelectedIndex(idx);
   }, []);
 
-  const sections: PanelSection[] = front
-    ? [
-        {
-          id: "pareto",
-          label: "PARETO FRONT",
-          estimatedHeight: PARETO_HEIGHT,
-          controls: (
-            <ParetoControls
-              source={source}
+  // Identifies WHICH run these sections describe. Both content components
+  // below cache a fetched result in local state with no effect that clears it,
+  // so switching run without remounting them would leave the previous run's
+  // metrics table and playback on screen, captioned with the new run's name.
+  // The Pareto card needs no key: it renders `front` straight from props.
+  const key = sourceKey(source);
+
+  // What a section shows when there is no front to show. Error wins over
+  // loading: a refetch that fails leaves the stale `front` in place (see
+  // useScenarioFront), so `error` is the more truthful of the two.
+  const noFront = (height: number) =>
+    error ? (
+      <div style={{ minHeight: height }}>
+        <OfflinePanel message={error} />
+      </div>
+    ) : (
+      <div style={{ minHeight: height }}>
+        <ExplorerSkeleton />
+      </div>
+    );
+
+  const sections: PanelSection[] = [
+    {
+      id: "pareto",
+      label: "PARETO FRONT",
+      estimatedHeight: PARETO_HEIGHT,
+      controls: (
+        <ParetoControls
+          source={source}
+          front={front}
+          selectedIndex={selectedIndex}
+          onSelectIndex={handleSelectIndex}
+          combinationControls={combinationControls}
+        />
+      ),
+      content: !front ? (
+        noFront(PARETO_HEIGHT)
+      ) : (
+        <ParetoFrontsCard
+          front={front}
+          footer={paretoFooter}
+          scatter2D={
+            <ParetoScatter
               front={front}
               selectedIndex={selectedIndex}
               onSelectIndex={handleSelectIndex}
-              combinationControls={combinationControls}
+              xObj={xObj}
+              yObj={yObj}
+              onXChange={setXObj}
+              onYChange={setYObj}
             />
-          ),
-          content: (
-            <ParetoFrontsCard
-              front={front}
-              footer={paretoFooter}
-              scatter2D={
-                <ParetoScatter
-                  front={front}
-                  selectedIndex={selectedIndex}
-                  onSelectIndex={handleSelectIndex}
-                  xObj={xObj}
-                  yObj={yObj}
-                  onXChange={setXObj}
-                  onYChange={setYObj}
-                />
-              }
-              // Same predicate the card renders on; building the node early
-              // would map over every solution for a plot that isn't shown.
-              scatter3D={
-                has3DView(front) ? (
-                  <ParetoScatter3D
-                    objectives={front.objectives}
-                    points={front.solutions.map((s) => ({
-                      index: s.index,
-                      values: s.objectives_abs,
-                    }))}
-                    polarities={front.polarities}
-                    selectedIndex={selectedIndex}
-                    onSelectIndex={handleSelectIndex}
-                    xObj={x3DObj}
-                    yObj={y3DObj}
-                    zObj={z3DObj}
-                    onXChange={setX3DObj}
-                    onYChange={setY3DObj}
-                    onZChange={setZ3DObj}
-                  />
-                ) : null
-              }
-            />
-          ),
-        },
-        {
-          id: "merging",
-          label: "MERGING",
-          estimatedHeight: MERGING_HEIGHT,
-          controls: (
-            <SelectedSolutionReadout front={front} selectedIndex={selectedIndex} />
-          ),
-          content: (
-            <MergingContent source={source} selectedIndex={selectedIndex} />
-          ),
-        },
-        {
-          id: "animation",
-          label: "ANIMATION",
-          estimatedHeight: ANIMATION_HEIGHT,
-          controls: (
-            <SelectedSolutionReadout front={front} selectedIndex={selectedIndex} />
-          ),
-          content: (
-            <GridPlayback
-              source={source}
-              front={front}
-              selectedIndex={selectedIndex}
-            />
-          ),
-        },
-      ]
-    : [];
+          }
+          // Same predicate the card renders on; building the node early
+          // would map over every solution for a plot that isn't shown.
+          scatter3D={
+            has3DView(front) ? (
+              <ParetoScatter3D
+                objectives={front.objectives}
+                points={front.solutions.map((s) => ({
+                  index: s.index,
+                  values: s.objectives_abs,
+                }))}
+                polarities={front.polarities}
+                selectedIndex={selectedIndex}
+                onSelectIndex={handleSelectIndex}
+                xObj={x3DObj}
+                yObj={y3DObj}
+                zObj={z3DObj}
+                onXChange={setX3DObj}
+                onYChange={setY3DObj}
+                onZChange={setZ3DObj}
+              />
+            ) : null
+          }
+        />
+      ),
+    },
+    {
+      id: "merging",
+      label: "MERGING",
+      estimatedHeight: MERGING_HEIGHT,
+      controls: front ? (
+        <SelectedSolutionReadout front={front} selectedIndex={selectedIndex} />
+      ) : null,
+      content: !front ? (
+        noFront(MERGING_HEIGHT)
+      ) : (
+        <MergingContent key={key} source={source} selectedIndex={selectedIndex} />
+      ),
+    },
+    {
+      id: "animation",
+      label: "ANIMATION",
+      estimatedHeight: ANIMATION_HEIGHT,
+      controls: front ? (
+        <SelectedSolutionReadout front={front} selectedIndex={selectedIndex} />
+      ) : null,
+      content: !front ? (
+        noFront(ANIMATION_HEIGHT)
+      ) : (
+        <GridPlayback
+          key={key}
+          source={source}
+          front={front}
+          selectedIndex={selectedIndex}
+        />
+      ),
+    },
+  ];
 
   return { front, loading, error, sections };
 }

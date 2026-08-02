@@ -14,18 +14,17 @@
  * `combinationControls` and renders inside the Pareto section's panel.
  *
  * useScenarioSections is called once, here, for the page's lifetime: a
- * combination change now updates its `source` prop rather than remounting a
- * keyed <ScenarioExplorer> subtree. Everything the hook itself owns
- * (selectedIndex, the five axis choices) already resyncs from `front` via its
- * own effects, so that costs nothing — except SolutionSelectorPanel, nested
- * inside the Pareto section's controls, which seeds its BEST-objective /
- * by-weights / by-index / detail state ONCE from the front and never
- * resyncs. Losing the old remount would let a stale `detail` from the
- * previous combination be shown as if it belonged to the new one, so the
- * Pareto section's `controls` (only that one) is re-keyed on `selName` below.
+ * combination change updates its `source` prop rather than remounting a keyed
+ * <ScenarioExplorer> subtree. That old wrapper key was doing real work — three
+ * things below it (SolutionSelectorPanel's seeded weights, MergingContent's
+ * fetched comparison, GridPlayback's fetched replay) cache per-run state with
+ * no effect that clears it — but the replacement belongs INSIDE the hook,
+ * keyed on the run, not out here: keying from this file would take the
+ * parameter-effect charts, the combination table and the scrollspy's
+ * seen/active state with it on every combination change.
  */
 
-import { Fragment, useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -570,10 +569,14 @@ function SweepControls({
 // Reserved scroll height for the CONTENT COLUMN before it mounts, px — the
 // same idea as PARETO_HEIGHT/MERGING_HEIGHT/ANIMATION_HEIGHT in
 // useScenarioSections. Parameter-effect is the sweep Card (header, up to a
-// 3-column chart grid, and the caption); all-combinations is the export
-// row's table (header row plus one row per combination).
-const PARAM_EFFECT_HEIGHT = 720;
-const ALL_COMBINATIONS_HEIGHT = 560;
+// 3-column chart grid, and the caption); all-combinations is the hint, the
+// table header row and one row per combination — 36 of them for every seeded
+// model. Both are measured-ish rather than conservative: `containIntrinsicSize`
+// is a fixed length, so a section snaps back to its estimate every time it
+// leaves the viewport, and an estimate half the real height makes the document
+// height lurch by that difference on each scroll past.
+const PARAM_EFFECT_HEIGHT = 1200;
+const ALL_COMBINATIONS_HEIGHT = 1400;
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -695,10 +698,12 @@ export default function ModelPage() {
 
   // Pareto / Merging / Animation sections for the selected combination.
   // Called unconditionally (grid may still be loading; selName is then "",
-  // which useScenarioFront treats as "nothing to fetch yet") so the hook's
-  // own state never has to survive a remount of its own — see the file doc
-  // comment for the one downstream piece (SolutionSelectorPanel) that still
-  // needs one.
+  // which useScenarioFront treats as "nothing to fetch yet") so the hook's own
+  // state never has to survive a remount of its own. It always returns all
+  // three sections — showing a skeleton or the offline panel as content when
+  // the front is unavailable — so a failed front can neither silently delete
+  // the deep-dive from this page nor shift the table under the reader when it
+  // finally arrives.
   const { sections: explorerSections } = useScenarioSections({
     source: { mode: "seeded", scenario: selName },
     combinationControls: grid ? (
@@ -926,14 +931,10 @@ export default function ModelPage() {
 
   // One SectionPanelLayout for the whole page: this file's own
   // parameter-effect analysis, then the explorer's Pareto/Merging/Animation,
-  // then this file's own all-combinations table. Only the Pareto section's
-  // `controls` is re-keyed on `selName` — SolutionSelectorPanel nested inside
-  // it seeds state once from the front and never resyncs (see the file doc
-  // comment) — everything else here (the other four sections' controls, and
-  // every section's content) already updates correctly from props alone, and
-  // re-keying the whole layout would also blow away the parameter-effect
-  // charts, the all-combinations table, and the scrollspy's seen/active state
-  // on every combination change for no reason.
+  // then this file's own all-combinations table. Nothing here is keyed —
+  // everything this file owns updates from props alone, and the per-run
+  // remounts the explorer sections need are keyed inside the hook that builds
+  // them (see the file doc comment).
   const sections: PanelSection[] = grid
     ? [
         {
@@ -1056,14 +1057,13 @@ export default function ModelPage() {
             </Card>
           ),
         },
-        ...explorerSections.map((section) =>
-          section.id === "pareto"
-            ? {
-                ...section,
-                controls: <Fragment key={selName}>{section.controls}</Fragment>,
-              }
-            : section
-        ),
+        // Spliced in unchanged. The remounting that a combination switch needs
+        // is arranged inside these sections (useScenarioSections keys the
+        // merging/playback content and the solution selector on the run), so
+        // there is nothing for this page to key — and keying from out here
+        // would take the parameter-effect charts and the scroll position with
+        // it, which is exactly what this layout exists to avoid.
+        ...explorerSections,
         {
           id: "all-combinations",
           label: "ALL COMBINATIONS",
@@ -1077,7 +1077,7 @@ export default function ModelPage() {
                 size="sm"
                 variant="outline"
                 onClick={exportCombinationsCsv}
-                disabled={!grid || grid.scenarios.length === 0}
+                disabled={(filteredGrid ?? grid).scenarios.length === 0}
                 className="h-7 text-xs tracking-widest font-mono"
               >
                 CSV
@@ -1086,7 +1086,7 @@ export default function ModelPage() {
                 size="sm"
                 variant="outline"
                 onClick={exportCombinationsXlsx}
-                disabled={!grid || grid.scenarios.length === 0}
+                disabled={(filteredGrid ?? grid).scenarios.length === 0}
                 className="h-7 text-xs tracking-widest font-mono"
               >
                 XLSX
@@ -1094,7 +1094,19 @@ export default function ModelPage() {
             </div>
           ),
           content: (
-            <div className="rounded border border-border overflow-hidden">
+            <div className="flex flex-col gap-2">
+              {/* The rows are the page's other way in to a combination, and
+                  nothing else says so: they look like a read-only table, and
+                  clicking one now scrolls several sections UP to the Pareto
+                  front rather than to a block directly below. */}
+              <p
+                id="all-combinations-hint"
+                className="text-xs text-muted-foreground font-mono"
+              >
+                Click a row to load that combination in the Pareto front,
+                Merging and Animation sections above.
+              </p>
+              <div className="rounded border border-border overflow-hidden">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -1140,7 +1152,8 @@ export default function ModelPage() {
                           selectCombination(s.scenario);
                         }
                       }}
-                      aria-label={`Load scenario ${s.scenario}`}
+                      aria-label={`Load scenario ${s.scenario} in the sections above`}
+                      aria-describedby="all-combinations-hint"
                     >
                       <TableCell className="font-mono text-xs tabular-nums">
                         {s.number_of_drones}
@@ -1168,6 +1181,7 @@ export default function ModelPage() {
                   ))}
                 </TableBody>
               </Table>
+              </div>
             </div>
           ),
         },

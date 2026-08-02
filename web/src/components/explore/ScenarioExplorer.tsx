@@ -11,55 +11,24 @@
  * interleave its OWN sections with these (the model route) calls that hook
  * directly and skips this wrapper.
  *
- * Used standalone at /missions/[modelKey]/scenario/[suffix], embedded on the
- * model page (driven by the parameter-combination dropdowns, with a
- * `key={scenario}` so switching combination fully remounts this subtree), and
- * in the Analysis block of /optimize (playground source).
+ * Used standalone at /missions/[modelKey]/scenario/[suffix] and in the Analysis
+ * block of /optimize (playground source). The model page does NOT use it — it
+ * calls useScenarioSections directly so that its own parameter-effect and
+ * combination-table sections share one panel and one scrollspy with these
+ * three. Whatever remount that page's combination switch needs is arranged
+ * inside the sections themselves (see the `key`s in useScenarioSections), not
+ * by a wrapper here.
  */
 
 import type { ReactNode } from "react";
 import type { ExplorerSource } from "@/lib/source";
 import type { ParetoFront } from "@/lib/types";
 import SectionPanelLayout from "@/components/layout/SectionPanelLayout";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { ExplorerSkeleton, OfflinePanel } from "./ExplorerStates";
 import { useScenarioSections } from "./useScenarioSections";
 
 // ─── Small utility components ─────────────────────────────────────────────────
-
-function ExplorerSkeleton() {
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex gap-2">
-        <Skeleton className="h-6 w-24" />
-        <Skeleton className="h-6 w-32" />
-      </div>
-      <div className="flex gap-2">
-        <Skeleton className="h-9 w-24" />
-        <Skeleton className="h-9 w-24" />
-      </div>
-      <Skeleton className="h-72 w-full" />
-    </div>
-  );
-}
-
-function OfflinePanel({ message }: { message: string }) {
-  return (
-    <div className="rounded border border-destructive bg-destructive/10 px-4 py-4 font-mono">
-      <p className="text-sm font-semibold tracking-widest text-destructive uppercase">
-        BACKEND OFFLINE
-      </p>
-      <p className="text-sm text-muted-foreground mt-1">
-        Start the API on :8000 then reload.
-      </p>
-      {message && (
-        <p className="mt-2 text-xs text-muted-foreground break-all">
-          {message}
-        </p>
-      )}
-    </div>
-  );
-}
 
 function ScenarioTitle({ label }: { label: string }) {
   return (

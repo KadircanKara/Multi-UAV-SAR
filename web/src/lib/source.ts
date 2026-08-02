@@ -34,6 +34,27 @@ export type ExplorerSource =
   | { mode: "seeded"; scenario: string }
   | { mode: "playground"; result: PlaygroundResult };
 
+/**
+ * A stable string identifying WHICH run a source points at, for use as a React
+ * `key`.
+ *
+ * Components that fetch derived results for a source (the merging comparison,
+ * the playback) hold those results in local state and have no effect that
+ * clears them when the source changes underneath. Keying them on this string
+ * unmounts the stale instance, which is the only thing that guarantees a
+ * result on screen belongs to the run named beside it. Do not replace it with
+ * the source object's identity: callers build `{ mode: "seeded", scenario }`
+ * inline, so that is fresh on every render and would remount continuously.
+ */
+export function sourceKey(s: ExplorerSource): string {
+  if (s.mode === "seeded") return `seeded:${s.scenario}`;
+  // A playground result has no server-side name. Model key plus solution count
+  // separates the runs a user actually switches between; /optimize additionally
+  // remounts its whole Analysis block per run, so this never stands alone there.
+  const key = s.result.model.model_key ?? s.result.model.Exp;
+  return `playground:${key}:${s.result.solutions.length}`;
+}
+
 export function sourceFront(s: ExplorerSource): Promise<ParetoFront> {
   return s.mode === "seeded" ? getFront(s.scenario) : playgroundFront(s.result);
 }
