@@ -32,6 +32,7 @@ import { getModelGrid } from "@/lib/api";
 import type { ModelGrid, ModelGridScenario } from "@/lib/types";
 import { useScenarioSections } from "@/components/explore/useScenarioSections";
 import SectionPanelLayout from "@/components/layout/SectionPanelLayout";
+import { useElementHeight } from "@/hooks/useElementHeight";
 import type { PanelSection } from "@/components/layout/PanelSection";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -590,6 +591,10 @@ export default function ModelPage() {
   const [grid, setGrid] = useState<ModelGrid | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // The page's own pinned header. The control panel pins directly below it, so
+  // the panel needs its live height — see SectionPanelLayout's `stickyOffset`.
+  const { ref: headerRef, height: headerHeight } = useElementHeight();
 
   // Sweep state: x-axis dimension, which of its values appear on the axis, and
   // the selected overlay values per non-swept dimension.
@@ -1213,8 +1218,14 @@ export default function ModelPage() {
       ) : grid ? (
         <>
           {/* Header — sticky so the model and its objectives stay on screen
-              while the reader scrolls the parameter-effect charts. */}
-          <div className="sticky top-14 z-30 flex flex-col gap-2 rounded-xl border border-border bg-background px-4 py-3">
+              while the reader scrolls the parameter-effect charts. Measured,
+              because the control panel below pins under it and has to start
+              where this ends — and this grows a row when the objective badges
+              wrap. */}
+          <div
+            ref={headerRef}
+            className="sticky top-14 z-30 flex flex-col gap-2 rounded-xl border border-border bg-background px-4 py-3"
+          >
             <h1
               className="text-lg font-semibold tracking-widest uppercase text-primary font-display"
               style={{ fontFamily: "var(--font-display)" }}
@@ -1248,7 +1259,7 @@ export default function ModelPage() {
             </div>
           </div>
 
-          <SectionPanelLayout sections={sections} />
+          <SectionPanelLayout sections={sections} stickyOffset={headerHeight} />
         </>
       ) : null}
     </div>

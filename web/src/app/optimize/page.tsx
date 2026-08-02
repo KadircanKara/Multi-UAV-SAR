@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useElementHeight } from "@/hooks/useElementHeight";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { toast } from "sonner";
@@ -504,6 +505,12 @@ export default function OptimizePage() {
   const [analysisFront, setAnalysisFront] = useState<ParetoFront | null>(null);
   const [analyzeBusy, setAnalyzeBusy] = useState(false);
   const analysisRef = useRef<HTMLDivElement | null>(null);
+  // Analysis's own pinned header. The explorer's control panel pins directly
+  // below it, so it needs the live height — see SectionPanelLayout's
+  // `stickyOffset`. It grows a row once a run is loaded (RunSummary), which is
+  // why this is measured rather than a constant.
+  const { ref: analysisHeaderRef, height: analysisHeaderHeight } =
+    useElementHeight();
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
@@ -1934,7 +1941,10 @@ export default function OptimizePage() {
           <Separator />
           {/* Sticky: which run this is, and its headline numbers, stay on
               screen while the reader scrolls the charts underneath. */}
-          <div className="sticky top-14 z-30 flex flex-col gap-3 rounded-xl border border-border bg-background px-4 py-3">
+          <div
+            ref={analysisHeaderRef}
+            className="sticky top-14 z-30 flex flex-col gap-3 rounded-xl border border-border bg-background px-4 py-3"
+          >
             <div className="flex flex-col gap-1">
               {/* Type scale matches the Optimizer header above: the two sticky
                   sections are peers, so they read at the same weight. */}
@@ -1967,6 +1977,7 @@ export default function OptimizePage() {
               showTitle={false}
               showSummary={false}
               onFrontLoaded={handleAnalysisFront}
+              stickyOffset={analysisHeaderHeight}
             />
           )}
         </div>

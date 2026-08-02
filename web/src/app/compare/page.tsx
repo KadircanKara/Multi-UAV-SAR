@@ -95,6 +95,7 @@ import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
 import type { PanelSection } from "@/components/layout/PanelSection";
 import SectionPanelLayout from "@/components/layout/SectionPanelLayout";
+import { useElementHeight } from "@/hooks/useElementHeight";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -837,6 +838,10 @@ export default function ComparePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // The page's own pinned header. The control panel pins directly below it, so
+  // the panel needs its live height — see SectionPanelLayout's `stickyOffset`.
+  const { ref: headerRef, height: headerHeight } = useElementHeight();
+
   // Picker selection (resolved scenarios + selected models).
   const [selection, setSelection] = useState<PickerSelection>({
     scenarios: [],
@@ -957,7 +962,10 @@ export default function ComparePage() {
     <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6">
       {/* Header — sticky so the page identity survives the long scroll through
           the picker and the objective/time-metric chart grids. */}
-      <div className="sticky top-14 z-30 flex flex-col gap-1.5 rounded-xl border border-border bg-background px-4 py-3">
+      <div
+        ref={headerRef}
+        className="sticky top-14 z-30 flex flex-col gap-1.5 rounded-xl border border-border bg-background px-4 py-3"
+      >
         <h1
           className="animate-hud-rise text-2xl font-bold tracking-tight text-foreground"
           style={{ animationDelay: "60ms" }}
@@ -977,7 +985,7 @@ export default function ComparePage() {
       ) : error ? (
         <OfflinePanel message={error} />
       ) : (
-        <SectionPanelLayout sections={compareSections} />
+        <SectionPanelLayout sections={compareSections} stickyOffset={headerHeight} />
       )}
     </div>
   );

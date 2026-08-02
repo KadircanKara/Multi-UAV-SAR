@@ -83,6 +83,9 @@ interface Props {
   /** Optional content rendered inside the Pareto-front card, below the plots
    *  (e.g. the model route's read-only run-details). Omitted ⇒ nothing extra. */
   paretoFooter?: ReactNode;
+  /** Height of whatever the host page pins below the nav, so the control panel
+   *  pins clear of it instead of behind it. See SectionPanelLayout. */
+  stickyOffset?: number;
 }
 
 export default function ScenarioExplorer({
@@ -91,6 +94,7 @@ export default function ScenarioExplorer({
   showSummary = true,
   onFrontLoaded,
   paretoFooter,
+  stickyOffset = 0,
 }: Props) {
   const { front, loading, error, sections } = useScenarioSections({
     source,
@@ -126,7 +130,7 @@ export default function ScenarioExplorer({
         </div>
       )}
 
-      <SectionPanelLayout sections={sections} />
+      <SectionPanelLayout sections={sections} stickyOffset={stickyOffset} />
     </div>
   );
 }

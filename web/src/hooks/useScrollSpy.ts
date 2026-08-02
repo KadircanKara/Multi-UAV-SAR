@@ -12,8 +12,13 @@ const NAV_OFFSET_PX = 56;
  * `seenIds` is the lazy-mount signal: Merging and Animation each run expensive
  * backend work, and stacking them as scroll sections would otherwise fire all of
  * it on page load. A section's content mounts on first intersection, not before.
+ *
+ * `extraOffsetPx` is however much page chrome pins BELOW the nav — every route
+ * using this pins its own identity header there. It has to be accounted for in
+ * both places or the two disagree: the panel would switch to a section whose
+ * heading is still hidden behind that header.
  */
-export function useScrollSpy(ids: string[]) {
+export function useScrollSpy(ids: string[], extraOffsetPx = 0) {
   const [activeId, setActiveId] = useState<string>(ids[0] ?? "");
   const [seenIds, setSeenIds] = useState<Set<string>>(new Set());
   const elements = useRef(new Map<string, HTMLElement>());
@@ -35,6 +40,10 @@ export function useScrollSpy(ids: string[]) {
     },
     []
   );
+
+  // Rounded so a sub-pixel ResizeObserver reading cannot rebuild the observer
+  // on every scroll frame.
+  const offset = NAV_OFFSET_PX + Math.round(extraOffsetPx);
 
   useEffect(() => {
     const currentIds = idsRef.current;
@@ -64,15 +73,15 @@ export function useScrollSpy(ids: string[]) {
         const passed = currentIds
           .map((id) => ({ id, el: elements.current.get(id) }))
           .filter((s): s is { id: string; el: HTMLElement } => Boolean(s.el))
-          .filter((s) => s.el.getBoundingClientRect().top <= NAV_OFFSET_PX + 8);
+          .filter((s) => s.el.getBoundingClientRect().top <= offset + 8);
         setActiveId(passed.length > 0 ? passed[passed.length - 1]!.id : currentIds[0] ?? "");
       },
-      { rootMargin: `-${NAV_OFFSET_PX}px 0px -60% 0px`, threshold: [0, 0.01] }
+      { rootMargin: `-${offset}px 0px -60% 0px`, threshold: [0, 0.01] }
     );
 
     for (const node of nodes) observer.observe(node);
     return () => observer.disconnect();
-  }, [idsKey]);
+  }, [idsKey, offset]);
 
   return { activeId, seenIds, register };
 }

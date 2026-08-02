@@ -46,16 +46,41 @@ import type { PanelSection } from "./PanelSection";
 
 const DEFAULT_ESTIMATED_HEIGHT = 480;
 
+/** Nav height (h-14). Must match useScrollSpy's NAV_OFFSET_PX. */
+const NAV_PX = 56;
+/** Breathing room between the page's pinned header and the panel below it. */
+const HEADER_GAP_PX = 8;
+/** Space left under the panel so it doesn't run to the exact viewport edge. */
+const PANEL_BOTTOM_PX = 24;
+
 // Matches Tailwind's default `lg` breakpoint, which the outer grid below
 // still switches on via CSS — the two must agree so the aside/Sheet choice
 // (JS) and the column geometry (CSS) never disagree about "desktop."
 const DESKTOP_QUERY = "(min-width: 1024px)";
 
-export default function SectionPanelLayout({ sections }: { sections: PanelSection[] }) {
+interface Props {
+  sections: PanelSection[];
+  /**
+   * Height of whatever the page pins directly below the nav — every route
+   * using this layout pins its own identity header there, with `z-30` and an
+   * opaque background. The panel is `sticky` at the SAME offset, so without
+   * this it pins underneath that header and its top is painted over: on a tall
+   * panel the reader loses the first controls, and on a short one (a
+   * three-line solution readout) almost the whole thing disappears. Measure
+   * the header with useElementHeight and pass it; the panel then pins clear of
+   * it and sizes itself to the space that is actually left.
+   */
+  stickyOffset?: number;
+}
+
+export default function SectionPanelLayout({ sections, stickyOffset = 0 }: Props) {
   const ids = sections.map((s) => s.id);
-  const { activeId, seenIds, register } = useScrollSpy(ids);
+  const { activeId, seenIds, register } = useScrollSpy(ids, stickyOffset + HEADER_GAP_PX);
   const active = sections.find((s) => s.id === activeId) ?? sections[0];
   const isDesktop = useMediaQuery(DESKTOP_QUERY);
+
+  const stickyTop = NAV_PX + (stickyOffset > 0 ? stickyOffset + HEADER_GAP_PX : 0);
+  const panelMaxHeight = `calc(100vh - ${stickyTop + PANEL_BOTTOM_PX}px)`;
 
   const panelBody = active && (
     <div key={active.id} className="animate-hud-rise flex flex-col gap-4">
@@ -76,14 +101,20 @@ export default function SectionPanelLayout({ sections }: { sections: PanelSectio
       )}
     >
       {hasControls && (isDesktop ? (
-        <aside className="flex sticky top-14 max-h-[calc(100vh-3.5rem-2rem)] flex-col gap-3 overflow-y-auto rounded-xl border border-border bg-background px-4 py-3">
+        <aside
+          style={{ top: stickyTop, maxHeight: panelMaxHeight }}
+          className="flex sticky z-20 flex-col gap-3 overflow-y-auto rounded-xl border border-border bg-background px-4 py-3"
+        >
           <p className="text-xs font-semibold tracking-widest uppercase text-primary font-display">
             {active?.label}
           </p>
           {panelBody}
         </aside>
       ) : (
-        <div className="sticky top-14 z-30 rounded-xl border border-border bg-background px-3 py-2">
+        <div
+          style={{ top: stickyTop }}
+          className="sticky z-20 rounded-xl border border-border bg-background px-3 py-2"
+        >
           <Sheet>
             <SheetTrigger asChild>
               <Button variant="outline" size="sm" className="w-full justify-start gap-2">
@@ -115,9 +146,12 @@ export default function SectionPanelLayout({ sections }: { sections: PanelSectio
             style={{
               contentVisibility: "auto",
               containIntrinsicSize: `${section.estimatedHeight ?? DEFAULT_ESTIMATED_HEIGHT}px`,
+              // Anchor scrolling (the combination table's row clicks) has to
+              // clear the page header too, or the section it jumps to lands
+              // behind it.
+              scrollMarginTop: stickyTop + HEADER_GAP_PX,
             }}
             className={cn(
-              "scroll-mt-20",
               // See the file comment: without this the last section is
               // unreachable by the scrollspy whenever it is shorter than the
               // viewport, taking its controls with it. A lone section needs no
