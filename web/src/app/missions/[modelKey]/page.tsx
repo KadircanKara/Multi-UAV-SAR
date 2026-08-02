@@ -1269,11 +1269,7 @@ export default function ModelPage() {
             </div>
           </div>
 
-          <SectionPanelLayout
-            sections={sections}
-            stickyOffset={headerHeight}
-            hasContentBelow
-          />
+          <SectionPanelLayout sections={sections} stickyOffset={headerHeight} />
           {combinationsTable}
         </>
       ) : null}

@@ -5,6 +5,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 /** Nav height (h-14 = 56px). A section becomes active once its top clears it. */
 const NAV_OFFSET_PX = 56;
 
+/** How close to the document bottom counts as "at the bottom". Sub-pixel
+ *  layout and fractional device pixel ratios mean the sum never lands exactly
+ *  on scrollHeight. */
+const BOTTOM_SLOP_PX = 2;
+
 /**
  * Tracks which of `ids` is the section currently being read, and which have been
  * on screen at least once.
@@ -97,6 +102,23 @@ export function useScrollSpy(ids: string[], extraOffsetPx = 0) {
         const el = elements.current.get(id);
         if (el && el.getBoundingClientRect().top <= offset + 8) active = id;
       }
+
+      // At the very bottom of the document, the last section is what the
+      // reader is looking at, whatever its top says. A final section shorter
+      // than the viewport can never scroll its top under the header — there is
+      // nothing below it left to scroll — so the rule above would hand the
+      // panel to the section BEFORE it and label a full screen of the last
+      // section's content with the wrong name. This was previously worked
+      // around by padding that section out to a viewport height, which cost a
+      // screen of blank space to buy the same correction.
+      const doc = document.documentElement;
+      const atBottom =
+        window.scrollY + window.innerHeight >= doc.scrollHeight - BOTTOM_SLOP_PX;
+      if (atBottom) {
+        const last = currentIds[currentIds.length - 1];
+        if (last && elements.current.has(last)) active = last;
+      }
+
       setActiveId((prev) => (prev === active ? prev : active));
     };
 

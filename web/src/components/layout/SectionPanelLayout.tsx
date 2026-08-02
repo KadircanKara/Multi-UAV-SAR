@@ -23,21 +23,11 @@
  * a single column, so the section's content gets the full width instead of
  * sitting beside a tall empty outlined box.
  *
- * The LAST section of several may carry a viewport-height floor. A section only
- * becomes active once its top scrolls above the nav, and if nothing follows the
- * last one there is nothing left to scroll it up there: a final section shorter
- * than the viewport keeps its top far down the screen even at maximum scroll,
- * so it can never be selected and its controls are unreachable — the same "a
- * section the panel can't reach" failure as a zero-height section, arriving
- * from the other end.
- *
- * The floor is only worth its cost — a screen of blank space — when reaching
- * that section would actually change the panel. It is therefore skipped when
- * the page renders its own content below (that content does the scrolling
- * instead), and when the last section shares its panel with the one before it,
- * where never becoming active costs nothing but the header text. It is a no-op
- * anyway for a section already taller than the viewport, which is the common
- * case.
+ * A short FINAL section used to be padded out to a viewport height so its top
+ * could still scroll under the header and be selected. That is gone: it cost a
+ * screen of blank space, and useScrollSpy now handles the case directly by
+ * treating the last section as active whenever the document is scrolled to its
+ * bottom — which is what the padding was really buying.
  */
 
 import { Menu } from "lucide-react";
@@ -78,16 +68,11 @@ interface Props {
    * it and sizes itself to the space that is actually left.
    */
   stickyOffset?: number;
-  /** True when the page renders its own content BELOW this layout. Drops the
-   *  last section's viewport-height floor, which exists only to make a short
-   *  final section reachable when the layout is the end of the page. */
-  hasContentBelow?: boolean;
 }
 
 export default function SectionPanelLayout({
   sections,
   stickyOffset = 0,
-  hasContentBelow = false,
 }: Props) {
   const ids = sections.map((s) => s.id);
   const { activeId, seenIds, register } = useScrollSpy(ids, stickyOffset + HEADER_GAP_PX);
@@ -119,20 +104,6 @@ export default function SectionPanelLayout({
   // chart grids reflow, the document changes height, and the scroll position
   // slides out from under them.
   const anyControls = sections.some((s) => Boolean(s.controls));
-
-  // See the file comment. Reaching the last section only matters when its panel
-  // differs from its predecessor's; when they share one (Pareto / Sensing /
-  // Animation all drive the same run-and-solution controls) the floor would buy
-  // a header change at the price of a blank screen.
-  const lastIndex = sections.length - 1;
-  const panelKeyAt = (i: number) => {
-    const s = sections[i];
-    return s ? (s.controlsKey ?? s.id) : null;
-  };
-  const floorLastSection =
-    !hasContentBelow &&
-    sections.length > 1 &&
-    panelKeyAt(lastIndex) !== panelKeyAt(lastIndex - 1);
 
   return (
     <div
@@ -182,7 +153,7 @@ export default function SectionPanelLayout({
 
       {/* Content column */}
       <div className="flex min-w-0 flex-col gap-10">
-        {sections.map((section, i) => (
+        {sections.map((section) => (
           <section
             key={section.id}
             id={section.id}
@@ -195,15 +166,6 @@ export default function SectionPanelLayout({
               // behind it.
               scrollMarginTop: stickyTop + HEADER_GAP_PX,
             }}
-            className={cn(
-              // See the file comment: without this the last section is
-              // unreachable by the scrollspy whenever it is shorter than the
-              // viewport, taking its controls with it. A lone section needs no
-              // floor — it is the scrollspy's fallback, so it is active from
-              // the first paint whatever its height, and padding it out would
-              // only leave dead space below a one-section page.
-              floorLastSection && i === lastIndex && "min-h-[calc(100vh-3.5rem)]"
-            )}
           >
             {seenIds.has(section.id) ? (
               section.content
