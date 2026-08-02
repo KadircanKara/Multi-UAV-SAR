@@ -23,14 +23,12 @@
  * content column. `tab` is lifted to page state (rather than left inside an
  * uncontrolled Tabs) since both the panel's section label and the
  * content-column branch need to read it. Time Metrics' sensing-config state
- * is likewise lifted (via useTimeMetricsComparison, called unconditionally in
- * ComparePage) because its inputs live in `controls` — which mounts
- * concurrently in the desktop aside AND the mobile Sheet — while its results
- * live in `content`; neither copy may own that state locally, or the two
- * would silently desync. Objectives has no such split (nothing in its fetch
- * result is read by `controls`), so its fetch state stays local to
- * ObjectivesResults, unmounting/refetching on every tab visit exactly as
- * before.
+ * stays lifted (via useTimeMetricsComparison, called unconditionally in
+ * ComparePage) even though its inputs and its results now sit together in the
+ * content column: being outside the tab branch is what lets a config and a
+ * completed comparison survive a visit to Objectives and back. Objectives has
+ * no such state to keep, so its fetch stays local to ObjectivesResults,
+ * unmounting and refetching on every tab visit exactly as before.
  *
  * Mirrors the model page's dynamic chart import + skeleton/offline patterns and
  * the MergingTab sensing-config layout. Uses the clean Geist-Sans styling of the
@@ -335,11 +333,11 @@ function ObjectivesResults({
 // ─── Time Metrics (module scope) ───────────────────────────────────────────────
 //
 // Split into a state hook plus two presentational halves: TimeMetricsControls
-// (the sensing config + Run button, rendered in the panel's `controls`) and
-// TimeMetricsResults (the replay results, rendered in the content column).
-// Both need the SAME live state, and `controls` can be mounted twice at once
-// (desktop aside + mobile Sheet), so the state itself must live above both —
-// useTimeMetricsComparison is called once, unconditionally, in ComparePage.
+// (the sensing config + Run button) and TimeMetricsResults (the replay
+// results). Both now render in the content column, one above the other, but
+// the state stays in useTimeMetricsComparison — called once, unconditionally,
+// in ComparePage — so that a config and a finished comparison outlive a switch
+// to the Objectives tab and back.
 
 const STRATEGIES = ["balanced", "knee", "best"] as const;
 type Strategy = (typeof STRATEGIES)[number];
@@ -929,12 +927,6 @@ export default function ComparePage() {
             lineMode={chartType === "line"}
             sweepParam={sweep}
           />
-          {tab === "time" && (
-            <>
-              <Separator />
-              <TimeMetricsControls tm={timeMetrics} />
-            </>
-          )}
         </>
       ),
       content:
@@ -947,13 +939,20 @@ export default function ComparePage() {
             onSweepChange={setSweep}
           />
         ) : (
-          <TimeMetricsResults
-            data={timeMetrics.data}
-            running={timeMetrics.running}
-            models={selection.models}
-            chartType={chartType}
-            sweep={sweep}
-          />
+          // The sensing config sits above the charts it produces, in the same
+          // column, matching Sensing and Animation on the model page. It is a
+          // two-column card of sliders and would have to be rebuilt to fit a
+          // 360px panel; the panel keeps what selects WHICH runs to compare.
+          <div className="flex flex-col gap-6">
+            <TimeMetricsControls tm={timeMetrics} />
+            <TimeMetricsResults
+              data={timeMetrics.data}
+              running={timeMetrics.running}
+              models={selection.models}
+              chartType={chartType}
+              sweep={sweep}
+            />
+          </div>
         ),
     },
   ];
