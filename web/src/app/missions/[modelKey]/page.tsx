@@ -1097,7 +1097,7 @@ export default function ModelPage() {
               className="text-xs text-muted-foreground font-mono"
             >
               Click a row to load that combination in the Pareto front,
-              Merging and Animation sections above.
+              Sensing and Animation sections above.
             </p>
             <div className="flex items-center gap-2">
               <span className="text-xs font-mono tracking-widest uppercase text-muted-foreground">

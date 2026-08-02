@@ -261,7 +261,11 @@ export function useScenarioSections({
     },
     {
       id: "merging",
-      label: "MERGING",
+      // The panel says SENSING because that is what the section's content is —
+      // the sensing config, and the time metrics it produces. Merging topology
+      // is one input to it, not the subject. The id stays "merging" so anchors
+      // and the scrollspy key are unaffected.
+      label: "SENSING",
       estimatedHeight: MERGING_HEIGHT,
       controls: front ? (
         <SelectedSolutionReadout front={front} selectedIndex={selectedIndex} />
