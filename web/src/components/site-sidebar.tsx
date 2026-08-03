@@ -9,6 +9,11 @@
  * rather than any content width. Content only narrows below ~1504px
  * (224 + 1280), and below `lg` the sidebar is not rendered at all.
  *
+ * Typography is the sans stack throughout, like the rest of the app chrome.
+ * The mono/uppercase vocabulary belongs to the mission and explorer panels,
+ * where it labels data; borrowing it for navigation put two typefaces in one
+ * 224px column for no reason.
+ *
  * The breakpoint MUST stay in step with SectionPanelLayout's DESKTOP_QUERY:
  * that file decides how far below the viewport top its sticky panel pins, and
  * the answer is "under the top bar" only while the top bar exists. Both switch
@@ -169,7 +174,7 @@ function NavLinks({
     <nav className="flex flex-col gap-5">
       {NAV_GROUPS.map((group) => (
         <div key={group.label} className="flex flex-col gap-1">
-          <p className="px-3 pb-1 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+          <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             {group.label}
           </p>
           {group.items.map((n) => {
@@ -216,7 +221,7 @@ export function SiteSidebar() {
           <NavLinks pathname={pathname} />
         </div>
         <div className="flex items-center justify-between border-t border-border px-1 pt-3">
-          <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             Theme
           </span>
           <ThemeToggle />
