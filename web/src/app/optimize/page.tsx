@@ -9,8 +9,8 @@
  * the single best solution (SOO / weighted-sum).
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useElementHeight } from "@/hooks/useElementHeight";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { toast } from "sonner";
@@ -29,16 +29,11 @@ import type {
   OptimizeConfig,
   OptimizeFront,
   OptimizeStatus,
-  ParetoFront,
-  PlaygroundResult,
   ScenarioConfig,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { isPercentObjective, percentString } from "@/lib/objective-format";
 import type { ProgressPoint } from "@/components/optimize/LiveProgress";
-import { UploadResult, parseRunJson } from "@/components/playground/UploadResult";
-import RunSummary from "@/components/optimize/RunSummary";
-import ScenarioExplorer from "@/components/explore/ScenarioExplorer";
+import BestValues from "@/components/optimize/BestValues";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -306,19 +301,6 @@ function sumWeights(weights: Record<string, number>, objs: string[]): number {
 /** Format an objective's absolute value for display. Percentage Connectivity is
  *  a 0–1 fraction in the data — render it as a percentage so the result views
  *  agree with the live-progress view (which already scales ×100). */
-function fmtObjValue(obj: string, n: number | null | undefined): string {
-  if (n == null || Number.isNaN(n)) return "—";
-  if (isPercentObjective(obj)) return percentString(n);
-  return n.toFixed(2);
-}
-
-/** The unit suffix to show after a formatted value (none for connectivity — the
- *  "%" is already baked into the formatted percentage). */
-function unitFor(obj: string): string | null {
-  if (obj === "Percentage Connectivity") return null;
-  return OBJECTIVES.find((s) => s.name === obj)?.unit ?? null;
-}
-
 // ─── Small presentational pieces (module scope) ────────────────────────────────
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -363,79 +345,11 @@ function ObjectiveChip({
   );
 }
 
-/** Minimal front shape BestValues needs. Both the live-run `OptimizeFront` and
- *  the explorer's `ParetoFront` (Analysis section) satisfy it. */
-interface BestValuesFront {
-  objectives: string[];
-  n_solutions: number;
-  solutions: {
-    index: number;
-    objectives_signed: Record<string, number | null>;
-    objectives_abs: Record<string, number | null>;
-  }[];
-}
-
-/** Best value per objective across the returned front — the extreme Pareto
- *  point for each objective. For a single solution these are just its values;
- *  for a front each objective's optimum is taken independently (minimum SIGNED
- *  value — direction already encoded), so the values may come from different
- *  solutions, hence the per-card solution index. */
-function BestValues({ front }: { front: BestValuesFront }) {
-  if (front.solutions.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground">No solution returned.</p>
-    );
-  }
-  return (
-    <div className="flex flex-col gap-2">
-      {front.solutions.length > 1 && (
-        <p className="text-xs text-muted-foreground">
-          Best per objective, across {front.n_solutions} solutions — values may
-          come from different solutions.
-        </p>
-      )}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {front.objectives.map((o) => {
-          let best: BestValuesFront["solutions"][number] | null = null;
-          for (const sol of front.solutions) {
-            const v = sol.objectives_signed[o];
-            if (v == null) continue;
-            const b = best?.objectives_signed[o];
-            if (b == null || v < b) best = sol;
-          }
-          const unit = unitFor(o);
-          return (
-            <div
-              key={o}
-              className="flex flex-col gap-1 rounded-xl border border-border bg-card p-4"
-            >
-              <p className="text-xs text-muted-foreground">{o}</p>
-              <div className="flex items-baseline justify-between gap-2">
-                <p className="text-2xl font-semibold tabular-nums text-foreground">
-                  {fmtObjValue(o, best?.objectives_abs[o])}
-                  {unit && (
-                    <span className="ml-1 text-sm font-normal text-muted-foreground">
-                      {unit}
-                    </span>
-                  )}
-                </p>
-                {best && front.solutions.length > 1 && (
-                  <p className="text-xs tabular-nums text-muted-foreground">
-                    #{best.index}
-                  </p>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
 export default function OptimizePage() {
+  const router = useRouter();
+
   // Optimisation type / method
   const [optType, setOptType] = useState<OptType>("MOO");
   const [method, setMethod] = useState<string>("NSGA2");
@@ -498,19 +412,6 @@ export default function OptimizePage() {
   const [runId, setRunId] = useState<string | null>(null);
 
   // ── Analysis section (single uploaded/exported run) ──
-  const [analysisResult, setAnalysisResult] = useState<PlaygroundResult | null>(null);
-  const [analysisNonce, setAnalysisNonce] = useState(0);
-  // Front of the analysed run, handed over by the explorer once it loads — lets
-  // the extreme-point cards render without a second fetch.
-  const [analysisFront, setAnalysisFront] = useState<ParetoFront | null>(null);
-  const [analyzeBusy, setAnalyzeBusy] = useState(false);
-  const analysisRef = useRef<HTMLDivElement | null>(null);
-  // Analysis's own pinned header. The explorer's control panel pins directly
-  // below it, so it needs the live height — see SectionPanelLayout's
-  // `stickyOffset`. It grows a row once a run is loaded (RunSummary), which is
-  // why this is measured rather than a constant.
-  const { ref: analysisHeaderRef, height: analysisHeaderHeight } =
-    useElementHeight();
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
@@ -978,39 +879,13 @@ export default function OptimizePage() {
     }
   }
 
-  function loadAnalysis(r: PlaygroundResult) {
-    setAnalysisResult(r);
-    // Drop the previous run's cards so they can't linger over a new upload
-    // while the explorer refetches.
-    setAnalysisFront(null);
-    setAnalysisNonce((n) => n + 1);
-    requestAnimationFrame(() =>
-      analysisRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
-    );
-  }
-
-  // Stable identity: ScenarioExplorer keeps this in the deps of the effect
-  // that notifies us, so a new function each render would re-notify on every
-  // render (it can no longer refetch — that effect no longer sees this).
-  const handleAnalysisFront = useCallback((f: ParetoFront) => {
-    setAnalysisFront(f);
-  }, []);
-
-  // Load the just-finished run into the Analysis section without the
-  // download→re-upload roundtrip. Same parse path as a manual upload.
-  async function analyzeCurrentResult() {
+  // Hand the just-finished run to /analysis by ID rather than by value. The
+  // export endpoint already serves exactly what an upload would carry, so the
+  // other page refetches it — no store to keep in sync, no size ceiling, and
+  // the resulting URL survives a reload.
+  function analyzeCurrentResult() {
     if (!runId) return;
-    setAnalyzeBusy(true);
-    try {
-      const text = await requestRaw(optimizeExportUrl(runId), (r) => r.text());
-      loadAnalysis(parseRunJson(text));
-    } catch (e) {
-      toast.error("Could not load result", {
-        description: e instanceof Error ? e.message : String(e),
-      });
-    } finally {
-      setAnalyzeBusy(false);
-    }
+    router.push(`/analysis?run=${encodeURIComponent(runId)}`);
   }
 
   const methods = methodsFor(optType);
@@ -1896,10 +1771,9 @@ export default function OptimizePage() {
                     <button
                       type="button"
                       onClick={analyzeCurrentResult}
-                      disabled={analyzeBusy}
-                      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-secondary px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+                      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-secondary px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent"
                     >
-                      {analyzeBusy ? "Loading…" : "Analyze this result"}
+                      Analyze this result
                     </button>
                     <button
                       type="button"
@@ -1936,51 +1810,6 @@ export default function OptimizePage() {
         )}
         </div>
 
-        {/* ── Analysis — works with any exported run, no run required ── */}
-        <div ref={analysisRef} className="flex flex-col gap-4">
-          <Separator />
-          {/* Sticky: which run this is, and its headline numbers, stay on
-              screen while the reader scrolls the charts underneath. */}
-          <div
-            ref={analysisHeaderRef}
-            className="sticky top-14 z-30 lg:top-0 flex flex-col gap-3 rounded-xl border border-border bg-background px-4 py-3"
-          >
-            <div className="flex flex-col gap-1">
-              {/* Type scale matches the Optimizer header above: the two sticky
-                  sections are peers, so they read at the same weight. */}
-              <h2 className="text-2xl font-bold tracking-tight text-foreground">
-                Analysis
-              </h2>
-              <p className="text-[15px] text-muted-foreground">
-                Analyze any exported run — upload a result JSON, or use
-                “Analyze this result” after a run finishes. Results are not
-                stored; everything runs from the file.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-              <div className="shrink-0">
-                <UploadResult onLoaded={loadAnalysis} />
-              </div>
-              {analysisResult && (
-                <RunSummary result={analysisResult} front={analysisFront} />
-              )}
-            </div>
-          </div>
-          {/* Outside the sticky panel: the tiles are a reading of the front,
-              not the identity of it, and pinning them costs a third of the
-              viewport that the charts below need. */}
-          {analysisFront && <BestValues front={analysisFront} />}
-          {analysisResult && (
-            <ScenarioExplorer
-              key={analysisNonce}
-              source={{ mode: "playground", result: analysisResult }}
-              showTitle={false}
-              showSummary={false}
-              onFrontLoaded={handleAnalysisFront}
-              stickyOffset={analysisHeaderHeight}
-            />
-          )}
-        </div>
       </div>
     </TooltipProvider>
   );

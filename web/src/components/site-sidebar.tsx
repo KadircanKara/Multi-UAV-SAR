@@ -96,10 +96,49 @@ function CompareIcon() {
   );
 }
 
-const NAV = [
-  { href: "/missions", label: "Missions", icon: <MissionsIcon />, match: ["/missions", "/explore"] },
-  { href: "/optimize", label: "Optimizer", icon: <OptimizeIcon />, match: ["/optimize"] },
-  { href: "/compare", label: "Compare", icon: <CompareIcon />, match: ["/compare"] },
+function AnalysisIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="6" />
+      <line x1="15.5" y1="15.5" x2="20" y2="20" />
+      <line x1="8.5" y1="12.5" x2="10.5" y2="10" />
+      <line x1="10.5" y1="10" x2="12.5" y2="12" />
+      <line x1="12.5" y1="12" x2="14" y2="8.5" />
+    </svg>
+  );
+}
+
+/**
+ * Grouped by where the data comes from, which is the distinction that actually
+ * governs what a reader can do on a page: the seeded library is precomputed
+ * and browsable, whereas a run is something they produce in the session and
+ * that is not persisted server-side.
+ */
+const NAV_GROUPS: {
+  label: string;
+  items: {
+    href: string;
+    label: string;
+    icon: React.ReactNode;
+    match: string[];
+  }[];
+}[] = [
+  {
+    label: "Seeded Results",
+    items: [
+      { href: "/missions", label: "Missions", icon: <MissionsIcon />, match: ["/missions", "/explore"] },
+      { href: "/compare", label: "Compare", icon: <CompareIcon />, match: ["/compare"] },
+    ],
+  },
+  {
+    // PLACEHOLDER — the owner has not settled on this heading yet. Changing
+    // the string is the whole change; nothing keys off it.
+    label: "Your Runs",
+    items: [
+      { href: "/optimize", label: "Optimizer", icon: <OptimizeIcon />, match: ["/optimize"] },
+      { href: "/analysis", label: "Analysis", icon: <AnalysisIcon />, match: ["/analysis"] },
+    ],
+  },
 ];
 
 function isActive(pathname: string, match: string[]): boolean {
@@ -127,27 +166,34 @@ function NavLinks({
   onNavigate?: () => void;
 }) {
   return (
-    <nav className="flex flex-col gap-1">
-      {NAV.map((n) => {
-        const active = isActive(pathname, n.match);
-        return (
-          <Link
-            key={n.href}
-            href={n.href}
-            onClick={onNavigate}
-            aria-current={active ? "page" : undefined}
-            className={cn(
-              "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-              active
-                ? "bg-secondary text-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground"
-            )}
-          >
-            {n.icon}
-            {n.label}
-          </Link>
-        );
-      })}
+    <nav className="flex flex-col gap-5">
+      {NAV_GROUPS.map((group) => (
+        <div key={group.label} className="flex flex-col gap-1">
+          <p className="px-3 pb-1 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+            {group.label}
+          </p>
+          {group.items.map((n) => {
+            const active = isActive(pathname, n.match);
+            return (
+              <Link
+                key={n.href}
+                href={n.href}
+                onClick={onNavigate}
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                  "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                  active
+                    ? "bg-secondary text-foreground"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                )}
+              >
+                {n.icon}
+                {n.label}
+              </Link>
+            );
+          })}
+        </div>
+      ))}
     </nav>
   );
 }
