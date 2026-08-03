@@ -38,7 +38,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { getLibrary, compareObjectives, compareTimeMetrics } from "@/lib/api";
+import {
+  ApiError,
+  getLibrary,
+  compareObjectives,
+  compareTimeMetrics,
+} from "@/lib/api";
 import type {
   ScenarioSummary,
   ComparisonResponse,
@@ -170,17 +175,41 @@ function PageSkeleton() {
   );
 }
 
-function OfflinePanel({ message }: { message: string }) {
+/** A failed request, with the status that caused it — see ErrorPanel for why
+ *  the status has to travel with the message. */
+type PanelError = { message: string; status?: number };
+
+function toPanelError(err: unknown): PanelError {
+  if (err instanceof ApiError) return { message: err.message, status: err.status };
+  return { message: err instanceof Error ? err.message : String(err) };
+}
+
+/**
+ * Only a status of 0 means no response arrived at all. Anything else came FROM
+ * the backend, so heading it "Backend offline" is not just wrong, it sends the
+ * reader off to restart a server that is already running — which is exactly
+ * what a rate-limited comparison (429) used to look like here: the offline
+ * heading above the real message, "You're going a bit fast".
+ */
+function ErrorPanel({ message, status }: PanelError) {
+  const unreachable = status === undefined || status === 0;
+  const title = unreachable
+    ? "Backend offline"
+    : status === 429
+      ? "Too many requests"
+      : status === 503
+        ? "Server busy"
+        : "Couldn't load the comparison";
   return (
     <div className="rounded border border-destructive bg-destructive/10 px-4 py-4">
-      <p className="text-sm font-semibold text-destructive">
-        Backend offline
-      </p>
-      <p className="text-sm text-muted-foreground mt-1">
-        Start the API on :8000 then reload.
-      </p>
+      <p className="text-sm font-semibold text-destructive">{title}</p>
+      {unreachable && (
+        <p className="text-sm text-muted-foreground mt-1">
+          Start the API on :8000 then reload.
+        </p>
+      )}
       {message && (
-        <p className="mt-2 text-xs text-muted-foreground break-all">
+        <p className="mt-2 text-sm text-muted-foreground break-all">
           {message}
         </p>
       )}
@@ -264,7 +293,7 @@ function ObjectivesResults({
 
   const [data, setData] = useState<ComparisonResponse | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<PanelError | null>(null);
 
   // Fetch the comparison whenever the resolved scenario set changes (debounced).
   const scenarioKey = useMemo(() => [...scenarios].sort().join("|"), [scenarios]);
@@ -288,7 +317,7 @@ function ObjectivesResults({
         })
         .catch((err: unknown) => {
           if (!cancelled) {
-            setError(err instanceof Error ? err.message : String(err));
+            setError(toPanelError(err));
             setLoading(false);
           }
         });
@@ -312,7 +341,7 @@ function ObjectivesResults({
   return (
     <div className="flex flex-col gap-5">
       {overflow && <OverflowNote shown={shownCombos} total={totalCombos} />}
-      {error && <OfflinePanel message={error} />}
+      {error && <ErrorPanel {...error} />}
       {loading && !error && <Skeleton className="h-64 w-full rounded" />}
 
       {!loading && !error && data && (
@@ -834,7 +863,7 @@ function TimeMetricsResults({
 export default function ComparePage() {
   const [library, setLibrary] = useState<ScenarioSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<PanelError | null>(null);
 
   // The page's own pinned header. The control panel pins directly below it, so
   // the panel needs its live height — see SectionPanelLayout's `stickyOffset`.
@@ -880,7 +909,7 @@ export default function ComparePage() {
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
+          setError(toPanelError(err));
           setLoading(false);
         }
       });
@@ -982,7 +1011,7 @@ export default function ComparePage() {
       {loading ? (
         <PageSkeleton />
       ) : error ? (
-        <OfflinePanel message={error} />
+        <ErrorPanel {...error} />
       ) : (
         <SectionPanelLayout sections={compareSections} stickyOffset={headerHeight} />
       )}
