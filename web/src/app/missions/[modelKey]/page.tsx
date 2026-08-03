@@ -780,8 +780,9 @@ export default function ModelPage() {
 
   // Select a combination and bring the Pareto section into view (used by
   // rows in ALL COMBINATIONS, which sits below it). Targets the section's DOM
-  // id directly rather than a ref — its <section scroll-mt-20> already clears
-  // the sticky header, and the id is stable across combination changes.
+  // id directly rather than a ref — SectionPanelLayout already gives each
+  // section a scroll-margin that clears whatever is pinned above it, and the
+  // id is stable across combination changes.
   const selectCombination = useCallback((name: string) => {
     setSelName(name);
     requestAnimationFrame(() => {
@@ -1234,7 +1235,7 @@ export default function ModelPage() {
               wrap. */}
           <div
             ref={headerRef}
-            className="sticky top-14 z-30 flex flex-col gap-2 rounded-xl border border-border bg-background px-4 py-3"
+            className="sticky top-14 z-30 lg:top-0 flex flex-col gap-2 rounded-xl border border-border bg-background px-4 py-3"
           >
             <h1
               className="text-lg font-semibold tracking-widest uppercase text-primary font-display"

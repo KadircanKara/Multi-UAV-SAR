@@ -4,7 +4,7 @@ import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 import { ThemeProvider } from "@/components/theme-provider";
-import { SiteHeader } from "@/components/site-header";
+import { SiteSidebar } from "@/components/site-sidebar";
 import { PageTransition } from "@/components/page-transition";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -32,8 +32,10 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <TooltipProvider>
-            <SiteHeader />
-            <main className="relative">
+            <SiteSidebar />
+            {/* The sidebar is fixed, so the page needs its width back as
+                padding. Below lg it is a top bar instead and takes no width. */}
+            <main className="relative lg:pl-56">
               <PageTransition>{children}</PageTransition>
             </main>
           </TooltipProvider>

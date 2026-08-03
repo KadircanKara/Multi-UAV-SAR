@@ -1011,7 +1011,7 @@ export default function ComparePage() {
           the picker and the objective/time-metric chart grids. */}
       <div
         ref={headerRef}
-        className="sticky top-14 z-30 flex flex-col gap-1.5 rounded-xl border border-border bg-background px-4 py-3"
+        className="sticky top-14 z-30 lg:top-0 flex flex-col gap-1.5 rounded-xl border border-border bg-background px-4 py-3"
       >
         <h1
           className="animate-hud-rise text-2xl font-bold tracking-tight text-foreground"

@@ -2,9 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-/** Nav height (h-14 = 56px). A section becomes active once its top clears it. */
-const NAV_OFFSET_PX = 56;
-
 /** How close to the document bottom counts as "at the bottom". Sub-pixel
  *  layout and fractional device pixel ratios mean the sum never lands exactly
  *  on scrollHeight. */
@@ -18,10 +15,12 @@ const BOTTOM_SLOP_PX = 2;
  * backend work, and stacking them as scroll sections would otherwise fire all of
  * it on page load. A section's content mounts on first intersection, not before.
  *
- * `extraOffsetPx` is however much page chrome pins BELOW the nav — every route
- * using this pins its own identity header there. It has to be accounted for in
- * both places or the two disagree: the panel would switch to a section whose
- * heading is still hidden behind that header.
+ * `offsetPx` is the TOTAL height of whatever is pinned to the top of the
+ * viewport above the content — the app's top bar where there is one, plus the
+ * route's own identity header. The caller owns that sum because it varies by
+ * viewport (the app nav is a left sidebar at lg and a top bar below it) and by
+ * route. It has to match what the panel pins at, or the two disagree and the
+ * panel switches to a section whose heading is still hidden behind the header.
  *
  * The two outputs are driven by DIFFERENT mechanisms, deliberately.
  * `seenIds` is edge-triggered and an IntersectionObserver is exactly right for
@@ -33,7 +32,7 @@ const BOTTOM_SLOP_PX = 2;
  * then sat on the previous section for most of a screen of scrolling, which is
  * precisely the bug it exists to prevent.
  */
-export function useScrollSpy(ids: string[], extraOffsetPx = 0) {
+export function useScrollSpy(ids: string[], offsetPx = 0) {
   const [activeId, setActiveId] = useState<string>(ids[0] ?? "");
   const [seenIds, setSeenIds] = useState<Set<string>>(new Set());
   const elements = useRef(new Map<string, HTMLElement>());
@@ -58,7 +57,7 @@ export function useScrollSpy(ids: string[], extraOffsetPx = 0) {
 
   // Rounded so a sub-pixel ResizeObserver reading cannot rebuild the observer
   // on every scroll frame.
-  const offset = NAV_OFFSET_PX + Math.round(extraOffsetPx);
+  const offset = Math.round(offsetPx);
 
   useEffect(() => {
     const currentIds = idsRef.current;
