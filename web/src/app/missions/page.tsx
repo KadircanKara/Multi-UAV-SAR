@@ -1,6 +1,12 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
+import {
+  useInitialSearchParams,
+  useUrlSync,
+  readString,
+  scalarParam,
+} from "@/hooks/useUrlState";
 import Link from "next/link";
 import { getLibrary } from "@/lib/api";
 import type { ScenarioSummary } from "@/lib/types";
@@ -150,7 +156,11 @@ export default function MissionSelectPage() {
   const [scenarios, setScenarios] = useState<ScenarioSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
+  // Search term round-trips through ?q= so a filtered list can be shared and
+  // survives a reload.
+  const initialParams = useInitialSearchParams();
+  const [query, setQuery] = useState(() => readString(initialParams, "q", ""));
+  useUrlSync({ q: scalarParam(query.trim(), "") });
 
   useEffect(() => {
     let cancelled = false;

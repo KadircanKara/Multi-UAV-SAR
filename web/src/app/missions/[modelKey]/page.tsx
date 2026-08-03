@@ -24,7 +24,7 @@
  * seen/active state with it on every combination change.
  */
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -33,6 +33,16 @@ import type { ModelGrid, ModelGridScenario } from "@/lib/types";
 import { useScenarioSections } from "@/components/explore/useScenarioSections";
 import SectionPanelLayout from "@/components/layout/SectionPanelLayout";
 import { useElementHeight } from "@/hooks/useElementHeight";
+import {
+  useInitialSearchParams,
+  useUrlSync,
+  readEnum,
+  readList,
+  readNumber,
+  readString,
+  listParam,
+  scalarParam,
+} from "@/hooks/useUrlState";
 import type { PanelSection } from "@/components/layout/PanelSection";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -603,23 +613,52 @@ export default function ModelPage() {
   // the panel needs its live height — see SectionPanelLayout's `stickyOffset`.
   const { ref: headerRef, height: headerHeight } = useElementHeight();
 
+  // Filter state round-trips through the query string, so a view of this model
+  // can be shared or reloaded. Read once at mount (see useUrlState); the URL is
+  // an output from then on.
+  const initialParams = useInitialSearchParams();
+  const restored = useMemo(
+    () => ({
+      sweep: readEnum(
+        initialParams,
+        "sweep",
+        ["drones", "comm_range", "n_visits"] as const,
+        "drones" as SweepParam
+      ),
+      x: readList(initialParams, "x", []),
+      drones: readList(initialParams, "drones", []),
+      comm: readList(initialParams, "comm", []),
+      nvisits: readList(initialParams, "nvisits", []),
+      speed: readList(initialParams, "speed", []),
+      grid: readList(initialParams, "grid", []),
+      cell: readList(initialParams, "cell", []),
+      run: readString(initialParams, "run", ""),
+      sol: readNumber(initialParams, "sol", 0),
+    }),
+    [initialParams]
+  );
+  // The grid fetch below resolves after mount and seeds every selection from
+  // the model's own scenarios; it needs the restored values to defer to, and a
+  // ref keeps them out of that effect's dependencies.
+  const restoredRef = useRef(restored);
+
   // Sweep state: x-axis dimension, which of its values appear on the axis, and
   // the selected overlay values per non-swept dimension.
-  const [sweep, setSweep] = useState<SweepParam>("drones");
-  const [sweepValueSel, setSweepValueSel] = useState<string[]>([]);
-  const [seriesDrones, setSeriesDrones] = useState<string[]>([]);
-  const [seriesComm, setSeriesComm] = useState<string[]>([]);
-  const [seriesNVisits, setSeriesNVisits] = useState<string[]>([]);
+  const [sweep, setSweep] = useState<SweepParam>(restored.sweep);
+  const [sweepValueSel, setSweepValueSel] = useState<string[]>(restored.x);
+  const [seriesDrones, setSeriesDrones] = useState<string[]>(restored.drones);
+  const [seriesComm, setSeriesComm] = useState<string[]>(restored.comm);
+  const [seriesNVisits, setSeriesNVisits] = useState<string[]>(restored.nvisits);
 
   // Scenario-parameter filters (speed / grid / cell). Constant for seeded models,
   // but can vary across custom saved runs that share a model key — toggleable
   // like the overlay dims, filtering which scenarios the analysis + table use.
-  const [selSpeed, setSelSpeed] = useState<string[]>([]);
-  const [selGrid, setSelGrid] = useState<string[]>([]);
-  const [selCell, setSelCell] = useState<string[]>([]);
+  const [selSpeed, setSelSpeed] = useState<string[]>(restored.speed);
+  const [selGrid, setSelGrid] = useState<string[]>(restored.grid);
+  const [selCell, setSelCell] = useState<string[]>(restored.cell);
 
-  // Selected combination driving the Pareto/Merging/Animation sections.
-  const [selName, setSelName] = useState<string>("");
+  // Selected combination driving the Pareto/Sensing/Animation sections.
+  const [selName, setSelName] = useState<string>(restored.run);
 
   useEffect(() => {
     if (!modelKey) return;
@@ -631,16 +670,39 @@ export default function ModelPage() {
       .then((data) => {
         if (!cancelled) {
           setGrid(data);
-          // Default the Pareto/Merging/Animation sections to the first combination.
-          setSelName(data.scenarios[0]?.scenario ?? "");
+          // A value restored from the URL wins over the derived default, but
+          // only if this model actually has it — a stale or hand-edited link
+          // must not put the page into a state its own controls could not
+          // produce. Everything the URL did not carry still gets seeded, so a
+          // partial link (say `?run=` alone) lands on a coherent page.
+          const restored = restoredRef.current;
+          const keep = (wanted: string[], offered: string[]): string[] | null => {
+            if (wanted.length === 0) return null;
+            const has = new Set(offered);
+            const kept = wanted.filter((v) => has.has(v));
+            return kept.length > 0 ? kept : null;
+          };
+
+          const namedRun =
+            restored.run && data.scenarios.some((sc) => sc.scenario === restored.run)
+              ? restored.run
+              : null;
+          setSelName(namedRun ?? data.scenarios[0]?.scenario ?? "");
+
           // Seed the overlay selections (one value each ⇒ a single line) from
           // the first scenario.
           const first = data.scenarios[0];
           if (first) {
             setSeriesDrones(
-              first.number_of_drones != null ? [String(first.number_of_drones)] : []
+              keep(restored.drones, availableDimValues(data, "drones").map((o) => o.value)) ??
+                (first.number_of_drones != null
+                  ? [String(first.number_of_drones)]
+                  : [])
             );
-            setSeriesComm(first.comm_range != null ? [first.comm_range] : []);
+            setSeriesComm(
+              keep(restored.comm, availableDimValues(data, "comm_range").map((o) => o.value)) ??
+                (first.comm_range != null ? [first.comm_range] : [])
+            );
             // The swept dimension always defaults to Drones. Max Mean TBV is
             // undefined at n_visits=1, so for TBV models seed the n_visits overlay
             // with the smallest value > 1 — that keeps the TBV plot populated even
@@ -655,17 +717,18 @@ export default function ModelPage() {
               )
             ).sort((a, b) => a - b);
             setSeriesNVisits(
-              hasTbv && nVisitsAboveOne.length > 0
-                ? [String(nVisitsAboveOne[0])]
-                : first.n_visits != null
-                ? [String(first.n_visits)]
-                : []
+              keep(restored.nvisits, availableDimValues(data, "n_visits").map((o) => o.value)) ??
+                (hasTbv && nVisitsAboveOne.length > 0
+                  ? [String(nVisitsAboveOne[0])]
+                  : first.n_visits != null
+                  ? [String(first.n_visits)]
+                  : [])
             );
-            setSweep("drones");
-            // Default the x-axis to ALL Drone values.
-            setSweepValueSel(
-              availableDimValues(data, "drones").map((o) => o.value)
-            );
+            const sweptDim = restored.sweep;
+            setSweep(sweptDim);
+            // Default the x-axis to ALL values of the swept dimension.
+            const xOptions = availableDimValues(data, sweptDim).map((o) => o.value);
+            setSweepValueSel(keep(restored.x, xOptions) ?? xOptions);
             // Seed the scenario-parameter filters to all present values.
             const sp = new Set<number>();
             const gr = new Set<number>();
@@ -683,9 +746,10 @@ export default function ModelPage() {
               const v = Array.from(s).sort((a, b) => a - b)[0];
               return v != null ? [String(v)] : [];
             };
-            setSelSpeed(smallest(sp));
-            setSelGrid(smallest(gr));
-            setSelCell(smallest(ce));
+            const asStrings = (v: Set<number>) => Array.from(v).map(String);
+            setSelSpeed(keep(restored.speed, asStrings(sp)) ?? smallest(sp));
+            setSelGrid(keep(restored.grid, asStrings(gr)) ?? smallest(gr));
+            setSelCell(keep(restored.cell, asStrings(ce)) ?? smallest(ce));
           }
           setLoading(false);
         }
@@ -716,8 +780,9 @@ export default function ModelPage() {
   // the front is unavailable — so a failed front can neither silently delete
   // the deep-dive from this page nor shift the table under the reader when it
   // finally arrives.
-  const { sections: explorerSections } = useScenarioSections({
+  const { sections: explorerSections, selectedIndex } = useScenarioSections({
     source: { mode: "seeded", scenario: selName },
+    initialSelectedIndex: restored.sol,
     combinationControls: grid ? (
       <CombinationSelect
         grid={grid}
@@ -725,6 +790,23 @@ export default function ModelPage() {
         onSelectName={setSelName}
       />
     ) : undefined,
+  });
+
+  // The sweep/overlay selections carry no static default — they are derived
+  // from whichever scenarios this model has — so they go out in full whenever
+  // they are non-empty. That is also what makes a shared link reproduce the
+  // exact view rather than an approximation of it.
+  useUrlSync({
+    sweep: scalarParam(sweep, "drones"),
+    x: listParam(sweepValueSel, []),
+    drones: listParam(seriesDrones, []),
+    comm: listParam(seriesComm, []),
+    nvisits: listParam(seriesNVisits, []),
+    speed: listParam(selSpeed, []),
+    grid: listParam(selGrid, []),
+    cell: listParam(selCell, []),
+    run: scalarParam(selName, ""),
+    sol: scalarParam(selectedIndex, 0),
   });
 
   // Distinct scenario-parameter values (parsed from scenario names), with units.

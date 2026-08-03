@@ -99,6 +99,14 @@ import { Separator } from "@/components/ui/separator";
 import type { PanelSection } from "@/components/layout/PanelSection";
 import SectionPanelLayout from "@/components/layout/SectionPanelLayout";
 import { useElementHeight } from "@/hooks/useElementHeight";
+import {
+  useInitialSearchParams,
+  useUrlSync,
+  readEnum,
+  readList,
+  listParam,
+  scalarParam,
+} from "@/hooks/useUrlState";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -888,11 +896,18 @@ export default function ComparePage() {
   // the panel needs its live height — see SectionPanelLayout's `stickyOffset`.
   const { ref: headerRef, height: headerHeight } = useElementHeight();
 
+  // Filter state round-trips through the query string, so a comparison can be
+  // shared or reloaded. Read once at mount (see useUrlState); the URL is an
+  // output from then on.
+  const initialParams = useInitialSearchParams();
+
   // Picker selection (resolved scenarios + selected models).
   const [selection, setSelection] = useState<PickerSelection>({
     scenarios: [],
     models: [],
-    sweepable: { drones: [], comm_range: [], n_visits: [] },
+    params: {
+      drones: [], comm_range: [], n_visits: [], speed: [], grid: [], cell: [],
+    },
   });
 
   // Keep a stable onChange so the picker effect doesn't re-fire spuriously.
@@ -903,13 +918,57 @@ export default function ComparePage() {
   // Chart type + sweep param live here (shared across both tabs) so the parameter
   // picker can react to line mode: in line mode the non-sweep params go single-
   // select to keep the line plot legible.
-  const [chartType, setChartType] = useState<ChartType>("bar");
-  const [sweep, setSweep] = useState<SweepParam>("drones");
+  const [chartType, setChartType] = useState<ChartType>(() =>
+    readEnum(initialParams, "chart", ["bar", "line", "table"] as const, "bar")
+  );
+  const [sweep, setSweep] = useState<SweepParam>(() =>
+    readEnum(
+      initialParams,
+      "sweep",
+      ["drones", "comm_range", "n_visits"] as const,
+      "drones"
+    )
+  );
 
   // Active tab, lifted rather than left inside an uncontrolled Tabs: the
   // section's panel label and the content-column branch below both need to
   // read it outside of the Tabs subtree itself.
-  const [tab, setTab] = useState<"objectives" | "time">("objectives");
+  const [tab, setTab] = useState<"objectives" | "time">(() =>
+    readEnum(initialParams, "tab", ["objectives", "time"] as const, "objectives")
+  );
+
+  // Read once, then handed to the picker as its starting point.
+  const restoredSelection = useMemo(
+    () => ({
+      models: readList(initialParams, "models", []),
+      drones: readList(initialParams, "drones", []),
+      comm_range: readList(initialParams, "comm", []),
+      n_visits: readList(initialParams, "nvisits", []),
+      speed: readList(initialParams, "speed", []),
+      grid: readList(initialParams, "grid", []),
+      cell: readList(initialParams, "cell", []),
+    }),
+    [initialParams]
+  );
+
+  // The picker's own selections are the source of truth once it has seeded, so
+  // they are written straight back out. They carry no static default to
+  // compare against — what counts as "default" is derived from the library —
+  // so they appear in full whenever they are non-empty, which is also what
+  // makes a shared link reproduce the exact comparison.
+  const p = selection.params;
+  useUrlSync({
+    tab: scalarParam(tab, "objectives"),
+    chart: scalarParam(chartType, "bar"),
+    sweep: scalarParam(sweep, "drones"),
+    models: listParam(selection.models, []),
+    drones: listParam(p.drones, []),
+    comm: listParam(p.comm_range, []),
+    nvisits: listParam(p.n_visits, []),
+    speed: listParam(p.speed, []),
+    grid: listParam(p.grid, []),
+    cell: listParam(p.cell, []),
+  });
 
   // Time Metrics' sensing config + run state, called unconditionally so both
   // the controls half (below) and the content half share one live instance.
@@ -974,6 +1033,7 @@ export default function ComparePage() {
             onChange={onPickerChange}
             lineMode={chartType === "line"}
             sweepParam={sweep}
+            initial={restoredSelection}
           />
         </>
       ),

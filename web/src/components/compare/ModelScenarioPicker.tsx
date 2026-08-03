@@ -30,11 +30,15 @@ export interface PickerSelection {
   scenarios: string[];
   /** the selected model_keys (line view needs ≥2) */
   models: string[];
-  /** raw per-dimension selections (string keys), for the line-view sweep axis */
-  sweepable: {
+  /** Raw per-dimension selections (string keys) — everything the picker holds,
+   *  so a caller can put the selection in the URL and hand it back verbatim. */
+  params: {
     drones: string[];
     comm_range: string[];
     n_visits: string[];
+    speed: string[];
+    grid: string[];
+    cell: string[];
   };
 }
 
@@ -47,6 +51,19 @@ interface Props {
   lineMode?: boolean;
   /** The active sweep dimension (line-view x-axis); stays multi-select. */
   sweepParam?: SweepParam;
+  /** Selections to start from instead of the library-derived defaults — the
+   *  caller's way of restoring a selection from the URL. Applied once, in the
+   *  same pass that would otherwise seed defaults, so a key that is absent or
+   *  empty still falls back rather than leaving that dimension unselected. */
+  initial?: {
+    models?: string[];
+    drones?: string[];
+    comm_range?: string[];
+    n_visits?: string[];
+    speed?: string[];
+    grid?: string[];
+    cell?: string[];
+  };
 }
 
 // ─── Pure helpers (module scope) ──────────────────────────────────────────────
@@ -209,6 +226,7 @@ export default function ModelScenarioPicker({
   onChange,
   lineMode = false,
   sweepParam = "drones",
+  initial,
 }: Props) {
   const allModels = useMemo(() => distinctModels(library), [library]);
 
@@ -253,19 +271,44 @@ export default function ModelScenarioPicker({
     const nDefault =
       nOpts.find((o) => o.value === "2")?.value ?? nOpts[0]?.value;
 
-    setSelModels(defaultModels);
-    setSelDrones(dOpts[0] ? [dOpts[0].value] : []);
-    setSelComm(cOpts[0] ? [cOpts[0].value] : []);
-    setSelNVisits(nDefault ? [nDefault] : []);
     // Speed / grid / cell are scenario-defining params (single-select); default
     // to the first present value each.
     const spOpts = speedOptions(library);
     const grOpts = gridOptions(library);
     const ceOpts = cellOptions(library);
-    setSelSpeed(spOpts[0] ? [spOpts[0].value] : []);
-    setSelGrid(grOpts[0] ? [grOpts[0].value] : []);
-    setSelCell(ceOpts[0] ? [ceOpts[0].value] : []);
+
+    // A restored selection wins over the derived default, but only for values
+    // this library actually offers — a stale or hand-edited URL must not be
+    // able to select a scenario that does not exist.
+    const restore = (
+      wanted: string[] | undefined,
+      options: { value: string }[],
+      fallback: string[]
+    ): string[] => {
+      if (!wanted || wanted.length === 0) return fallback;
+      const offered = new Set(options.map((o) => o.value));
+      const kept = wanted.filter((v) => offered.has(v));
+      return kept.length > 0 ? kept : fallback;
+    };
+
+    setSelModels(
+      restore(
+        initial?.models,
+        allModels.map((m) => ({ value: m })),
+        defaultModels
+      )
+    );
+    setSelDrones(restore(initial?.drones, dOpts, dOpts[0] ? [dOpts[0].value] : []));
+    setSelComm(restore(initial?.comm_range, cOpts, cOpts[0] ? [cOpts[0].value] : []));
+    setSelNVisits(restore(initial?.n_visits, nOpts, nDefault ? [nDefault] : []));
+    setSelSpeed(restore(initial?.speed, spOpts, spOpts[0] ? [spOpts[0].value] : []));
+    setSelGrid(restore(initial?.grid, grOpts, grOpts[0] ? [grOpts[0].value] : []));
+    setSelCell(restore(initial?.cell, ceOpts, ceOpts[0] ? [ceOpts[0].value] : []));
     setSeeded(true);
+    // `initial` is read once, in the seeding pass; it is deliberately not a
+    // dependency, or a caller passing a fresh object each render would reseed
+    // over the reader's own subsequent choices.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seeded, allModels, library]);
 
   // Prune param selections that no longer exist after the model set changes,
@@ -355,13 +398,19 @@ export default function ModelScenarioPicker({
     onChange({
       scenarios: resolved,
       models: selModels,
-      sweepable: {
+      params: {
         drones: selDrones,
         comm_range: selComm,
         n_visits: selNVisits,
+        speed: selSpeed,
+        grid: selGrid,
+        cell: selCell,
       },
     });
-  }, [onChange, resolved, selModels, selDrones, selComm, selNVisits]);
+  }, [
+    onChange, resolved, selModels, selDrones, selComm, selNVisits,
+    selSpeed, selGrid, selCell,
+  ]);
 
   // Toggle guards: never allow an empty model set; keep ≥1 value per dimension.
   function onToggleModels(values: string[]) {

@@ -32,7 +32,7 @@
  * tried and ruled out.
  */
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { sourceKey, type ExplorerSource } from "@/lib/source";
 import type { ParetoFront } from "@/lib/types";
@@ -78,10 +78,17 @@ export interface ScenarioSectionsOptions {
   combinationControls?: ReactNode;
   /** Extra content inside the Pareto card, below the plots. */
   paretoFooter?: ReactNode;
+  /** Solution to start on, when the caller is restoring one (from the URL).
+   *  Honoured only for the FIRST front, and only if that front contains it —
+   *  a later front is a different run and starts on its own first solution. */
+  initialSelectedIndex?: number;
 }
 
 export interface ScenarioSections {
   front: ParetoFront | null;
+  /** The solution every section is showing — exposed so a caller can put it in
+   *  the URL. Writing it stays inside the hook. */
+  selectedIndex: number;
   loading: boolean;
   error: string | null;
   /**
@@ -103,11 +110,15 @@ export function useScenarioSections({
   onFrontLoaded,
   combinationControls,
   paretoFooter,
+  initialSelectedIndex,
 }: ScenarioSectionsOptions): ScenarioSections {
   const { front, loading, error } = useScenarioFront(source);
 
   // Shared across all three sections.
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [selectedIndex, setSelectedIndex] = useState(initialSelectedIndex ?? 0);
+  // Whether the first loaded front has been applied. A restored selection is
+  // for that front only.
+  const seededSelection = useRef(false);
 
   // 2D Pareto axis choice. ParetoScatter renders the dropdowns that write it
   // (see its `xObj`/`yObj`/`hideAxisSelectors` props) but does not own it: the
@@ -131,8 +142,19 @@ export function useScenarioSections({
   // on unrelated re-renders. (One frame can paint the new front with the old
   // index, the same passive-effect lag the axis seeding below has.)
   useEffect(() => {
-    if (front) setSelectedIndex(front.solutions[0]?.index ?? 0);
-  }, [front]);
+    if (!front) return;
+    if (!seededSelection.current) {
+      seededSelection.current = true;
+      const wanted = initialSelectedIndex;
+      // Restore only what this front actually has — a stale or hand-edited
+      // index must not select a solution that does not exist.
+      if (wanted != null && front.solutions.some((s) => s.index === wanted)) {
+        setSelectedIndex(wanted);
+        return;
+      }
+    }
+    setSelectedIndex(front.solutions[0]?.index ?? 0);
+  }, [front, initialSelectedIndex]);
 
   // Notify the parent, likewise once per loaded front. Kept out of the fetch
   // effect so an unmemoised callback can no longer trigger a refetch loop; the
@@ -305,5 +327,5 @@ export function useScenarioSections({
     },
   ];
 
-  return { front, loading, error, sections };
+  return { front, loading, error, selectedIndex, sections };
 }
