@@ -131,8 +131,8 @@ const NAV_GROUPS: {
   {
     label: "Seeded Results",
     items: [
-      { href: "/missions", label: "Missions", icon: <MissionsIcon />, match: ["/missions", "/explore"] },
-      { href: "/compare", label: "Compare", icon: <CompareIcon />, match: ["/compare"] },
+      { href: "/missions", label: "Mission Explorer", icon: <MissionsIcon />, match: ["/missions", "/explore"] },
+      { href: "/compare", label: "Compare Models", icon: <CompareIcon />, match: ["/compare"] },
     ],
   },
   {

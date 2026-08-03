@@ -192,7 +192,7 @@ export default function MissionSelectPage() {
       {/* Header */}
       <div className="flex flex-col gap-1.5">
         <h1 className="text-2xl font-bold tracking-tight text-foreground">
-          Missions
+          Mission Explorer
         </h1>
         <p className="text-[15px] text-muted-foreground">
           Pick a model to browse its parameter combinations and objective-effect

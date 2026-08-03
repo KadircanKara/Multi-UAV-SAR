@@ -1017,7 +1017,7 @@ export default function ComparePage() {
           className="animate-hud-rise text-2xl font-bold tracking-tight text-foreground"
           style={{ animationDelay: "60ms" }}
         >
-          Model Comparison
+          Compare Models
         </h1>
         <p
           className="animate-hud-rise text-[15px] leading-relaxed text-muted-foreground"
