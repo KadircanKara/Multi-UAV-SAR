@@ -43,8 +43,14 @@ import type { PanelSection } from "./PanelSection";
 
 const DEFAULT_ESTIMATED_HEIGHT = 480;
 
-/** Nav height (h-14). Must match useScrollSpy's NAV_OFFSET_PX. */
-const NAV_PX = 56;
+/**
+ * Height of the app's own top bar — which exists only BELOW `lg`. At `lg` and
+ * above the app nav is a fixed left sidebar that takes no vertical space, so
+ * anything pinning to the viewport top starts at 0 there. Must switch at the
+ * same width as DESKTOP_QUERY below and as the `lg:top-0` on each route's
+ * pinned header.
+ */
+const MOBILE_NAV_PX = 56;
 /** Breathing room between the page's pinned header and the panel below it. */
 const HEADER_GAP_PX = 8;
 /** Space left under the panel so it doesn't run to the exact viewport edge. */
@@ -75,11 +81,18 @@ export default function SectionPanelLayout({
   stickyOffset = 0,
 }: Props) {
   const ids = sections.map((s) => s.id);
-  const { activeId, seenIds, register } = useScrollSpy(ids, stickyOffset + HEADER_GAP_PX);
-  const active = sections.find((s) => s.id === activeId) ?? sections[0];
   const isDesktop = useMediaQuery(DESKTOP_QUERY);
 
-  const stickyTop = NAV_PX + (stickyOffset > 0 ? stickyOffset + HEADER_GAP_PX : 0);
+  // No app top bar at lg and above — the nav is the left sidebar there.
+  const navPx = isDesktop ? 0 : MOBILE_NAV_PX;
+  const stickyTop =
+    navPx + (stickyOffset > 0 ? stickyOffset + HEADER_GAP_PX : 0);
+
+  const { activeId, seenIds, register } = useScrollSpy(
+    ids,
+    stickyTop + HEADER_GAP_PX
+  );
+  const active = sections.find((s) => s.id === activeId) ?? sections[0];
   const panelMaxHeight = `calc(100vh - ${stickyTop + PANEL_BOTTOM_PX}px)`;
 
   // Keyed on the CONTROLS, not the section: sections that share one panel say

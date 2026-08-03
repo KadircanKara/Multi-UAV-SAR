@@ -1043,7 +1043,7 @@ export default function OptimizePage() {
              instead of the two stacking for the rest of the page. ── */}
         <div className="flex flex-col gap-6">
         {/* ── Sticky header + run bar (visible while configuring/running) ── */}
-        <div className="sticky top-14 z-30 flex flex-col gap-3 rounded-xl border border-border bg-background px-4 py-3">
+        <div className="sticky top-14 z-30 lg:top-0 flex flex-col gap-3 rounded-xl border border-border bg-background px-4 py-3">
           <div className="flex flex-col gap-1">
             <h1 className="text-2xl font-bold tracking-tight text-foreground">
               Optimizer
@@ -1943,7 +1943,7 @@ export default function OptimizePage() {
               screen while the reader scrolls the charts underneath. */}
           <div
             ref={analysisHeaderRef}
-            className="sticky top-14 z-30 flex flex-col gap-3 rounded-xl border border-border bg-background px-4 py-3"
+            className="sticky top-14 z-30 lg:top-0 flex flex-col gap-3 rounded-xl border border-border bg-background px-4 py-3"
           >
             <div className="flex flex-col gap-1">
               {/* Type scale matches the Optimizer header above: the two sticky
