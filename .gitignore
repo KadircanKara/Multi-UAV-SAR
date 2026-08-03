@@ -48,3 +48,6 @@ backend/scripts/verify_results/
 
 # docker compose env overrides (deploy-specific, never committed)
 /.env
+
+# Agent scratch workspaces — never versioned
+.superpowers/

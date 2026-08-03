@@ -14,7 +14,20 @@ from app import settings
 from app.schemas import ScenarioConfig
 
 MAX_SOLUTIONS = 2000
-MAX_PATH_LEN = 100_000
+# A legal total path is at most grid_size**2 * n_visits * number_of_drones cells
+# (grid 8 -> 64*3*16 ~ 3072). 5000 sits well above any legal path yet 20x below
+# the old ceiling, which let a ~400KB upload force reconstruct_solution(full=True)
+# to allocate a time_slots x nodes x nodes connectivity matrix (~231 MB) plus long
+# O(path) loops in PathSolution.do_connectivity_calculations — a cheap OOM/CPU DoS.
+MAX_PATH_LEN = 5000
+
+# Combined ceiling on path cells summed across ALL solutions. The per-solution
+# MAX_PATH_LEN (5000) x MAX_SOLUTIONS (2000) worst case is 10M cells — a schema-
+# valid upload that would drive the per-cell validation scan (and downstream
+# reconstruction) into tens of millions of iterations on the event loop. A legit
+# 2000-solution export is ~400k cells total (2000 x ~200), so 1M is ~2.5x headroom
+# while blocking the 10M pathological case. Checked EARLY, before the per-cell loop.
+MAX_TOTAL_PATH_CELLS = 1_000_000
 
 
 class PlaygroundSolution(BaseModel):
@@ -69,6 +82,28 @@ class PlaygroundResult(BaseModel):
             raise ValueError(
                 f"n_visits {self.scenario.n_visits} exceeds the cap of "
                 f"{settings.MAX_N_VISITS}")
+        # cell_side_length x (1 / max_drone_speed) drives the realtime sub-sample
+        # count in Time.get_real_paths; a huge cell or a near-zero speed can OOM the
+        # main process on a /replay|/compare|/playback with time_model="realtime".
+        # get_real_paths' cumulative bound is the real backstop; this fails fast.
+        if self.scenario.cell_side_length > settings.MAX_CELL_SIDE_LENGTH:
+            raise ValueError(
+                f"cell_side_length {self.scenario.cell_side_length} exceeds the "
+                f"cap of {settings.MAX_CELL_SIDE_LENGTH}")
+        if self.scenario.max_drone_speed < settings.MIN_DRONE_SPEED:
+            raise ValueError(
+                f"max_drone_speed {self.scenario.max_drone_speed} is below the "
+                f"floor of {settings.MIN_DRONE_SPEED}")
+
+        # Combined path-cell cap, checked BEFORE the per-cell loop below so a
+        # pathological upload (every solution near MAX_PATH_LEN) short-circuits
+        # here instead of driving tens of millions of validation iterations on the
+        # event loop. Summing len() is O(n_solutions) and cheap.
+        total_path_cells = sum(len(sol.path) for sol in self.solutions)
+        if total_path_cells > MAX_TOTAL_PATH_CELLS:
+            raise ValueError(
+                f"total path length across all solutions ({total_path_cells}) "
+                f"exceeds the cap of {MAX_TOTAL_PATH_CELLS}")
 
         n_objectives = len(self.model["F"])
         number_of_cells = self.scenario.grid_size ** 2
@@ -105,4 +140,18 @@ class PlaygroundResult(BaseModel):
                     raise ValueError(
                         f"solution {sol.index}: start_point {sp} out of range "
                         f"[0, {len(sol.path)})")
+            # start_points slice the flat path into one contiguous sub-tour per
+            # drone (path[sp[i]:sp[i+1]]), so they must begin at 0 and strictly
+            # increase. Out of order or not starting at 0 (e.g. [1, 0]) yields an
+            # empty sub-tour; reconstruction then indexes drone_path[0] and raises
+            # IndexError deep in PathSolution -> uncaught 500. Reject cleanly here.
+            if sol.start_points[0] != 0:
+                raise ValueError(
+                    f"solution {sol.index}: start_points must begin at 0 "
+                    f"(got {sol.start_points[0]})")
+            for a, b in zip(sol.start_points, sol.start_points[1:]):
+                if b <= a:
+                    raise ValueError(
+                        f"solution {sol.index}: start_points must be strictly "
+                        f"increasing (got {sol.start_points})")
         return self

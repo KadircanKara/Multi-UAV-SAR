@@ -4,6 +4,7 @@ import app.rootpath  # must come before any root-module import
 from fastapi import APIRouter, HTTPException, Request
 
 from app import settings
+from app.concurrency import comparison_slot
 from app.ratelimit import limiter
 from app.schemas import (
     ComparisonRequest,
@@ -18,7 +19,7 @@ router = APIRouter()
 
 
 @router.post("/api/comparison", response_model=ComparisonResponse)
-@limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
+@limiter.limit(lambda: settings.COMPARISON_RATE_LIMIT)
 def post_comparison(request: Request, body: ComparisonRequest) -> dict:
     """
     Compare the given scenarios across every objective — including objectives a
@@ -28,8 +29,10 @@ def post_comparison(request: Request, body: ComparisonRequest) -> dict:
 
     Unknown / unloadable scenarios are skipped and listed in ``skipped``.
     404 only if NONE of the requested scenarios could be loaded.
+    503 when the server already has its share of comparisons running.
     """
-    result = compare_objectives(body.scenarios)
+    with comparison_slot():
+        result = compare_objectives(body.scenarios)
     if not result["scenarios"]:
         raise HTTPException(
             status_code=404,
@@ -42,7 +45,7 @@ def post_comparison(request: Request, body: ComparisonRequest) -> dict:
 
 
 @router.post("/api/comparison/time", response_model=TimeComparisonResponse)
-@limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
+@limiter.limit(lambda: settings.COMPARISON_RATE_LIMIT)
 def post_comparison_time(request: Request, body: TimeComparisonRequest) -> dict:
     """
     Compare sensing-replay time metrics across scenarios under one shared
@@ -54,15 +57,17 @@ def post_comparison_time(request: Request, body: TimeComparisonRequest) -> dict:
     422 — bad strategy (e.g. ``best`` without ``objective_name``) or bad
     sensing config (p<=q, grid bounds, etc.).
     404 only if NONE of the requested scenarios could be loaded.
+    503 when the server already has its share of comparisons running.
     """
     try:
-        result = compare_time_metrics(
-            body.scenarios,
-            body.config.to_cfg_dict(),
-            strategy=body.strategy,
-            objective_name=body.objective_name,
-            weights=body.weights,
-        )
+        with comparison_slot():
+            result = compare_time_metrics(
+                body.scenarios,
+                body.config.to_cfg_dict(),
+                strategy=body.strategy,
+                objective_name=body.objective_name,
+                weights=body.weights,
+            )
     except StrategyUnavailableError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:

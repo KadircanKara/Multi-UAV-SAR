@@ -8,7 +8,7 @@ from Connectivity import get_connected_node_ids, connected_components, PathSolut
 # from Distance import interpolate_between_cities
 from copy import deepcopy
 
-from Time import get_real_connectivity_matrix, get_real_paths, isCoordinateDiscrete, intp_between_coords
+from Time import get_real_connectivity_matrix, get_real_paths, isCoordinateDiscrete, intp_between_coords, _MAX_REALTIME_STEPS
 
 # from matplotlib import pyplot as plt
 # import seaborn as sns
@@ -102,7 +102,14 @@ def _matrix_column_arrival_steps(path_matrix, D, speed):
     for j in range(n_cols - 1):
         max_dist = max(D[path_matrix[r, j], path_matrix[r, j + 1]]
                        for r in range(1, n_rows))
+        # Same per-leg ceiling get_real_paths enforces, so arrival offsets stay in
+        # lockstep with the columns it actually emits. get_real_paths raises on the
+        # same condition, so a scenario that trips this fails there too rather than
+        # returning silently-compressed timing metrics. Legit dt is tiny
+        # (<< _MAX_REALTIME_STEPS), so this never fires for valid input.
         dt = ceil(max_dist / speed)
+        if dt > _MAX_REALTIME_STEPS:
+            raise ValueError("Realtime trajectory too long for this scenario.")
         if dt == 0:
             arrivals.append(arrivals[-1])
         else:

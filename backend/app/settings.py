@@ -2,7 +2,9 @@
 Central settings/constants for the backend.
 All paths are absolute so they never depend on CWD.
 """
+import logging
 import os
+import sys
 
 from app.rootpath import REPO_ROOT  # importing the module triggers its sys.path side-effect
 
@@ -13,13 +15,75 @@ RESULTS_ROOT: str = os.path.abspath(
     os.environ.get("SAR_RESULTS_ROOT") or os.path.join(REPO_ROOT, "Results")
 )
 
+def _log_level_env(name: str, default: str) -> str:
+    """Read a log level name from the environment, falling back to a default.
 
-def _int_env(name: str, default: int) -> int:
-    """Read an int from the environment, falling back to a default."""
+    main.py hands this straight to ``logging.basicConfig`` at import, and
+    ``logging`` raises ValueError on anything it does not recognise — so an
+    unvalidated value ("WARNNING", or a bare "20", which ``.upper()`` leaves as a
+    string the level table has no entry for) would abort the import, and
+    ``restart: unless-stopped`` would loop the container forever on a typo. Same
+    import-time robustness as ``_int_env`` / ``_float_env`` below."""
     raw = os.environ.get(name)
     if raw is None or raw.strip() == "":
         return default
-    return int(raw)
+    level = raw.strip().upper()
+    # Numeric levels are legal for logging, just not as an upper-cased string.
+    if level.isdigit():
+        return int(level)  # type: ignore[return-value]
+    if isinstance(logging.getLevelName(level), int):
+        return level
+    print(
+        f"WARNING: environment variable {name}={raw!r} is not a valid log "
+        f"level; falling back to default {default}.",
+        file=sys.stderr,
+    )
+    return default
+
+
+# Root log level (SAR_LOG_LEVEL). Names or numbers; INFO in production.
+LOG_LEVEL = _log_level_env("SAR_LOG_LEVEL", "INFO")
+
+
+def _int_env(name: str, default: int) -> int:
+    """Read an int from the environment, falling back to a default.
+
+    A malformed value (e.g. ``SAR_OPTIMIZE_WORKERS=2x``) must NOT crash the
+    process at import — a single typo would otherwise turn every container start
+    into a restart loop. Fall back to the default and warn instead. Logging is
+    not configured this early (main.py sets it up after settings import), so the
+    warning goes to stderr."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        print(
+            f"WARNING: environment variable {name}={raw!r} is not a valid "
+            f"integer; falling back to default {default}.",
+            file=sys.stderr,
+        )
+        return default
+
+
+def _float_env(name: str, default: float) -> float:
+    """Read a float from the environment, falling back to a default.
+
+    Same import-time robustness as ``_int_env``: a malformed value must not turn
+    a container start into a restart loop, so fall back and warn to stderr."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        print(
+            f"WARNING: environment variable {name}={raw!r} is not a valid "
+            f"number; falling back to default {default}.",
+            file=sys.stderr,
+        )
+        return default
 
 
 def _csv_env(name: str, default: list[str]) -> list[str]:
@@ -63,6 +127,28 @@ MAX_N_GEN: int = _int_env("SAR_MAX_N_GEN", 1000)
 # a full run over a week. Nothing else here bounds it.
 MAX_N_VISITS: int = _int_env("SAR_MAX_N_VISITS", 3)
 
+# cell_side_length and max_drone_speed together set the realtime sub-sample count
+# (dt = ceil(leg_distance / speed), and leg_distance scales with cell_side_length):
+# a huge cell or a near-zero speed inflates the interpolated trajectory toward an
+# OOM. Time.get_real_paths' cumulative-columns bound is the real backstop, but
+# these deploy caps let a public box reject the pathological combo fast at the API
+# with a clear message instead of spending a worker on a run that will fail. The
+# defaults equal the ScenarioConfig schema ceilings (le=1000 / ge=0.1) so nothing
+# that runs today is affected; tighten them for a public deploy, e.g.
+# SAR_MAX_CELL_SIDE_LENGTH=100 SAR_MIN_DRONE_SPEED=1.0 (real scenarios use 50 / 2.5).
+MAX_CELL_SIDE_LENGTH: float = _float_env("SAR_MAX_CELL_SIDE_LENGTH", 1000)
+MIN_DRONE_SPEED: float = _float_env("SAR_MIN_DRONE_SPEED", 0.1)
+
+# ── Memory: cached scenarios ────────────────────────────────────────────────
+# How many scenarios selector_service keeps unpickled in memory at once. This is
+# the app's largest memory consumer by a wide margin: one large seeded scenario
+# occupies ~160 MB once loaded (a 60 MB pickle expands ~2.7x), so the default 8
+# can pin over a gigabyte. Combined with the optimizer pool, that is what sets
+# the instance size — lower it on a small box, raise it if you have RAM spare
+# and want fewer cold loads (a cache miss costs ~3-5 s).
+SELECTOR_CACHE_SIZE: int = max(1, _int_env("SAR_SELECTOR_CACHE_SIZE", 8))
+
+
 # ── Deploy-safety: rate limit ───────────────────────────────────────────────
 # Per-IP throttle on POST /api/optimize (the compute trigger). slowapi syntax,
 # e.g. "10/minute", "100/hour". Override for a public deploy via
@@ -77,12 +163,64 @@ OPTIMIZE_RATE_LIMIT: str = os.environ.get("SAR_OPTIMIZE_RATE_LIMIT", "30/minute"
 # SAR_REPLAY_RATE_LIMIT.
 REPLAY_RATE_LIMIT: str = os.environ.get("SAR_REPLAY_RATE_LIMIT", "60/minute")
 
+# Per-IP throttle on the two comparison endpoints (POST /api/comparison,
+# /api/comparison/time). These fan ONE request out to up to 360 / 144 heavy
+# per-scenario operations (selector unpickles / full sensing replays), so a
+# request here is far more expensive than a single replay and gets its own,
+# tighter budget. Override via SAR_COMPARISON_RATE_LIMIT.
+COMPARISON_RATE_LIMIT: str = os.environ.get("SAR_COMPARISON_RATE_LIMIT", "10/minute")
+
+# How many comparison requests may execute concurrently, server-wide (across all
+# clients). The fan-out runs synchronously in the request threadpool; without a
+# ceiling, a few parallel comparisons saturate every core and churn the selector
+# cache toward the container memory limit. Excess requests get a fast 503 rather
+# than piling more CPU-bound work behind the ones already running. Override via
+# SAR_COMPARISON_CONCURRENCY (a 2-core box wants 1-2).
+COMPARISON_CONCURRENCY: int = max(1, _int_env("SAR_COMPARISON_CONCURRENCY", 2))
+
+# How many DISTINCT scenarios one comparison request may actually process. The
+# schema caps (360 / 144) bound the request BODY, but the frontend can legitimately
+# send every real scenario name (216 today), and each distinct one is a ~160 MB
+# selector unpickle / full replay — so one request could force ~1.8 GB of serial
+# work even while the concurrency slot bounds how many requests run at once. This
+# bounds the per-request work: the comparison services process at most this many
+# distinct scenarios and report the remainder in the response's ``skipped`` list
+# (partial + honest, never silently truncated). Override via
+# SAR_COMPARISON_MAX_SCENARIOS.
+COMPARISON_MAX_SCENARIOS: int = max(1, _int_env("SAR_COMPARISON_MAX_SCENARIOS", 40))
+
+# Per-request WALL-CLOCK budget (seconds) for the comparison fan-out. The count
+# cap above bounds how MANY scenarios are attempted, but a warm selector cache
+# and a cold one differ by ~50x per scenario, so a count that is quick when
+# cached can still pin a core for minutes on a cold start. The services track
+# elapsed time across the per-scenario loop and stop once this budget is spent,
+# reporting the unprocessed remainder in ``skipped`` — so one request's CPU is
+# bounded regardless of cache warmth. At least the first scenario always runs.
+# Override via SAR_COMPARISON_TIME_BUDGET_SECONDS.
+COMPARISON_TIME_BUDGET_SECONDS: int = max(1, _int_env("SAR_COMPARISON_TIME_BUDGET_SECONDS", 15))
+
+# How many heavy single-mission reads may execute concurrently, server-wide
+# (across all clients). Covers the endpoints that unpickle a selector to answer
+# one request — the front / capabilities / select trio, plus a single sensing
+# replay or playback. One large seeded scenario costs ~160 MB once loaded, so
+# without a ceiling a burst of concurrent reads drives the selector cache past
+# the container memory limit and OOMs it. The per-IP rate limit meters how OFTEN
+# a client asks, not how many run at once (slowapi is a fixed-window counter, so
+# a whole window's worth can arrive simultaneously). Excess requests get a fast
+# 503 rather than all loading at once. Override via SAR_HEAVY_CONCURRENCY (a
+# 2-core / small-RAM box wants 2-3).
+HEAVY_CONCURRENCY: int = max(1, _int_env("SAR_HEAVY_CONCURRENCY", 3))
+
 # ── Deploy-safety: request body size cap ────────────────────────────────────
-# Upper bound on request body size (bytes), enforced via the Content-Length
-# header by a middleware in main.py. Guards against a schema-valid worst-case
-# Playground upload (2000 solutions x 100k-int paths) ballooning into
-# gigabytes of memory. Override via SAR_MAX_UPLOAD_BYTES.
-MAX_UPLOAD_BYTES: int = _int_env("SAR_MAX_UPLOAD_BYTES", 25 * 1024 * 1024)
+# Upper bound on request body size (bytes), enforced on the received byte count
+# by a middleware in main.py. Guards against a schema-valid worst-case Playground
+# upload ballooning into memory, AND bounds how much JSON the event loop parses
+# synchronously before the rate limiter / heavy_slot even run. A legitimate
+# 2000-solution export is ~2 MB (measured: 16 drones, n_visits 3), so 10 MB is
+# ~5x headroom while cutting the synchronous parse budget 2.5x from the old 25 MB.
+# If you raise this, raise request_body max_size in the Caddyfile to match (Caddy
+# rejects first otherwise). Override via SAR_MAX_UPLOAD_BYTES.
+MAX_UPLOAD_BYTES: int = _int_env("SAR_MAX_UPLOAD_BYTES", 10 * 1024 * 1024)
 
 # ── Optimizer queue ─────────────────────────────────────────────────────────
 # Each in-flight run is one child process that saturates exactly ONE core, so
@@ -108,3 +246,15 @@ OPTIMIZE_MAX_PER_CLIENT: int = max(1, _int_env("SAR_OPTIMIZE_MAX_PER_CLIENT", 2)
 ALLOW_LIBRARY_SAVE: bool = _int_env("SAR_ALLOW_LIBRARY_SAVE", 0) == 1
 # Temp per-run dirs under RESULTS_ROOT/.runs are swept once they exceed this age.
 RUN_TTL_HOURS: int = _int_env("SAR_RUN_TTL_HOURS", 24)
+
+# Ceiling on how many finished run dirs are kept, independent of age. Age alone
+# does not bound disk: a burst of runs inside the TTL window, or a run that fails
+# and is never followed by another (so the age sweep never fires), both leak.
+# The newest OPTIMIZE_RUN_KEEP are retained (so /export still works for recent
+# runs); older ones are removed even before they reach RUN_TTL_HOURS.
+OPTIMIZE_RUN_KEEP: int = max(1, _int_env("SAR_OPTIMIZE_RUN_KEEP", 40))
+
+# How often the background janitor sweeps .runs (seconds). Runs regardless of
+# whether new optimizations are being started, so disk is bounded even when the
+# app goes quiet. 0 disables the janitor (the start-of-run sweep still happens).
+RUN_PURGE_INTERVAL_SECONDS: int = max(0, _int_env("SAR_RUN_PURGE_INTERVAL_SECONDS", 900))

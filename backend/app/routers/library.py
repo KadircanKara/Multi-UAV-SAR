@@ -4,24 +4,28 @@ GET  /api/library/{scenario} — detail for one precomputed scenario.
 """
 import app.rootpath  # must come before any root-module import
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
+from app import settings
 from app.library_service import get_scenario, list_scenarios
 from app.model_aliases import to_display
 from app.optimizer_service import read_run_config
+from app.ratelimit import limiter
 from app.schemas import ScenarioDetail, ScenarioSummary
 
 router = APIRouter()
 
 
 @router.get("/api/library", response_model=list[ScenarioSummary])
-def get_library() -> list[dict]:
+@limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
+def get_library(request: Request) -> list[dict]:
     """Return all precomputed scenarios found in Results/."""
     return list_scenarios()
 
 
 @router.get("/api/library/{scenario}", response_model=ScenarioDetail)
-def get_library_scenario(scenario: str) -> dict:
+@limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
+def get_library_scenario(request: Request, scenario: str) -> dict:
     """Return detail for a single precomputed scenario; 404 if not found."""
     detail = get_scenario(scenario)
     if detail is None:
@@ -33,7 +37,8 @@ def get_library_scenario(scenario: str) -> dict:
 
 
 @router.get("/api/library/{scenario}/config")
-def get_library_scenario_config(scenario: str) -> dict:
+@limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
+def get_library_scenario_config(request: Request, scenario: str) -> dict:
     """Read-only optimizer run-config for a mission, or {recorded: false} if none.
 
     Returned verbatim (the sidecar's own shape) — the frontend types it as RunConfig;

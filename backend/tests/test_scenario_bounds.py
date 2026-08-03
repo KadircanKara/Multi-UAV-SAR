@@ -76,6 +76,53 @@ def test_n_visits_cap_is_tunable_by_env(client, monkeypatch):
     assert too_big.status_code == 422
 
 
+# ─── cell_side_length / max_drone_speed deploy caps (realtime-OOM scalars) ─────
+# Defaults equal the ScenarioConfig schema ceilings (le=1000 / ge=0.1), so at
+# default settings the schema rejects first and these are dormant; they bite once
+# a public deploy tightens them via env, which is what these tests exercise.
+
+def test_default_scalar_caps_match_the_schema_ceilings():
+    """Sized so nothing that runs today is affected; the real OOM backstop is
+    Time.get_real_paths' cumulative-columns bound, these are fast-fail defense."""
+    assert settings.MAX_CELL_SIDE_LENGTH == 1000
+    assert settings.MIN_DRONE_SPEED == 0.1
+
+
+def test_cell_side_length_cap_is_tunable_by_env(client, monkeypatch):
+    monkeypatch.setattr(settings, "MAX_CELL_SIDE_LENGTH", 100)
+    ok = client.post("/api/scenarios/validate",
+                     json={"scenario": _scenario(cell_side_length=100)})
+    too_big = client.post("/api/scenarios/validate",
+                          json={"scenario": _scenario(cell_side_length=101)})
+    assert ok.status_code == 200, ok.text
+    assert too_big.status_code == 422
+
+
+def test_cell_side_length_cap_is_enforced_on_optimize(client, monkeypatch):
+    """The cap must bite on the endpoint that spends the CPU, not just /validate."""
+    monkeypatch.setattr(settings, "MAX_CELL_SIDE_LENGTH", 100)
+    r = client.post("/api/optimize/check",
+                    json=_cfg(scenario=_scenario(cell_side_length=101)))
+    assert r.status_code == 422
+
+
+def test_min_drone_speed_cap_is_tunable_by_env(client, monkeypatch):
+    monkeypatch.setattr(settings, "MIN_DRONE_SPEED", 1.0)
+    ok = client.post("/api/scenarios/validate",
+                     json={"scenario": _scenario(max_drone_speed=1.0)})
+    too_slow = client.post("/api/scenarios/validate",
+                           json={"scenario": _scenario(max_drone_speed=0.9)})
+    assert ok.status_code == 200, ok.text
+    assert too_slow.status_code == 422
+
+
+def test_min_drone_speed_cap_is_enforced_on_optimize(client, monkeypatch):
+    monkeypatch.setattr(settings, "MIN_DRONE_SPEED", 1.0)
+    r = client.post("/api/optimize/check",
+                    json=_cfg(scenario=_scenario(max_drone_speed=0.9)))
+    assert r.status_code == 422
+
+
 # ─── the caps are sized for a public deploy ───────────────────────────────────
 
 def test_n_visits_stays_tightly_capped():

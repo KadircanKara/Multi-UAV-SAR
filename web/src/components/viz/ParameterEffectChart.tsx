@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 import {
   clampObjectiveDomain,
   isPercentObjective,
+  objectiveUnit,
   percentString,
   percentTick,
 } from "@/lib/objective-format";
@@ -193,14 +194,18 @@ export default function ParameterEffectChart({
   }
 
   const betterHint = polarity === -1 ? "higher is better" : "lower is better";
+  const unit = objectiveUnit(objective);
   const singleSeriesKey = multi ? undefined : series[0]?.key;
 
   return (
     <div className="flex flex-col gap-1">
       <p className="text-xs font-mono tracking-widest uppercase text-foreground">
         {objective}
+        {/* Unit and polarity share one bracket — two would read as two
+            separate asides about the same axis. */}
         <span className="ml-2 text-muted-foreground normal-case tracking-normal">
-          ({betterHint})
+          ({unit ? `${unit}, ` : ""}
+          {betterHint})
         </span>
       </p>
       {/* HTML legend above the plot: wraps freely without ever overlapping the

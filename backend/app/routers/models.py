@@ -1,15 +1,16 @@
 """GET /api/models — returns the full list of optimisation models (preset + custom)."""
 import app.rootpath  # must come before any root-module import
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from PathOptimizationModel import (
     get_objectives_from_weighted_sum_model,
     list_models,
 )
 
-from app import models_registry
+from app import models_registry, settings
 from app.library_service import model_grid
 from app.model_aliases import to_display
+from app.ratelimit import limiter
 from app.schemas import ModelGrid, ModelInfo
 
 router = APIRouter()
@@ -48,7 +49,8 @@ def get_models() -> list[dict]:
 
 
 @router.get("/api/models/{model_key}/grid", response_model=ModelGrid)
-def get_model_grid(model_key: str) -> dict:
+@limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
+def get_model_grid(request: Request, model_key: str) -> dict:
     """
     Return the parameter grid for a single model.
 

@@ -1,0 +1,128 @@
+# Production stack: Caddy terminates TLS on one hostname and proxies to the two
+# app containers, which are NOT reachable from outside.
+#
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Images are built and published by CI (see .github/workflows/ci.yml) rather than
+# built here — a Next.js build peaks well above what a small box has spare, and
+# building on the server is how a deploy turns into an OOM at the worst moment.
+#
+# Configuration lives in a .env file beside this one; start from .env.example.
+services:
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # certificates — losing this re-issues from scratch
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+    environment:
+      SAR_DOMAIN: ${SAR_DOMAIN:?set SAR_DOMAIN in .env}
+      SAR_ACME_EMAIL: ${SAR_ACME_EMAIL:?set SAR_ACME_EMAIL in .env}
+    depends_on:
+      backend:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+    # Drop every capability except the one a proxy actually needs — binding the
+    # privileged ports 80/443 — and forbid privilege escalation.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backend:
+    image: ghcr.io/${SAR_IMAGE_REPO:-kadircankara/multi-uav-sar}/backend:${SAR_IMAGE_TAG:-latest}
+    # No ports: only Caddy reaches this, over the compose network.
+    volumes:
+      - ${SAR_DATA_DIR:-/opt/sar/Results}:/app/Results
+    environment:
+      # Same origin, so CORS is inert. Kept explicit so that a future split
+      # deployment fails loudly rather than silently allowing localhost.
+      SAR_CORS_ORIGINS: https://${SAR_DOMAIN}
+      # Caddy is the only thing that talks to this container; trust its
+      # forwarded headers so per-IP limits see the real client.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-172.16.0.0/12}
+      SAR_OPTIMIZE_WORKERS: ${SAR_OPTIMIZE_WORKERS:-2}
+      SAR_OPTIMIZE_QUEUE_MAX: ${SAR_OPTIMIZE_QUEUE_MAX:-8}
+      SAR_OPTIMIZE_MAX_PER_CLIENT: ${SAR_OPTIMIZE_MAX_PER_CLIENT:-1}
+      SAR_SELECTOR_CACHE_SIZE: ${SAR_SELECTOR_CACHE_SIZE:-6}
+      SAR_MAX_N_VISITS: ${SAR_MAX_N_VISITS:-3}
+      SAR_MAX_CELL_SIDE_LENGTH: ${SAR_MAX_CELL_SIDE_LENGTH:-1000}
+      SAR_MIN_DRONE_SPEED: ${SAR_MIN_DRONE_SPEED:-0.1}
+      SAR_MAX_POP_SIZE: ${SAR_MAX_POP_SIZE:-300}
+      SAR_MAX_N_GEN: ${SAR_MAX_N_GEN:-1000}
+      SAR_OPTIMIZE_RATE_LIMIT: ${SAR_OPTIMIZE_RATE_LIMIT:-30/minute}
+      SAR_REPLAY_RATE_LIMIT: ${SAR_REPLAY_RATE_LIMIT:-60/minute}
+      SAR_COMPARISON_RATE_LIMIT: ${SAR_COMPARISON_RATE_LIMIT:-10/minute}
+      SAR_COMPARISON_CONCURRENCY: ${SAR_COMPARISON_CONCURRENCY:-2}
+      SAR_COMPARISON_MAX_SCENARIOS: ${SAR_COMPARISON_MAX_SCENARIOS:-40}
+      SAR_COMPARISON_TIME_BUDGET_SECONDS: ${SAR_COMPARISON_TIME_BUDGET_SECONDS:-15}
+      SAR_HEAVY_CONCURRENCY: ${SAR_HEAVY_CONCURRENCY:-3}
+      # Bound the temp .runs/ tree so it cannot fill the volume.
+      SAR_OPTIMIZE_RUN_KEEP: ${SAR_OPTIMIZE_RUN_KEEP:-40}
+      SAR_RUN_PURGE_INTERVAL_SECONDS: ${SAR_RUN_PURGE_INTERVAL_SECONDS:-900}
+      SAR_LOG_LEVEL: ${SAR_LOG_LEVEL:-INFO}
+    restart: unless-stopped
+    # Give in-flight runs and the shutdown sweep a defined window before SIGKILL,
+    # so a deploy does not truncate a run pickle mid-write.
+    stop_grace_period: 30s
+    # Runs as the unprivileged appuser (uid 1000) already; drop the rest of the
+    # container's power and cap process count against a fork storm.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          # A ceiling so a runaway backend cannot take the whole box down with
+          # it — the container dies and restarts instead of the kernel picking
+          # a victim. Raise together with SAR_SELECTOR_CACHE_SIZE.
+          memory: ${SAR_BACKEND_MEMORY_LIMIT:-2600m}
+          # Cap process count against a fork storm (optimizer children + main).
+          pids: 512
+
+  web:
+    image: ghcr.io/${SAR_IMAGE_REPO:-kadircankara/multi-uav-sar}/web:${SAR_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    # So Caddy can wait for the UI to be ready (depends_on above) instead of
+    # proxying to a dead port and serving 502s during a rollout.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('http').get('http://127.0.0.1:3000/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          pids: 256
+
+volumes:
+  caddy_data:
+  caddy_config:
+  caddy_logs:

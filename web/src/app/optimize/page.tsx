@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useElementHeight } from "@/hooks/useElementHeight";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { toast } from "sonner";
@@ -21,6 +22,7 @@ import {
   getOptimizeStatus,
   stopOptimize,
   optimizeExportUrl,
+  requestRaw,
   getDefaultScenario,
 } from "@/lib/api";
 import type {
@@ -35,6 +37,7 @@ import { cn } from "@/lib/utils";
 import { isPercentObjective, percentString } from "@/lib/objective-format";
 import type { ProgressPoint } from "@/components/optimize/LiveProgress";
 import { UploadResult, parseRunJson } from "@/components/playground/UploadResult";
+import RunSummary from "@/components/optimize/RunSummary";
 import ScenarioExplorer from "@/components/explore/ScenarioExplorer";
 
 import { Button } from "@/components/ui/button";
@@ -502,6 +505,12 @@ export default function OptimizePage() {
   const [analysisFront, setAnalysisFront] = useState<ParetoFront | null>(null);
   const [analyzeBusy, setAnalyzeBusy] = useState(false);
   const analysisRef = useRef<HTMLDivElement | null>(null);
+  // Analysis's own pinned header. The explorer's control panel pins directly
+  // below it, so it needs the live height — see SectionPanelLayout's
+  // `stickyOffset`. It grows a row once a run is loaded (RunSummary), which is
+  // why this is measured rather than a constant.
+  const { ref: analysisHeaderRef, height: analysisHeaderHeight } =
+    useElementHeight();
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
@@ -951,9 +960,9 @@ export default function OptimizePage() {
   async function downloadResultJson() {
     if (!runId || !result) return;
     try {
-      const res = await fetch(optimizeExportUrl(runId));
-      if (!res.ok) throw new Error(`export failed (${res.status})`);
-      const blob = await res.blob();
+      // requestRaw keeps the abort timeout armed across the blob read, so a
+      // server that sends headers and then stalls can't hang the download.
+      const blob = await requestRaw(optimizeExportUrl(runId), (r) => r.blob());
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -980,8 +989,9 @@ export default function OptimizePage() {
     );
   }
 
-  // Stable identity: ScenarioExplorer keeps this in its front-fetch effect
-  // deps, so a new function each render would refetch in a loop.
+  // Stable identity: ScenarioExplorer keeps this in the deps of the effect
+  // that notifies us, so a new function each render would re-notify on every
+  // render (it can no longer refetch — that effect no longer sees this).
   const handleAnalysisFront = useCallback((f: ParetoFront) => {
     setAnalysisFront(f);
   }, []);
@@ -992,9 +1002,8 @@ export default function OptimizePage() {
     if (!runId) return;
     setAnalyzeBusy(true);
     try {
-      const res = await fetch(optimizeExportUrl(runId));
-      if (!res.ok) throw new Error(`export failed (${res.status})`);
-      loadAnalysis(parseRunJson(await res.text()));
+      const text = await requestRaw(optimizeExportUrl(runId), (r) => r.text());
+      loadAnalysis(parseRunJson(text));
     } catch (e) {
       toast.error("Could not load result", {
         description: e instanceof Error ? e.message : String(e),
@@ -1028,19 +1037,22 @@ export default function OptimizePage() {
   return (
     <TooltipProvider delayDuration={150}>
       <div className="mx-auto flex max-w-7xl flex-col gap-6 px-6 py-8">
-        {/* Header */}
-        <div className="flex flex-col gap-1.5">
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            Optimizer
-          </h1>
-          <p className="text-[15px] text-muted-foreground">
-            Configure and run your own optimization — pick the objectives,
-            method, and algorithm, then watch it solve.
-          </p>
-        </div>
-
-        {/* ── Sticky run bar (always visible on scroll) ── */}
-        <div className="sticky top-14 z-30 flex flex-col gap-3 rounded-xl border border-border bg-background/85 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/70">
+        {/* ── Configure & run. Wrapping this whole region scopes the sticky
+             header below to it: it unpins at the Analysis boundary and hands
+             the top of the viewport over to Analysis's own sticky header,
+             instead of the two stacking for the rest of the page. ── */}
+        <div className="flex flex-col gap-6">
+        {/* ── Sticky header + run bar (visible while configuring/running) ── */}
+        <div className="sticky top-14 z-30 flex flex-col gap-3 rounded-xl border border-border bg-background px-4 py-3">
+          <div className="flex flex-col gap-1">
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">
+              Optimizer
+            </h1>
+            <p className="text-[15px] text-muted-foreground">
+              Configure and run your own optimization — pick the objectives,
+              method, and algorithm, then watch it solve.
+            </p>
+          </div>
           <div className="flex flex-wrap items-center gap-3">
             <Button
               onClick={handleRun}
@@ -1922,27 +1934,50 @@ export default function OptimizePage() {
             )}
           </div>
         )}
+        </div>
 
         {/* ── Analysis — works with any exported run, no run required ── */}
         <div ref={analysisRef} className="flex flex-col gap-4">
           <Separator />
-          <div className="flex flex-col gap-1">
-            <h2 className="text-lg font-semibold tracking-tight text-foreground">
-              Analysis
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              Analyze any exported run — upload a result JSON, or use
-              “Analyze this result” after a run finishes. Results are not
-              stored; everything runs from the file.
-            </p>
+          {/* Sticky: which run this is, and its headline numbers, stay on
+              screen while the reader scrolls the charts underneath. */}
+          <div
+            ref={analysisHeaderRef}
+            className="sticky top-14 z-30 flex flex-col gap-3 rounded-xl border border-border bg-background px-4 py-3"
+          >
+            <div className="flex flex-col gap-1">
+              {/* Type scale matches the Optimizer header above: the two sticky
+                  sections are peers, so they read at the same weight. */}
+              <h2 className="text-2xl font-bold tracking-tight text-foreground">
+                Analysis
+              </h2>
+              <p className="text-[15px] text-muted-foreground">
+                Analyze any exported run — upload a result JSON, or use
+                “Analyze this result” after a run finishes. Results are not
+                stored; everything runs from the file.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+              <div className="shrink-0">
+                <UploadResult onLoaded={loadAnalysis} />
+              </div>
+              {analysisResult && (
+                <RunSummary result={analysisResult} front={analysisFront} />
+              )}
+            </div>
           </div>
-          <UploadResult onLoaded={loadAnalysis} />
+          {/* Outside the sticky panel: the tiles are a reading of the front,
+              not the identity of it, and pinning them costs a third of the
+              viewport that the charts below need. */}
           {analysisFront && <BestValues front={analysisFront} />}
           {analysisResult && (
             <ScenarioExplorer
               key={analysisNonce}
               source={{ mode: "playground", result: analysisResult }}
+              showTitle={false}
+              showSummary={false}
               onFrontLoaded={handleAnalysisFront}
+              stickyOffset={analysisHeaderHeight}
             />
           )}
         </div>

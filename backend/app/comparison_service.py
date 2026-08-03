@@ -15,6 +15,7 @@ never imports PathAlgorithm / PathUnitTest / main.
 from __future__ import annotations
 
 import math
+import time
 from typing import Optional
 
 import app.rootpath  # side-effect: inserts repo root into sys.path
@@ -25,7 +26,7 @@ from app.library_service import (
     parse_scenario_params,
     resolve_model_key,
 )
-from app import models_registry, replay_service, selector_service
+from app import models_registry, replay_service, selector_service, settings
 from app.model_aliases import to_display, to_storage
 from app.selector_service import (
     _SelectorNotFound,
@@ -57,6 +58,37 @@ _POLARITY: dict[str, int] = {
 
 # Max Mean TBV is undefined when each cell is visited once.
 _TBV_OBJECTIVE = "Max Mean TBV"
+
+
+def _within_budget(ordered: list[str], skipped: list[str]):
+    """Yield the scenarios a single comparison request is allowed to process.
+
+    Two ceilings bound the per-request cost, and both are the same policy, so
+    both comparison endpoints drive them through here rather than each keeping
+    its own copy:
+
+      * COMPARISON_MAX_SCENARIOS — how MANY distinct scenarios are attempted at
+        all. Each one is a ~160 MB selector unpickle (compare_objectives) or a
+        full sensing replay (compare_time_metrics), and the schema caps bound the
+        request BODY, not the work.
+      * COMPARISON_TIME_BUDGET_SECONDS — a wall-clock stop, because a cold
+        selector cache costs ~50x a warm one per scenario, so a count that is
+        quick when cached can still pin a core for minutes.
+
+    Everything not reached is appended to *skipped* (partial + honest, never
+    silently truncated). The budget is checked at the top of each iteration but
+    not on the first, so at least one scenario always runs — that keeps an
+    all-skipped result attributable to genuinely unloadable input rather than to
+    the clock.
+    """
+    head = ordered[: max(1, settings.COMPARISON_MAX_SCENARIOS)]
+    skipped.extend(ordered[len(head):])
+    start = time.monotonic()
+    for i, scenario in enumerate(head):
+        if i and time.monotonic() - start > settings.COMPARISON_TIME_BUDGET_SECONDS:
+            skipped.extend(head[i:])
+            return
+        yield scenario
 
 
 def _optimized_objective_names(model: dict) -> list[str]:
@@ -200,7 +232,7 @@ def compare_objectives(scenarios: list[str]) -> dict:
 
     results: list[dict] = []
     skipped: list[str] = []
-    for scenario in ordered:
+    for scenario in _within_budget(ordered, skipped):
         stats = _scenario_stats(scenario)
         if stats is None:
             skipped.append(scenario)
@@ -389,7 +421,9 @@ def compare_time_metrics(
 
     results: list[dict] = []
     skipped: list[str] = []
-    for scenario in ordered:
+    # Each scenario here is a full sensing replay, so the elapsed-time half of
+    # the bound is the one that actually fires (see _within_budget).
+    for scenario in _within_budget(ordered, skipped):
         try:
             row = _time_metrics_for_scenario(
                 scenario, cfg_dict, strategy, objective_name, weights

@@ -1,0 +1,74 @@
+# Reverse proxy for the production stack.
+#
+# Puts the API and the web UI on ONE origin, which is what removes CORS from the
+# picture entirely: the browser only ever talks to https://<your-domain>, so
+# SAR_CORS_ORIGINS never has to be right and a preflight never happens.
+#
+# TLS is automatic — Caddy obtains and renews a Let's Encrypt certificate on its
+# own. That needs port 80 reachable from the internet (the ACME challenge) and a
+# DNS A record already pointing here, so bring DNS up before this container.
+#
+# SAR_DOMAIN and SAR_ACME_EMAIL come from the .env file next to
+# docker-compose.prod.yml.
+{
+	email {$SAR_ACME_EMAIL}
+	# Staging CA for dry runs — Let's Encrypt rate-limits real certs to 5 per
+	# domain per week, which is easy to burn while debugging DNS. Uncomment,
+	# confirm the stack works end to end, then comment out and restart Caddy.
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+{$SAR_DOMAIN}, www.{$SAR_DOMAIN} {
+	encode zstd gzip
+
+	# Hard ceiling on request bodies, enforced on the actual byte count. Caddy
+	# answers 413 before a single byte reaches the backend; the app's own ASGI
+	# byte-counter is the defence-in-depth layer for anything not behind Caddy.
+	# 10MiB, NOT 10MB: Caddy parses SI units, so "10MB" would be 10,000,000 bytes
+	# and reject the 485 KB window below SAR_MAX_UPLOAD_BYTES (10 * 1024 * 1024)
+	# with a plain-text 413 instead of the app's JSON one. A legit 2000-solution
+	# export is ~2 MB, so this is ample headroom either way.
+	request_body {
+		max_size 10MiB
+	}
+
+	# Everything the API owns. The backend mounts all of its routes under
+	# /api, so this single matcher covers health, library, replay and optimize.
+	handle /api/* {
+		reverse_proxy backend:8000 {
+			# The backend rate-limits and the queue's per-client cap both key on
+			# the client IP. Without these the whole internet shares one bucket
+			# and one queue slot allowance.
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	# Everything else is the Next.js app.
+	handle {
+		reverse_proxy web:3000
+	}
+
+	header {
+		# Basic hardening. HSTS is deliberately absent: it is hard to undo, and
+		# only worth adding once you are certain the domain stays HTTPS-only.
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		# Content-Security-Policy. Everything is same-origin behind this proxy
+		# (API under /api, the Next.js app for the rest), so default-src 'self'
+		# covers scripts, styles, images, fetches and fonts. The two 'unsafe-inline'
+		# grants are what a Next.js app needs without per-request nonces: it emits
+		# inline hydration <script> blocks and inline <style>. img/font also allow
+		# data: URIs (next/image blur placeholders, inlined fonts). frame-ancestors
+		# 'none' backs up X-Frame-Options; object-src 'none' kills plugin embeds.
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}

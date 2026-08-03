@@ -16,11 +16,16 @@ only inside the worker child process (`optimizer_worker`).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
+import time
 import uuid
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import Future, ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from typing import Optional
+
+logger = logging.getLogger("sar.optimizer")
 
 import app.rootpath  # noqa: F401  (repo root on sys.path)
 from app import settings
@@ -75,6 +80,11 @@ class AlreadyExistsError(Exception):
 
 class EmptyRunError(Exception):
     """The run found no feasible solutions, so there is nothing to save."""
+
+
+class StorageUnavailableError(Exception):
+    """The run's storage could not be written — a full, read-only, or
+    wrong-owner Results volume. Surfaced as 503, not an opaque 500."""
 
 
 # ─── Model synthesis ──────────────────────────────────────────────────────────
@@ -183,6 +193,12 @@ def read_run_config(scenario_name: str) -> Optional[dict]:
     """Return the persisted RunConfig sidecar for a mission, or None if absent."""
     # Display (…TCDV…) names from the API must hit the real …TCDT… sidecars.
     scenario_name = to_storage(scenario_name)
+    # Parity with the other scenario paths: reject traversal / unsafe names before
+    # building a path. The abspath containment check below already contains this,
+    # so it is defence-in-depth (mirrors library_service._is_safe_scenario_name).
+    from app.library_service import _is_safe_scenario_name
+    if not _is_safe_scenario_name(scenario_name):
+        return None
     path = os.path.join(settings.RESULTS_ROOT, "Metadata", f"{scenario_name}.json")
     # Defence-in-depth: never read outside RESULTS_ROOT (mirrors library_service).
     root = os.path.abspath(settings.RESULTS_ROOT) + os.sep
@@ -234,6 +250,25 @@ def _get_executor() -> ProcessPoolExecutor:
     if _executor is None:
         _executor = ProcessPoolExecutor(max_workers=settings.OPTIMIZE_WORKERS)
     return _executor
+
+
+def _rebuild_executor_locked() -> None:
+    """Discard a dead pool so the next _get_executor() builds a fresh one.
+
+    A worker death (OOM on a big run, a native crash) breaks the whole pool:
+    every in-flight future resolves with BrokenProcessPool and every subsequent
+    submit raises it too. Left alone the optimizer is wedged until the container
+    restarts — queued runs never start and new /api/optimize calls 500. Setting
+    _executor to None makes _get_executor() spawn a replacement on the next
+    submit. Caller holds _lock; shutting the dead pool down is best-effort."""
+    global _executor
+    dead = _executor
+    _executor = None
+    if dead is not None:
+        try:
+            dead.shutdown(wait=False)
+        except Exception:
+            pass
 
 
 def _is_waiting(job: dict) -> bool:
@@ -293,13 +328,44 @@ def _dispatch_locked() -> None:
     "running" state honest.
     """
     busy = sum(1 for j in _jobs.values() if _holds_worker(j))
-    for job in _jobs.values():
+    # Snapshot: add_done_callback below runs the callback INLINE when the future
+    # is already resolved (a pool that dies between submit() and the callback
+    # registration resolves it from the executor's management thread). _lock is
+    # an RLock, so that inline _on_run_finished re-enters and its
+    # _evict_finished_locked() pops from _jobs — which would raise
+    # "dictionary changed size during iteration" on a live view.
+    for job in list(_jobs.values()):
         if busy >= settings.OPTIMIZE_WORKERS:
             return
         if not _is_waiting(job):
             continue
-        future = _get_executor().submit(*job.pop("submit_args"))
+        # Peek submit_args (don't pop yet): a broken pool makes submit raise, and
+        # the args are needed to retry onto the rebuilt pool.
+        try:
+            future = _get_executor().submit(*job["submit_args"])
+        except BrokenProcessPool:
+            # A worker died and poisoned the pool. Rebuild it and retry this
+            # submit once onto the fresh pool.
+            _rebuild_executor_locked()
+            try:
+                future = _get_executor().submit(*job["submit_args"])
+            except BrokenProcessPool as exc:
+                # Still unrecoverable — fail this run cleanly instead of wedging
+                # the queue or letting it escape start_run as a 500. A resolved
+                # failed future reports "failed" through the normal status path
+                # (fut.done() + exception). No done-callback is attached: the
+                # future is already resolved, so the callback would recurse into
+                # this same function for no gain — the loop below already drives
+                # the remaining waiting runs, and start_run bounds _jobs.
+                logger.error("run submit failed (pool unrecoverable): %s", exc)
+                failed: Future = Future()
+                failed.set_exception(exc)
+                job.pop("submit_args", None)
+                job["future"] = failed
+                continue
+        job.pop("submit_args", None)
         job["future"] = future
+        job["started_at"] = time.time()
         busy += 1
         # Set last: the callback re-enters this function, and it must see the
         # job as dispatched so it isn't submitted twice.
@@ -307,25 +373,117 @@ def _dispatch_locked() -> None:
 
 
 def _on_run_finished(_future) -> None:
-    """A worker freed up — give it to whoever is next. Runs in the pool's thread."""
+    """A worker freed up — log the outcome and give the slot to whoever is next.
+    Runs in the pool's callback thread."""
     with _lock:
+        run_id = next(
+            (rid for rid, j in _jobs.items() if j.get("future") is _future), None)
+        if run_id is not None:
+            job = _jobs[run_id]
+            dur = time.time() - job.get("started_at", time.time())
+            if _future.cancelled():
+                logger.info("run %s cancelled after %.1fs", run_id, dur)
+            elif _future.exception() is not None:
+                logger.error("run %s failed after %.1fs: %s",
+                             run_id, dur, _future.exception())
+            else:
+                logger.info("run %s finished after %.1fs", run_id, dur)
+        # Give the freed slot to the next run. Do NOT rebuild the pool here even
+        # when this future carries a BrokenProcessPool: a worker death resolves
+        # EVERY in-flight future that way, so this callback fires once per dead
+        # future, and an unconditional rebuild would tear down a pool an earlier
+        # callback already rebuilt — orphaning the run just dispatched onto it.
+        # Rebuilding is the submit path's job precisely because it is idempotent:
+        # the first submit onto the dead pool (inside _dispatch_locked) rebuilds
+        # exactly once, and every later submit in the same lock-held sweep lands
+        # on the fresh pool. An empty queue simply lets the dead pool linger until
+        # the next start_run's submit rebuilds it.
         _dispatch_locked()
+        _evict_finished_locked()
 
 
-def _seeded_n_gen(job: dict) -> Optional[int]:
-    """The run's target generation count, read from the status file seeded at
-    submit time — lets a queued run show "0 / N" before its worker starts."""
+def _evict_finished_locked() -> None:
+    """Bound the in-memory _jobs registry. Entries are added in start_run and
+    otherwise never removed, so a long-lived server leaks one dict per run
+    forever. Keep the newest settings.OPTIMIZE_RUN_KEEP FINISHED (non-pending)
+    entries and drop the older ones; pending (waiting/running) jobs are always
+    kept. Safe because get_status falls back to _disk_status and export/save fall
+    back to _disk_job for any run no longer in _jobs. Caller holds _lock; _jobs
+    preserves insertion order, so the slice keeps the most recent."""
+    finished = [rid for rid, j in _jobs.items() if not _is_pending(j)]
+    for rid in finished[:-settings.OPTIMIZE_RUN_KEEP]:
+        _jobs.pop(rid, None)
+
+
+def _n_gen_from_dir(run_dir: str) -> Optional[int]:
+    """Target generation count from a run dir's seeded status file — lets a
+    queued run show "0 / N" before its worker starts. run_dir is immutable for
+    the life of a job, so this is safe to read without the lock."""
     try:
-        with open(os.path.join(job["run_dir"], "status.json")) as fh:
+        with open(os.path.join(run_dir, "status.json")) as fh:
             return json.load(fh).get("n_gen")
     except Exception:
         return None
 
 
+def _protected_run_ids() -> set:
+    """Run ids of every in-flight (waiting or running) job — never purge these."""
+    with _lock:
+        return {rid for rid, j in _jobs.items() if _is_pending(j)}
+
+
+_janitor_stop = threading.Event()
+_janitor_thread: Optional[threading.Thread] = None
+
+
+def start_janitor(interval: Optional[int] = None) -> None:
+    """Start the background sweeper that bounds .runs on a timer, independent of
+    whether new runs are being started. Idempotent; a no-op if the interval is 0."""
+    global _janitor_thread
+    interval = settings.RUN_PURGE_INTERVAL_SECONDS if interval is None else interval
+    if interval <= 0 or _janitor_thread is not None:
+        return
+    _janitor_stop.clear()
+
+    def _loop() -> None:
+        # wait() returns True only when stop is set, so this exits promptly on
+        # shutdown instead of sleeping out the interval.
+        while not _janitor_stop.wait(interval):
+            try:
+                _purge_stale_runs(protected=_protected_run_ids())
+            except Exception:
+                pass  # a sweep must never take the janitor thread down
+
+    _janitor_thread = threading.Thread(target=_loop, name="run-janitor", daemon=True)
+    _janitor_thread.start()
+
+
+def stop_janitor() -> None:
+    """Signal the janitor to exit and wait for it (on app shutdown / teardown).
+
+    The join matters: without it a stop/start cycle (an in-process restart, a
+    test teardown followed by a fresh TestClient) would have start_janitor's
+    ``_janitor_stop.clear()`` un-set the flag while the old thread is still
+    parked in ``wait(interval)`` — it would never exit, and every cycle would
+    leave another thread sweeping the same tree."""
+    global _janitor_thread
+    thread = _janitor_thread
+    _janitor_stop.set()
+    _janitor_thread = None
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=5)
+
+
 def shutdown(wait: bool = False) -> None:
     """Tear down the worker executor (on app shutdown / test teardown) so the
-    interpreter doesn't block at exit joining a stale pool."""
+    interpreter doesn't block at exit joining a stale pool. Also sweeps .runs one
+    last time so a clean stop does not leave the last batch of dirs behind."""
     global _executor
+    stop_janitor()
+    try:
+        _purge_stale_runs(protected=_protected_run_ids())
+    except Exception:
+        pass
     if _executor is not None:
         try:
             _executor.shutdown(wait=wait, cancel_futures=True)
@@ -387,28 +545,73 @@ def _disk_job(run_id: str) -> Optional[dict]:
     }
 
 
-def _purge_stale_runs(now: Optional[float] = None) -> list[str]:
-    """Remove temp .runs/<id> dirs older than settings.RUN_TTL_HOURS. Best-effort:
-    never raises (a sweep failure must not block a new run)."""
+def _purge_stale_runs(
+    now: Optional[float] = None, protected: Optional[set] = None
+) -> list[str]:
+    """Bound the temp .runs/ tree. Removes a dir when it is older than
+    settings.RUN_TTL_HOURS OR beyond the newest settings.OPTIMIZE_RUN_KEEP — the
+    count cap is what actually bounds disk, since age alone leaks under a burst
+    or a process that goes quiet. Never touches a run whose id is in *protected*
+    (the in-flight runs), and never raises: a sweep failure must not block a run.
+    """
     import shutil
     import time as _time
     now = now if now is not None else _time.time()
+    # Default to the LIVE in-flight set, not the empty set: the destructive
+    # reading must not be the one a caller gets by forgetting an argument.
+    protected = _protected_run_ids() if protected is None else protected
     root = os.path.join(settings.RESULTS_ROOT, ".runs")
     cutoff = now - settings.RUN_TTL_HOURS * 3600
     purged: list[str] = []
+
+    # Collect (name, path, mtime) for every candidate dir, newest first.
+    candidates: list[tuple[str, str, float]] = []
     try:
         entries = os.listdir(root)
     except OSError:
         return purged
     for name in entries:
+        if name in protected:
+            continue
         d = os.path.join(root, name)
         try:
-            if os.path.isdir(d) and os.path.getmtime(d) < cutoff:
-                shutil.rmtree(d, ignore_errors=True)
-                purged.append(name)
+            if os.path.isdir(d):
+                candidates.append((name, d, os.path.getmtime(d)))
         except OSError:
             continue
+    candidates.sort(key=lambda c: c[2], reverse=True)
+
+    keep = settings.OPTIMIZE_RUN_KEEP
+    for rank, (name, d, mtime) in enumerate(candidates):
+        # Delete if past the age cutoff, or ranked beyond the newest `keep`.
+        if mtime < cutoff or rank >= keep:
+            shutil.rmtree(d, ignore_errors=True)
+            purged.append(name)
     return purged
+
+
+def _ready_job(run_id: str) -> dict:
+    """Return the job for a run that has FINISHED SUCCESSFULLY, or raise.
+
+    The in-memory lookup runs under _lock so the dispatch window (future popped
+    to None before the real future is set) cannot be mistaken for 'finished' —
+    which would send a reader at a result pickle the worker has not written yet.
+    Falls back to an on-disk done run (finished by construction). Raises
+    RunNotFoundError if unknown, RunNotReadyError if not finished-ok."""
+    with _lock:
+        job = _jobs.get(run_id)
+        if job is not None:
+            fut = job.get("future")
+            if (fut is None or not fut.done()
+                    or fut.cancelled() or fut.exception() is not None):
+                raise RunNotReadyError("Run has not finished successfully.")
+            return dict(job)
+    disk = _disk_job(run_id)
+    if disk is None:
+        raise RunNotFoundError(f"Unknown run_id {run_id!r}")
+    if _awaiting_result(disk):
+        raise RunNotReadyError("Run has not finished successfully.")
+    return disk
 
 
 def serialize_finished_run(run_id: str) -> dict:
@@ -418,17 +621,22 @@ def serialize_finished_run(run_id: str) -> dict:
     import pandas as pd
     from app.playground_export import serialize_run
 
-    job = _jobs.get(run_id) or _disk_job(run_id)
-    if job is None:
-        raise RunNotFoundError(f"Unknown run_id {run_id!r}")
-    if _awaiting_result(job):
-        raise RunNotReadyError("Run has not finished successfully.")
+    job = _ready_job(run_id)
 
     run_dir = job["run_dir"]
-    F_df = pd.read_pickle(os.path.join(run_dir, "Objectives.pkl"))
+    # The janitor sweeps .runs on a timer, so a run's dir can vanish between the
+    # _ready_job lookup and these reads (or the _jobs entry can outlive the dir).
+    # Turn the resulting FileNotFoundError/OSError into a clean 404 instead of
+    # letting it escape as an uncaught 500.
+    try:
+        F_df = pd.read_pickle(os.path.join(run_dir, "Objectives.pkl"))
+        raw_solutions = pd.read_pickle(os.path.join(run_dir, "Solutions.pkl"))
+    except (FileNotFoundError, OSError) as exc:
+        raise RunNotFoundError(
+            f"Run {run_id!r} is no longer available (its data was cleaned up)."
+        ) from exc
     if int(F_df.shape[0]) < 1:
         raise EmptyRunError("Run found no feasible solutions; nothing to export.")
-    raw_solutions = pd.read_pickle(os.path.join(run_dir, "Solutions.pkl"))
     # Normalise rows: SolutionObjects rows can be 1-element numpy arrays
     # (mirrors selector_service._load_selector).
     solutions = [s[0] if isinstance(s, np.ndarray) else s for s in list(raw_solutions)]
@@ -468,8 +676,13 @@ def start_run(
     polarities = {o: _POLARITY[o] for o in objectives}
     alg = model_dict["Alg"]
 
+    # Sweep BEFORE taking _lock, in the janitor's shape: the sweep is a listdir
+    # plus an rmtree per stale dir, and _lock is what the pool's callback thread
+    # and every status poll contend on — holding it across that I/O freezes the
+    # whole optimizer subsystem for the duration.
+    _purge_stale_runs(protected=_protected_run_ids())
+
     with _lock:
-        _purge_stale_runs()
         pending = [j for j in _jobs.values() if _is_pending(j)]
         if len(pending) >= settings.OPTIMIZE_QUEUE_MAX:
             raise QueueFullError(
@@ -484,11 +697,20 @@ def start_run(
             )
         run_id = uuid.uuid4().hex[:12]
         run_dir = os.path.join(settings.RESULTS_ROOT, ".runs", run_id)
-        os.makedirs(run_dir, exist_ok=True)
-        # Seed the status file so the very first poll already shows n_gen
-        # (the worker child takes a moment to spawn and write its own).
-        with open(os.path.join(run_dir, "status.json"), "w") as fh:
-            json.dump({"state": "running", "gen": 0, "n_gen": int(n_gen)}, fh)
+        # A full / read-only / wrong-owner Results volume fails here. Turn the
+        # raw OSError into a typed 503 so the operator sees storage as the cause
+        # instead of an opaque 500 on every optimize attempt.
+        try:
+            os.makedirs(run_dir, exist_ok=True)
+            # Seed the status file so the very first poll already shows n_gen
+            # (the worker child takes a moment to spawn and write its own).
+            with open(os.path.join(run_dir, "status.json"), "w") as fh:
+                json.dump({"state": "running", "gen": 0, "n_gen": int(n_gen)}, fh)
+        except OSError as exc:
+            logger.error("run storage unwritable under %s: %s", run_dir, exc)
+            raise StorageUnavailableError(
+                "The server could not write run storage. Try again shortly."
+            ) from exc
         _jobs[run_id] = {
             "future": None, "run_dir": run_dir,
             "scenario_name": scenario_name, "model_key": model_key,
@@ -501,8 +723,17 @@ def start_run(
                 gen_strategy, int(early_stop_patience), float(early_stop_threshold),
             ),
         }
+        # Bound the registry on the path where it GROWS. _on_run_finished also
+        # evicts, but that callback is deliberately not attached on the
+        # unrecoverable-pool path — so a persistently broken pool would otherwise
+        # add one entry per request and never drop one.
+        _evict_finished_locked()
         _dispatch_locked()
         position = _queue_position(run_id)
+    logger.info(
+        "run %s queued (model=%s scenario=%s, position=%s)",
+        run_id, model_key, scenario_name, position if position is not None else "running",
+    )
     return {
         "run_id": run_id, "scenario_name": to_display(scenario_name),
         "model_key": to_display(model_key), "exists": _exists(scenario_name),
@@ -525,8 +756,52 @@ def _displayify_done(result: dict) -> dict:
 
 def get_status(run_id: str) -> dict:
     """Poll a run: queued (with its place in line), running (with gen X/Y),
-    done (with the front), cancelled, or failed."""
-    job = _jobs.get(run_id)
+    done (with the front), cancelled, or failed.
+
+    The job-state classification runs under _lock so it cannot observe a job
+    mid-dispatch (submit_args popped, future not yet set) — that window would
+    otherwise crash on ``None.cancelled()``. File reads for the running/queued
+    progress happen after the lock is released, so a slow disk never stalls
+    dispatch."""
+    waiting = False
+    queue_position = None
+    run_dir = None
+    with _lock:
+        job = _jobs.get(run_id)
+        if job is not None:
+            if job.get("cancelled"):
+                # Left the line before a worker picked it up, so there is no
+                # partial front to hand back — distinct from a run that failed.
+                return {"state": "cancelled"}
+            fut = job.get("future")
+            # future is None both while the run waits in line AND during the
+            # brief dispatch window; either way it has not started, so report it
+            # as queued rather than touching a None future.
+            if _is_waiting(job) or fut is None:
+                waiting = True
+                queue_position = _queue_position(run_id)
+                run_dir = job["run_dir"]
+            elif fut.cancelled():
+                return {"state": "cancelled"}
+            elif fut.done():
+                exc = fut.exception()
+                if exc is not None:
+                    # Never surface internal error text: this 200 body bypasses
+                    # the frontend's 5xx suppression, so log the real cause
+                    # server-side and hand the client a generic message. Reporting
+                    # a failure is a read — it must NOT rebuild the pool. A worker
+                    # death resolves many futures at once, so many concurrent polls
+                    # would race to rebuild and thrash the fresh pool; rebuilding is
+                    # the submit path's idempotent job.
+                    logger.error("run %s failed: %s", run_id, exc)
+                    return {"state": "failed",
+                            "error": "The optimization failed. Please try again."}
+                result = dict(fut.result())
+                result["exists_in_library"] = _exists(job["scenario_name"])
+                return _displayify_done(result)
+            else:
+                run_dir = job["run_dir"]
+
     if job is None:
         # Recover a finished run from disk after a restart that wiped _jobs.
         disk = _disk_status(run_id)
@@ -537,26 +812,14 @@ def get_status(run_id: str) -> dict:
             result["exists_in_library"] = _exists(scen) if scen else False
             return _displayify_done(result)
         raise RunNotFoundError(f"Unknown run_id {run_id!r}")
-    if job.get("cancelled"):
-        # Left the line before a worker picked it up, so there is no partial
-        # front to hand back — distinct from a run that failed.
-        return {"state": "cancelled"}
-    if _is_waiting(job):
-        return {"state": "queued", "queue_position": _queue_position(run_id),
-                "n_gen": _seeded_n_gen(job)}
-    fut = job["future"]
-    if fut.cancelled():
-        return {"state": "cancelled"}
-    if fut.done():
-        exc = fut.exception()
-        if exc is not None:
-            return {"state": "failed", "error": str(exc)}
-        result = dict(fut.result())
-        result["exists_in_library"] = _exists(job["scenario_name"])
-        return _displayify_done(result)
+
+    if waiting:
+        return {"state": "queued", "queue_position": queue_position,
+                "n_gen": _n_gen_from_dir(run_dir)}
+
     # on a worker — read its status file for gen progress + live front
     try:
-        with open(os.path.join(job["run_dir"], "status.json")) as fh:
+        with open(os.path.join(run_dir, "status.json")) as fh:
             s = json.load(fh)
         return {
             "state": "running",
@@ -611,23 +874,25 @@ def save_run(run_id: str, overwrite: bool) -> dict:
     AlreadyExistsError if the scenario exists and overwrite is False."""
     import shutil
 
-    job = _jobs.get(run_id)
-    if job is None:
-        # Recover a finished run from its on-disk meta after a restart.
-        job = _disk_job(run_id)
-        if job is None:
-            raise RunNotFoundError(f"Unknown run_id {run_id!r}")
-    if _awaiting_result(job):
-        raise RunNotReadyError("Run has not finished successfully.")
+    job = _ready_job(run_id)
 
     scenario_name = job["scenario_name"]
 
     # Refuse to persist a run that found no feasible solutions — an empty front
     # in the library breaks selection/replay endpoints with 500s.
     src_obj = os.path.join(job["run_dir"], "Objectives.pkl")
+    # The janitor sweeps .runs on a timer and protects only IN-FLIGHT runs, so a
+    # finished run's dir can vanish between _ready_job and here. That must read
+    # as "gone", not as "found nothing" — the old bare `except Exception: 0` told
+    # users their optimization was infeasible when its data had been cleaned up.
+    # Mirrors serialize_finished_run's translation of the same window.
     try:
         import pandas as pd
         n_solutions = int(pd.read_pickle(src_obj).shape[0])
+    except FileNotFoundError as exc:
+        raise RunNotFoundError(
+            f"Run {run_id!r} is no longer available (its data was cleaned up)."
+        ) from exc
     except Exception:
         n_solutions = 0
     if n_solutions < 1:
@@ -640,8 +905,15 @@ def save_run(run_id: str, overwrite: bool) -> dict:
     sol_dst = os.path.join(settings.RESULTS_ROOT, "Solutions", f"{scenario_name}-SolutionObjects.pkl")
     os.makedirs(os.path.dirname(obj_dst), exist_ok=True)
     os.makedirs(os.path.dirname(sol_dst), exist_ok=True)
-    shutil.copyfile(os.path.join(job["run_dir"], "Objectives.pkl"), obj_dst)
-    shutil.copyfile(os.path.join(job["run_dir"], "Solutions.pkl"), sol_dst)
+    # Same sweep window as above — a dir removed between the read and the copies
+    # must be a clean 404, not an uncaught 500 out of shutil.
+    try:
+        shutil.copyfile(os.path.join(job["run_dir"], "Objectives.pkl"), obj_dst)
+        shutil.copyfile(os.path.join(job["run_dir"], "Solutions.pkl"), sol_dst)
+    except FileNotFoundError as exc:
+        raise RunNotFoundError(
+            f"Run {run_id!r} is no longer available (its data was cleaned up)."
+        ) from exc
 
     # Copy the RunConfig sidecar (present for worker-produced runs) into the library.
     cfg_src = os.path.join(job["run_dir"], "config.json")
@@ -658,6 +930,15 @@ def save_run(run_id: str, overwrite: bool) -> dict:
     try:
         from app.selector_service import _load_selector
         _load_selector.cache_clear()
+    except Exception:
+        pass
+
+    # Also bust the library list/grid memos: they key on the Objectives/ dir
+    # mtime, which an in-place OVERWRITE of an existing pickle may not move, so
+    # without this an overwrite would keep serving stale list/grid stats.
+    try:
+        from app.library_service import _bust_scenario_memos
+        _bust_scenario_memos()
     except Exception:
         pass
 

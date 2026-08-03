@@ -6,6 +6,30 @@ from statistics import median_low
 from copy import deepcopy
 from math import inf, atan2, cos, sin, hypot
 
+# Safety ceiling on the per-step sub-sample count in get_real_paths (below). That
+# count is ceil(max_leg_distance / max_drone_speed) and drives a linspace
+# allocation per drone that is accumulated across every step, so an unbounded
+# value (a tiny speed or a huge cell side length) explodes memory and can OOM the
+# process. Legitimate inputs stay tiny — leg distance is bounded by
+# grid_size (<=8) x cell_side_length and real speeds are >= 2.5, so the real
+# maximum observed is ~29 — this ceiling is orders of magnitude above anything a
+# valid scenario reaches and never alters legitimate output.
+_MAX_REALTIME_STEPS = 5000
+
+# Safety ceiling on the CUMULATIVE sub-sample count across every leg. The per-leg
+# clamp above bounds a single leg, but NOT the product legs x dt: a long path
+# (hundreds of legs) each contributing thousands of clamped columns still builds a
+# multi-million-column trajectory, which get_real_connectivity_matrix then blows
+# up into a zeros((cols, nodes, nodes)) allocation of gigabytes — an OOM in the
+# main process. This bounds the whole timeline instead. Legitimate seeded /
+# optimizer / playground realtime runs top out near ~1.2k columns (measured), so
+# this is ~160x headroom and never alters valid output; a scenario that exceeds it
+# is pathological (tiny speed / huge cell side) and fails cleanly with a ValueError
+# that the playground routers map to 422 and the optimizer worker degrades to a
+# failed run — never an OOM. Worst-case allocation at the ceiling is
+# 200_000 x nodes^2 x 8 bytes ~= 0.46 GB for 17 nodes.
+_MAX_REALTIME_TOTAL_COLS = 200_000
+
 def isCoordinateDiscrete(x, y, sol: PathSolution, atol=None):
     """True iff (x, y) lies on a grid cell center, within float tolerance.
 
@@ -255,6 +279,7 @@ def get_real_paths(sol:PathSolution):
 
     # vectorized_get_coords = np.vectorize(self.get_coords)
 
+    total_cols = 0
     for i in range(drone_path_matrix.shape[1]-1):
         current_cells = drone_path_matrix[:,i]
         next_cells = drone_path_matrix[:,i+1]
@@ -262,6 +287,27 @@ def get_real_paths(sol:PathSolution):
         next_x_coords, next_y_coords = np.array([sol.get_coords(x) for x in next_cells]).T
         dists = np.array([sol.info.D[current_cells[j], next_cells[j]] for j in range(sol.info.number_of_drones)])
         dt = ceil(np.max(dists)/info.max_drone_speed)
+        # Backstop against an OOM from a pathological scenario (tiny speed / huge
+        # cell). This RAISES rather than clamping: silently truncating a leg to
+        # _MAX_REALTIME_STEPS keeps the drone arriving but bills the leg as 5000
+        # realtime seconds instead of its true length, so mission/detection/inform
+        # times and TBV come back several times too short — a wrong answer served
+        # as a confident 200. A scenario at the schema's own extremes
+        # (cell_side_length 1000 with max_drone_speed 0.1) reaches dt ~ 100_000
+        # while the cumulative bound below stays unfired, so the clamp was
+        # reachable from API-legal input. dt == 0 stays legal: it is a stationary
+        # transition, routine once drones have returned to base.
+        if dt > _MAX_REALTIME_STEPS:
+            raise ValueError("Realtime trajectory too long for this scenario.")
+        # The per-leg clamp bounds ONE leg; this bounds the whole timeline so a
+        # long path cannot accumulate a multi-million-column trajectory that the
+        # downstream zeros((cols, nodes, nodes)) allocation turns into an OOM. Legit
+        # runs stay near ~1.2k columns, so this never fires for valid input; a
+        # scenario that trips it is pathological and fails cleanly here (mapped to a
+        # 422 by the playground routers; a clean failed run in the optimizer pool).
+        total_cols += dt
+        if total_cols > _MAX_REALTIME_TOTAL_COLS:
+            raise ValueError("Realtime trajectory too long for this scenario.")
         x_mid = np.array([np.linspace(current_x_coords[j], next_x_coords[j], dt) for j in range(info.number_of_drones)])
         y_mid = np.array([np.linspace(current_y_coords[j], next_y_coords[j], dt) for j in range(info.number_of_drones)])
         real_time_x_matrix = np.hstack((real_time_x_matrix, x_mid))

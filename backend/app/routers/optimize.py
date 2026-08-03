@@ -15,6 +15,7 @@ from fastapi.responses import ORJSONResponse
 from slowapi.util import get_remote_address
 
 from app import settings
+from app.concurrency import heavy_slot
 from app.ratelimit import limiter
 from app.schemas import (
     OptimizeConfig,
@@ -38,13 +39,15 @@ from app.optimizer_service import (
     RunNotReadyError,
     AlreadyExistsError,
     EmptyRunError,
+    StorageUnavailableError,
 )
 
 router = APIRouter()
 
 
 @router.post("/api/optimize/check", response_model=OptimizeCheckResponse)
-def post_optimize_check(body: OptimizeConfig) -> dict:
+@limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
+def post_optimize_check(request: Request, body: OptimizeConfig) -> dict:
     """Existence pre-check: does a run for this configuration already exist?"""
     return check_config(
         body.optimization_type, body.method, body.objectives,
@@ -69,6 +72,8 @@ def post_optimize(request: Request, body: OptimizeConfig) -> dict:
         )
     except (QueueFullError, ClientLimitError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except StorageUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get("/api/optimize/{run_id}", response_model=OptimizeStatusResponse)
@@ -118,11 +123,17 @@ def post_optimize_save(run_id: str, body: OptimizeSaveRequest) -> dict:
 
 
 @router.get("/api/optimize/{run_id}/export")
-def get_optimize_export(run_id: str) -> ORJSONResponse:
+@limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
+def get_optimize_export(request: Request, run_id: str) -> ORJSONResponse:
     """Download a finished run as a Playground JSON file (memoryless — the run
-    is not persisted to the library)."""
+    is not persisted to the library).
+
+    Unpickles + reconstructs a finished run, so it carries the same per-IP rate
+    limit and the shared heavy-read concurrency slot as the replay endpoints.
+    503 — the server already has its share of heavy reads running."""
     try:
-        payload = serialize_finished_run(run_id)
+        with heavy_slot():
+            payload = serialize_finished_run(run_id)
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RunNotReadyError as exc:

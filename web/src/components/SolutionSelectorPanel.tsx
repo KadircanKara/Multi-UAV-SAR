@@ -3,6 +3,14 @@
 /**
  * SolutionSelectorPanel — capability-gated strategy controls for selecting
  * a solution from the Pareto front (or single result).
+ *
+ * The strategies are ONE segmented switch with only the chosen strategy's
+ * inputs below it, not six stacked blocks. Stacked, they came to ~940px in a
+ * panel that has ~770px on a 945px-tall window and less on a laptop, so the
+ * panel scrolled internally and the reader could not see the controls and the
+ * active solution at the same time. Every strategy is still one click away —
+ * the switch is always visible — and switching strategy does not re-run
+ * anything, so nothing is lost by not rendering all of them at once.
  */
 
 import React from "react";
@@ -21,6 +29,7 @@ import {
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -55,6 +64,45 @@ function DetailCard({ detail }: { detail: SolutionDetail }) {
     </div>
   );
 }
+
+/**
+ * The strategies, in the order they appear on the switch. `short` is what fits
+ * five-across in a 360px panel; `label` names the block below it, and `title`
+ * is the explanation that used to sit on each strategy's own button.
+ */
+type StrategyId =
+  | "the_solution"
+  | "best"
+  | "balanced"
+  | "knee"
+  | "by_index"
+  | "by_weights";
+
+const STRATEGIES: {
+  id: StrategyId;
+  short: string;
+  label: string;
+  title?: string;
+}[] = [
+  { id: "the_solution", short: "RESULT", label: "RESULT" },
+  { id: "best", short: "BEST", label: "BEST OBJECTIVE" },
+  {
+    id: "balanced",
+    short: "BAL",
+    label: "BALANCED",
+    title:
+      "The most even compromise — the front solution closest to the centre of all objectives (each normalised 0–1).",
+  },
+  {
+    id: "knee",
+    short: "KNEE",
+    label: "KNEE POINT",
+    title:
+      "The knee of the Pareto front — the best bang-for-buck trade-off, where improving any objective further would cost a disproportionate sacrifice in another.",
+  },
+  { id: "by_index", short: "IDX", label: "BY INDEX" },
+  { id: "by_weights", short: "WGT", label: "BY WEIGHTS" },
+];
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
@@ -119,6 +167,23 @@ export default function SolutionSelectorPanel({
   const hasByWeights = Boolean(caps.by_weights);
   const hasByIndex = typeof caps.by_index === "number";
 
+  const available: Record<StrategyId, boolean> = {
+    the_solution: hasTheSolution,
+    best: hasBest,
+    balanced: hasBalanced,
+    knee: hasKnee,
+    by_index: hasByIndex,
+    by_weights: hasByWeights,
+  };
+  const offered = STRATEGIES.filter((s) => available[s.id]);
+
+  // Which strategy's inputs are showing. Seeded to the first the front offers
+  // — this component is remounted per run (see ParetoControls' key), so a
+  // front with a different capability set gets a fresh, valid default rather
+  // than a stale id that matches nothing.
+  const [mode, setMode] = useState<StrategyId | null>(offered[0]?.id ?? null);
+  const active = offered.find((s) => s.id === mode) ?? offered[0] ?? null;
+
   // Solution to display: a strategy result if it matches the current index,
   // otherwise looked up directly from the front by index — so clicking a
   // scatter point immediately shows that solution's objective values without
@@ -139,10 +204,36 @@ export default function SolutionSelectorPanel({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* THE SOLUTION (single / WS) */}
-      {hasTheSolution && (
+      {/* Strategy switch — one row, replacing six stacked blocks. */}
+      {offered.length > 0 && (
         <div className="flex flex-col gap-2">
-          <SectionLabel>RESULT</SectionLabel>
+          <SectionLabel>SELECT BY</SectionLabel>
+          <ToggleGroup
+            type="single"
+            value={active?.id ?? ""}
+            // Radix clears the value when the active item is pressed again;
+            // keep the current one rather than leaving no strategy shown.
+            onValueChange={(v) => v && setMode(v as StrategyId)}
+            className="grid w-full grid-flow-col auto-cols-fr gap-1"
+          >
+            {offered.map((s) => (
+              <ToggleGroupItem
+                key={s.id}
+                value={s.id}
+                title={s.title ?? s.label}
+                aria-label={s.label}
+                className="h-7 px-0 text-[11px] tracking-widest font-mono"
+              >
+                {s.short}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        </div>
+      )}
+
+      {/* THE SOLUTION (single / WS) */}
+      {active?.id === "the_solution" && (
+        <div className="flex flex-col gap-2">
           <Button
             size="sm"
             variant="default"
@@ -156,9 +247,9 @@ export default function SolutionSelectorPanel({
       )}
 
       {/* BEST (Pareto front) */}
-      {hasBest && (
+      {active?.id === "best" && (
         <div className="flex flex-col gap-2">
-          <SectionLabel>BEST OBJECTIVE</SectionLabel>
+          <SectionLabel>OBJECTIVE</SectionLabel>
           <div className="flex gap-2">
             <Select value={bestObj} onValueChange={setBestObj}>
               <SelectTrigger className="h-7 min-w-0 flex-1 text-xs font-mono">
@@ -186,43 +277,48 @@ export default function SolutionSelectorPanel({
       )}
 
       {/* BALANCED */}
-      {hasBalanced && (
+      {active?.id === "balanced" && (
         <div className="flex flex-col gap-2">
-          <SectionLabel>BALANCED</SectionLabel>
           <Button
             size="sm"
             variant="outline"
             disabled={loading}
             onClick={() => runSelect("balanced")}
-            title="The most even compromise — the front solution closest to the centre of all objectives (each normalised 0–1)."
+            title={STRATEGIES[2].title}
             className="w-full text-xs tracking-widest font-mono"
           >
             BALANCED
           </Button>
+          <p className="text-xs text-muted-foreground font-mono leading-relaxed">
+            The most even compromise — closest to the centre of all objectives.
+          </p>
         </div>
       )}
 
       {/* KNEE */}
-      {hasKnee && (
+      {active?.id === "knee" && (
         <div className="flex flex-col gap-2">
-          <SectionLabel>KNEE POINT</SectionLabel>
           <Button
             size="sm"
             variant="outline"
             disabled={loading}
             onClick={() => runSelect("knee")}
-            title="The knee of the Pareto front — the best bang-for-buck trade-off, where improving any objective further would cost a disproportionate sacrifice in another."
+            title={STRATEGIES[3].title}
             className="w-full text-xs tracking-widest font-mono"
           >
             KNEE
           </Button>
+          <p className="text-xs text-muted-foreground font-mono leading-relaxed">
+            Best bang-for-buck — past it, any gain costs a disproportionate
+            sacrifice elsewhere.
+          </p>
         </div>
       )}
 
       {/* BY INDEX */}
-      {hasByIndex && (
+      {active?.id === "by_index" && (
         <div className="flex flex-col gap-2">
-          <SectionLabel>BY INDEX (0–{maxByIndex})</SectionLabel>
+          <SectionLabel>INDEX (0–{maxByIndex})</SectionLabel>
           <div className="flex items-center gap-3">
             <Slider
               min={0}
@@ -249,9 +345,8 @@ export default function SolutionSelectorPanel({
       )}
 
       {/* BY WEIGHTS */}
-      {hasByWeights && objectives.length > 0 && (
+      {active?.id === "by_weights" && objectives.length > 0 && (
         <div className="flex flex-col gap-2">
-          <SectionLabel>BY WEIGHTS</SectionLabel>
           {objectives.map((obj) => (
             <div key={obj} className="flex flex-col gap-1">
               <div className="flex justify-between">
@@ -286,7 +381,7 @@ export default function SolutionSelectorPanel({
       )}
 
       {/* No capabilities */}
-      {!hasTheSolution && !hasBest && !hasBalanced && !hasKnee && !hasByIndex && !hasByWeights && (
+      {offered.length === 0 && (
         <p className="text-xs text-muted-foreground font-mono">
           NO SELECTION STRATEGIES AVAILABLE
         </p>

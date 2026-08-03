@@ -23,9 +23,15 @@ class ScenarioConfig(BaseModel):
     # a grid of a billion cells must never reach PathInfo however the deploy
     # cap is tuned. Cell count — and every per-cell scan — grows as grid_size².
     grid_size: int = Field(default=8, ge=1, le=64)
-    cell_side_length: Union[int, float] = Field(default=50, gt=0)
+    # le=1000 is a safety ceiling: cell_side_length scales the per-leg distance,
+    # which drives the realtime sub-sample count in Time.get_real_paths — a huge
+    # value would explode that allocation (OOM). Real scenarios use 50.
+    cell_side_length: Union[int, float] = Field(default=50, gt=0, le=1000)
     number_of_drones: int = Field(default=4, ge=1)
-    max_drone_speed: float = Field(default=2.5, gt=0)
+    # ge=0.1 is a safety floor: max_drone_speed divides the per-leg distance to
+    # size the realtime sub-sample count in Time.get_real_paths — a near-zero
+    # speed would explode that allocation (OOM). Real scenarios use 2.5.
+    max_drone_speed: float = Field(default=2.5, ge=0.1)
     # comm_cell_range may be a non-integer (e.g. sqrt(8) ≈ 2.828…) in some scenarios
     comm_cell_range: Union[int, float] = Field(default=2, gt=0)
     # le=100 is a sanity/deploy bound: path length scales with n_visits, and the
@@ -461,6 +467,18 @@ class OptimizeConfig(BaseModel):
             raise ValueError(
                 f"n_visits {self.scenario.n_visits} exceeds the cap of "
                 f"{settings.MAX_N_VISITS}"
+            )
+        # cell_side_length x (1 / max_drone_speed) drives the realtime sub-sample
+        # count; a huge cell or a near-zero speed can OOM a worker (see settings).
+        if self.scenario.cell_side_length > settings.MAX_CELL_SIDE_LENGTH:
+            raise ValueError(
+                f"cell_side_length {self.scenario.cell_side_length} exceeds the "
+                f"cap of {settings.MAX_CELL_SIDE_LENGTH}"
+            )
+        if self.scenario.max_drone_speed < settings.MIN_DRONE_SPEED:
+            raise ValueError(
+                f"max_drone_speed {self.scenario.max_drone_speed} is below the "
+                f"floor of {settings.MIN_DRONE_SPEED}"
             )
         if self.pop_size > settings.MAX_POP_SIZE:
             raise ValueError(

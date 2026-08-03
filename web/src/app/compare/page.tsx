@@ -15,6 +15,21 @@
  * with one line per (model × non-swept-param combo), built by buildModelComboSeries;
  * Table goes through the shared MetricComparisonView. Stat is always "best".
  *
+ * Layout: everything that filters/drives the charts — the tab switch, the
+ * Bar|Line|Table switch, the model/parameter picker, and (for Time Metrics)
+ * the sensing config + Run button — lives in a single SectionPanelLayout
+ * section, so it renders once in the sticky left panel (desktop) or the
+ * narrow-viewport Sheet drawer; only the resulting charts scroll in the
+ * content column. `tab` is lifted to page state (rather than left inside an
+ * uncontrolled Tabs) since both the panel's section label and the
+ * content-column branch need to read it. Time Metrics' sensing-config state
+ * stays lifted (via useTimeMetricsComparison, called unconditionally in
+ * ComparePage) even though its inputs and its results now sit together in the
+ * content column: being outside the tab branch is what lets a config and a
+ * completed comparison survive a visit to Objectives and back. Objectives has
+ * no such state to keep, so its fetch stays local to ObjectivesResults,
+ * unmounting and refetching on every tab visit exactly as before.
+ *
  * Mirrors the model page's dynamic chart import + skeleton/offline patterns and
  * the MergingTab sensing-config layout. Uses the clean Geist-Sans styling of the
  * landing/optimize pages (sentence-case labels, hud-rise entrance); colors come
@@ -23,7 +38,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { getLibrary, compareObjectives, compareTimeMetrics } from "@/lib/api";
+import {
+  ApiError,
+  getLibrary,
+  compareObjectives,
+  compareTimeMetrics,
+} from "@/lib/api";
 import type {
   ScenarioSummary,
   ComparisonResponse,
@@ -62,7 +82,7 @@ import {
 import type { EffectSeries } from "@/components/viz/ParameterEffectChart";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   Select,
@@ -76,6 +96,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
+import type { PanelSection } from "@/components/layout/PanelSection";
+import SectionPanelLayout from "@/components/layout/SectionPanelLayout";
+import { useElementHeight } from "@/hooks/useElementHeight";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -130,6 +153,24 @@ function capToCombos(
   return out;
 }
 
+/**
+ * How long the Objectives tab waits after the picker settles before fetching.
+ *
+ * Every model, drones, comm and n_visits toggle changes the scenario set, and
+ * a reader working through the picker clicks several in a row a few hundred ms
+ * apart. At 250ms each of those clicks was its own POST /api/comparison, so a
+ * normal pass through the picker burned the endpoint's 10/minute budget and
+ * the page reported a rate-limit error. At 600ms a burst of clicks coalesces
+ * into one request while a single deliberate change still feels immediate.
+ *
+ * This is NOT a rate-limit control — it runs in the browser, and a client that
+ * does not want to wait simply does not. The server's own guards (the limiter,
+ * the 360/144 payload caps, the comparison concurrency slot) are what bound
+ * the cost; this only stops our own UI spending that budget on intermediate
+ * states nobody asked to see.
+ */
+const OBJECTIVES_DEBOUNCE_MS = 600;
+
 function OverflowNote({ shown, total }: { shown: number; total: number }) {
   return (
     <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
@@ -152,17 +193,41 @@ function PageSkeleton() {
   );
 }
 
-function OfflinePanel({ message }: { message: string }) {
+/** A failed request, with the status that caused it — see ErrorPanel for why
+ *  the status has to travel with the message. */
+type PanelError = { message: string; status?: number };
+
+function toPanelError(err: unknown): PanelError {
+  if (err instanceof ApiError) return { message: err.message, status: err.status };
+  return { message: err instanceof Error ? err.message : String(err) };
+}
+
+/**
+ * Only a status of 0 means no response arrived at all. Anything else came FROM
+ * the backend, so heading it "Backend offline" is not just wrong, it sends the
+ * reader off to restart a server that is already running — which is exactly
+ * what a rate-limited comparison (429) used to look like here: the offline
+ * heading above the real message, "You're going a bit fast".
+ */
+function ErrorPanel({ message, status }: PanelError) {
+  const unreachable = status === undefined || status === 0;
+  const title = unreachable
+    ? "Backend offline"
+    : status === 429
+      ? "Too many requests"
+      : status === 503
+        ? "Server busy"
+        : "Couldn't load the comparison";
   return (
     <div className="rounded border border-destructive bg-destructive/10 px-4 py-4">
-      <p className="text-sm font-semibold text-destructive">
-        Backend offline
-      </p>
-      <p className="text-sm text-muted-foreground mt-1">
-        Start the API on :8000 then reload.
-      </p>
+      <p className="text-sm font-semibold text-destructive">{title}</p>
+      {unreachable && (
+        <p className="text-sm text-muted-foreground mt-1">
+          Start the API on :8000 then reload.
+        </p>
+      )}
       {message && (
-        <p className="mt-2 text-xs text-muted-foreground break-all">
+        <p className="mt-2 text-sm text-muted-foreground break-all">
           {message}
         </p>
       )}
@@ -206,18 +271,20 @@ function SliderField({
   );
 }
 
-// ─── Objectives tab (module scope) ────────────────────────────────────────────
+// ─── Objectives results (module scope) ─────────────────────────────────────────
 //
 // Owns scenario capping + the debounced fetch against /api/comparison; the
 // bar/line/table rendering itself is the shared ObjectivesView component.
-// Chart type + sweep param are lifted to the page (shared across tabs, and
-// consumed by the picker's line mode), so they're passed down as controlled
-// props; the always-visible switch below is kept here (rather than inside
-// ObjectivesView) so it doesn't disappear behind the loading skeleton while a
-// comparison is in flight — ObjectivesView is told to hide its own copy via
-// `hideControls`.
+// Chart type + sweep param are lifted to the page (shared across both tabs,
+// and consumed by the picker's line mode) and passed down as controlled
+// props. The Bar | Line | Table switch itself now lives in the page's
+// section-panel controls (always visible, not tied to this component's own
+// mount lifecycle), so ObjectivesView is told to hide its own copy via
+// `hideControls`. This component has no state that `controls` needs, so —
+// unlike Time Metrics — it stays self-contained and simply mounts/unmounts
+// with the active tab.
 
-interface ObjectivesTabProps {
+interface ObjectivesResultsProps {
   selection: PickerSelection;
   chartType: ChartType;
   onChartTypeChange: (v: ChartType) => void;
@@ -225,13 +292,13 @@ interface ObjectivesTabProps {
   onSweepChange: (v: SweepParam) => void;
 }
 
-function ObjectivesTab({
+function ObjectivesResults({
   selection,
   chartType,
   onChartTypeChange,
   sweep,
   onSweepChange,
-}: ObjectivesTabProps) {
+}: ObjectivesResultsProps) {
   const { scenarios: allScenarios, models } = selection;
   // Cap by whole combos so bars stay complete; objectives read cached fronts.
   const scenarios = useMemo(
@@ -244,9 +311,10 @@ function ObjectivesTab({
 
   const [data, setData] = useState<ComparisonResponse | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<PanelError | null>(null);
 
   // Fetch the comparison whenever the resolved scenario set changes (debounced).
+  // See OBJECTIVES_DEBOUNCE_MS for why the wait is as long as it is.
   const scenarioKey = useMemo(() => [...scenarios].sort().join("|"), [scenarios]);
   useEffect(() => {
     if (scenarios.length === 0) {
@@ -268,11 +336,11 @@ function ObjectivesTab({
         })
         .catch((err: unknown) => {
           if (!cancelled) {
-            setError(err instanceof Error ? err.message : String(err));
+            setError(toPanelError(err));
             setLoading(false);
           }
         });
-    }, 250);
+    }, OBJECTIVES_DEBOUNCE_MS);
     return () => {
       cancelled = true;
       clearTimeout(handle);
@@ -291,16 +359,8 @@ function ObjectivesTab({
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Controls */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <ChartTypeSwitch value={chartType} onChange={onChartTypeChange} />
-        {chartType === "line" && (
-          <SweepParamSelect value={sweep} onChange={onSweepChange} />
-        )}
-      </div>
-
       {overflow && <OverflowNote shown={shownCombos} total={totalCombos} />}
-      {error && <OfflinePanel message={error} />}
+      {error && <ErrorPanel {...error} />}
       {loading && !error && <Skeleton className="h-64 w-full rounded" />}
 
       {!loading && !error && data && (
@@ -318,7 +378,14 @@ function ObjectivesTab({
   );
 }
 
-// ─── Time Metrics tab (module scope) ──────────────────────────────────────────
+// ─── Time Metrics (module scope) ───────────────────────────────────────────────
+//
+// Split into a state hook plus two presentational halves: TimeMetricsControls
+// (the sensing config + Run button) and TimeMetricsResults (the replay
+// results). Both now render in the content column, one above the other, but
+// the state stays in useTimeMetricsComparison — called once, unconditionally,
+// in ComparePage — so that a config and a finished comparison outlive a switch
+// to the Objectives tab and back.
 
 const STRATEGIES = ["balanced", "knee", "best"] as const;
 type Strategy = (typeof STRATEGIES)[number];
@@ -332,23 +399,40 @@ const OBJECTIVE_NAMES = [
   "Max Mean TBV",
 ];
 
-interface TimeMetricsTabProps {
-  selection: PickerSelection;
-  // Chart type + sweep param are owned by the page (shared across tabs).
-  chartType: ChartType;
-  onChartTypeChange: (v: ChartType) => void;
-  sweep: SweepParam;
-  onSweepChange: (v: SweepParam) => void;
+interface TimeMetricsState {
+  scenarios: string[];
+  shownCombos: number;
+  totalCombos: number;
+  overflow: boolean;
+
+  mergeTopology: "none" | "onboard" | "gcs";
+  setMergeTopology: (v: "none" | "onboard" | "gcs") => void;
+  timeModel: "discrete" | "realtime";
+  setTimeModel: (v: "discrete" | "realtime") => void;
+  detProb: number;
+  setDetProb: (v: number) => void;
+  faProb: number;
+  setFaProb: (v: number) => void;
+  beliefThresh: number;
+  setBeliefThresh: (v: number) => void;
+  targetsInput: string;
+  setTargetsInput: (v: string) => void;
+  pqInvalid: boolean;
+  targetList: number[];
+
+  strategy: Strategy;
+  setStrategy: (v: Strategy) => void;
+  objectiveName: string;
+  setObjectiveName: (v: string) => void;
+
+  data: TimeComparisonResponse | null;
+  running: boolean;
+  canRun: boolean;
+  runComparison: () => void;
 }
 
-function TimeMetricsTab({
-  selection,
-  chartType,
-  onChartTypeChange,
-  sweep,
-  onSweepChange,
-}: TimeMetricsTabProps) {
-  const { scenarios: allScenarios, models } = selection;
+function useTimeMetricsComparison(selection: PickerSelection): TimeMetricsState {
+  const { scenarios: allScenarios } = selection;
   // Cap by whole combos; the time tab runs one sensing replay per scenario.
   const scenarios = useMemo(
     () => capToCombos(allScenarios, MAX_COMPARE_BARS, MAX_TIME_SCENARIOS),
@@ -432,6 +516,214 @@ function TimeMetricsTab({
     objectiveName,
   ]);
 
+  return {
+    scenarios,
+    shownCombos,
+    totalCombos,
+    overflow,
+    mergeTopology,
+    setMergeTopology,
+    timeModel,
+    setTimeModel,
+    detProb,
+    setDetProb,
+    faProb,
+    setFaProb,
+    beliefThresh,
+    setBeliefThresh,
+    targetsInput,
+    setTargetsInput,
+    pqInvalid,
+    targetList,
+    strategy,
+    setStrategy,
+    objectiveName,
+    setObjectiveName,
+    data,
+    running,
+    canRun,
+    runComparison,
+  };
+}
+
+function TimeMetricsControls({ tm }: { tm: TimeMetricsState }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Sensing config</CardTitle>
+      </CardHeader>
+      <CardContent className="grid grid-cols-1 gap-5 md:grid-cols-2">
+        {/* Left column: topology + time model + strategy */}
+        <div className="flex flex-col gap-5">
+          <div className="flex flex-col gap-2">
+            <Label className="text-xs text-muted-foreground">
+              Merge topology
+            </Label>
+            <ToggleGroup
+              type="single"
+              value={tm.mergeTopology}
+              onValueChange={(v) => {
+                if (v === "none" || v === "onboard" || v === "gcs")
+                  tm.setMergeTopology(v);
+              }}
+              className="justify-start gap-2"
+            >
+              {(["none", "onboard", "gcs"] as const).map((t) => (
+                <ToggleGroupItem
+                  key={t}
+                  value={t}
+                  className="h-7 text-xs capitalize"
+                >
+                  {t}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label className="text-xs text-muted-foreground">
+              Time model
+            </Label>
+            <ToggleGroup
+              type="single"
+              value={tm.timeModel}
+              onValueChange={(v) => {
+                if (v === "discrete" || v === "realtime") tm.setTimeModel(v);
+              }}
+              className="justify-start gap-2"
+            >
+              <ToggleGroupItem value="discrete" className="h-7 text-xs">
+                Discrete
+              </ToggleGroupItem>
+              <ToggleGroupItem value="realtime" className="h-7 text-xs">
+                Realtime
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label className="text-xs text-muted-foreground">
+              Strategy
+            </Label>
+            <Select
+              value={tm.strategy}
+              onValueChange={(v) => tm.setStrategy(v as Strategy)}
+            >
+              <SelectTrigger className="h-7 w-40 text-xs capitalize">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {STRATEGIES.map((s) => (
+                  <SelectItem key={s} value={s} className="text-xs capitalize">
+                    {s}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {tm.strategy === "best" && (
+              <Select value={tm.objectiveName} onValueChange={tm.setObjectiveName}>
+                <SelectTrigger className="h-7 w-full text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {OBJECTIVE_NAMES.map((o) => (
+                    <SelectItem key={o} value={o} className="text-xs">
+                      {o}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+        </div>
+
+        {/* Right column: sliders + targets */}
+        <div className="flex flex-col gap-5">
+          <SliderField
+            label="Detection prob (p)"
+            value={tm.detProb}
+            onChange={tm.setDetProb}
+            min={0.01}
+            max={0.99}
+            step={0.01}
+          />
+          <SliderField
+            label="False alarm prob (q)"
+            value={tm.faProb}
+            onChange={tm.setFaProb}
+            min={0.01}
+            max={0.99}
+            step={0.01}
+          />
+          {tm.pqInvalid && (
+            <p className="text-xs text-destructive">
+              ⚠ Requires p &gt; q — adjust sliders
+            </p>
+          )}
+          <SliderField
+            label="Belief threshold (B)"
+            value={tm.beliefThresh}
+            onChange={tm.setBeliefThresh}
+            min={0.01}
+            max={0.99}
+            step={0.01}
+          />
+          <div className="flex flex-col gap-2">
+            <Label className="text-xs text-muted-foreground">
+              Target cells (comma-separated)
+            </Label>
+            <Input
+              value={tm.targetsInput}
+              onChange={(e) => tm.setTargetsInput(e.target.value)}
+              placeholder="e.g. 12,34,56"
+              className="h-7 text-xs"
+            />
+            {tm.targetList.length === 0 && (
+              <p className="text-xs text-destructive">
+                Enter at least one valid cell index
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="md:col-span-2 flex flex-col gap-3">
+          <Separator />
+          <Button
+            onClick={tm.runComparison}
+            disabled={!tm.canRun}
+            size="sm"
+            className="w-full text-sm font-semibold"
+          >
+            {tm.running ? "Running replays…" : "Run comparison"}
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            Runs one replay per scenario ({tm.scenarios.length} selected) using the{" "}
+            {tm.strategy} solution.
+          </p>
+          {tm.overflow && (
+            <OverflowNote shown={tm.shownCombos} total={tm.totalCombos} />
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+interface TimeMetricsResultsProps {
+  data: TimeComparisonResponse | null;
+  running: boolean;
+  models: string[];
+  chartType: ChartType;
+  sweep: SweepParam;
+}
+
+function TimeMetricsResults({
+  data,
+  running,
+  models,
+  chartType,
+  sweep,
+}: TimeMetricsResultsProps) {
   // All four time metrics are lower-is-better → polarity +1.
   const metrics = useMemo<CompareMetric[]>(() => {
     if (!data) return [];
@@ -494,165 +786,6 @@ function TimeMetricsTab({
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Sensing config + strategy card */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Sensing config</CardTitle>
-        </CardHeader>
-        <CardContent className="grid grid-cols-1 gap-5 md:grid-cols-2">
-          {/* Left column: topology + time model + strategy */}
-          <div className="flex flex-col gap-5">
-            <div className="flex flex-col gap-2">
-              <Label className="text-xs text-muted-foreground">
-                Merge topology
-              </Label>
-              <ToggleGroup
-                type="single"
-                value={mergeTopology}
-                onValueChange={(v) => {
-                  if (v === "none" || v === "onboard" || v === "gcs")
-                    setMergeTopology(v);
-                }}
-                className="justify-start gap-2"
-              >
-                {(["none", "onboard", "gcs"] as const).map((t) => (
-                  <ToggleGroupItem
-                    key={t}
-                    value={t}
-                    className="h-7 text-xs capitalize"
-                  >
-                    {t}
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Label className="text-xs text-muted-foreground">
-                Time model
-              </Label>
-              <ToggleGroup
-                type="single"
-                value={timeModel}
-                onValueChange={(v) => {
-                  if (v === "discrete" || v === "realtime") setTimeModel(v);
-                }}
-                className="justify-start gap-2"
-              >
-                <ToggleGroupItem value="discrete" className="h-7 text-xs">
-                  Discrete
-                </ToggleGroupItem>
-                <ToggleGroupItem value="realtime" className="h-7 text-xs">
-                  Realtime
-                </ToggleGroupItem>
-              </ToggleGroup>
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Label className="text-xs text-muted-foreground">
-                Strategy
-              </Label>
-              <Select
-                value={strategy}
-                onValueChange={(v) => setStrategy(v as Strategy)}
-              >
-                <SelectTrigger className="h-7 w-40 text-xs capitalize">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {STRATEGIES.map((s) => (
-                    <SelectItem key={s} value={s} className="text-xs capitalize">
-                      {s}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {strategy === "best" && (
-                <Select value={objectiveName} onValueChange={setObjectiveName}>
-                  <SelectTrigger className="h-7 w-full text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {OBJECTIVE_NAMES.map((o) => (
-                      <SelectItem key={o} value={o} className="text-xs">
-                        {o}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
-          </div>
-
-          {/* Right column: sliders + targets */}
-          <div className="flex flex-col gap-5">
-            <SliderField
-              label="Detection prob (p)"
-              value={detProb}
-              onChange={setDetProb}
-              min={0.01}
-              max={0.99}
-              step={0.01}
-            />
-            <SliderField
-              label="False alarm prob (q)"
-              value={faProb}
-              onChange={setFaProb}
-              min={0.01}
-              max={0.99}
-              step={0.01}
-            />
-            {pqInvalid && (
-              <p className="text-xs text-destructive">
-                ⚠ Requires p &gt; q — adjust sliders
-              </p>
-            )}
-            <SliderField
-              label="Belief threshold (B)"
-              value={beliefThresh}
-              onChange={setBeliefThresh}
-              min={0.01}
-              max={0.99}
-              step={0.01}
-            />
-            <div className="flex flex-col gap-2">
-              <Label className="text-xs text-muted-foreground">
-                Target cells (comma-separated)
-              </Label>
-              <Input
-                value={targetsInput}
-                onChange={(e) => setTargetsInput(e.target.value)}
-                placeholder="e.g. 12,34,56"
-                className="h-7 text-xs"
-              />
-              {targetList.length === 0 && (
-                <p className="text-xs text-destructive">
-                  Enter at least one valid cell index
-                </p>
-              )}
-            </div>
-          </div>
-
-          <div className="md:col-span-2 flex flex-col gap-3">
-            <Separator />
-            <Button
-              onClick={runComparison}
-              disabled={!canRun}
-              size="sm"
-              className="w-full text-sm font-semibold"
-            >
-              {running ? "Running replays…" : "Run comparison"}
-            </Button>
-            <p className="text-xs text-muted-foreground">
-              Runs one replay per scenario ({scenarios.length} selected) using the{" "}
-              {strategy} solution.
-            </p>
-            {overflow && <OverflowNote shown={shownCombos} total={totalCombos} />}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Results */}
       {running && (
         <div className="flex flex-col gap-3">
           <Skeleton className="h-64 w-full" />
@@ -668,13 +801,6 @@ function TimeMetricsTab({
 
       {!running && data && (
         <div className="flex flex-col gap-5">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <ChartTypeSwitch value={chartType} onChange={onChartTypeChange} />
-            {chartType === "line" && (
-              <SweepParamSelect value={sweep} onChange={onSweepChange} />
-            )}
-          </div>
-
           {chartType === "line" ? (
             <div className="grid gap-6 grid-cols-1 md:grid-cols-2">
               {data.metrics.map((m, idx) => {
@@ -737,8 +863,12 @@ function TimeMetricsTab({
 
           {data.skipped.length > 0 && (
             <p className="text-xs text-muted-foreground">
+              {/* `skipped` covers three cases, not just bad data: unloadable
+                  scenarios, the server's per-request scenario cap, and its
+                  wall-clock budget. Do not claim a cause we cannot tell apart. */}
               Skipped {data.skipped.length} scenario
-              {data.skipped.length !== 1 ? "s" : ""} (no loadable data).
+              {data.skipped.length !== 1 ? "s" : ""} (not included in this
+              comparison).
             </p>
           )}
         </div>
@@ -752,7 +882,11 @@ function TimeMetricsTab({
 export default function ComparePage() {
   const [library, setLibrary] = useState<ScenarioSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<PanelError | null>(null);
+
+  // The page's own pinned header. The control panel pins directly below it, so
+  // the panel needs its live height — see SectionPanelLayout's `stickyOffset`.
+  const { ref: headerRef, height: headerHeight } = useElementHeight();
 
   // Picker selection (resolved scenarios + selected models).
   const [selection, setSelection] = useState<PickerSelection>({
@@ -772,6 +906,15 @@ export default function ComparePage() {
   const [chartType, setChartType] = useState<ChartType>("bar");
   const [sweep, setSweep] = useState<SweepParam>("drones");
 
+  // Active tab, lifted rather than left inside an uncontrolled Tabs: the
+  // section's panel label and the content-column branch below both need to
+  // read it outside of the Tabs subtree itself.
+  const [tab, setTab] = useState<"objectives" | "time">("objectives");
+
+  // Time Metrics' sensing config + run state, called unconditionally so both
+  // the controls half (below) and the content half share one live instance.
+  const timeMetrics = useTimeMetricsComparison(selection);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -785,7 +928,7 @@ export default function ComparePage() {
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
+          setError(toPanelError(err));
           setLoading(false);
         }
       });
@@ -794,10 +937,82 @@ export default function ComparePage() {
     };
   }, []);
 
+  const compareSections: PanelSection[] = [
+    {
+      id: "compare-charts",
+      label: tab === "objectives" ? "OBJECTIVES" : "TIME METRICS",
+      estimatedHeight: 900,
+      controls: (
+        <>
+          <div className="flex flex-col gap-2">
+            <Tabs
+              value={tab}
+              onValueChange={(v) => {
+                if (v === "objectives" || v === "time") setTab(v);
+              }}
+              className="w-full"
+            >
+              <TabsList className="mb-4">
+                <TabsTrigger value="objectives" className="text-sm">
+                  Objectives
+                </TabsTrigger>
+                <TabsTrigger value="time" className="text-sm">
+                  Time metrics
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <ChartTypeSwitch value={chartType} onChange={setChartType} />
+              {chartType === "line" && (
+                <SweepParamSelect value={sweep} onChange={setSweep} />
+              )}
+            </div>
+          </div>
+          <Separator />
+          <ModelScenarioPicker
+            library={library}
+            onChange={onPickerChange}
+            lineMode={chartType === "line"}
+            sweepParam={sweep}
+          />
+        </>
+      ),
+      content:
+        tab === "objectives" ? (
+          <ObjectivesResults
+            selection={selection}
+            chartType={chartType}
+            onChartTypeChange={setChartType}
+            sweep={sweep}
+            onSweepChange={setSweep}
+          />
+        ) : (
+          // The sensing config sits above the charts it produces, in the same
+          // column, matching Sensing and Animation on the model page. It is a
+          // two-column card of sliders and would have to be rebuilt to fit a
+          // 360px panel; the panel keeps what selects WHICH runs to compare.
+          <div className="flex flex-col gap-6">
+            <TimeMetricsControls tm={timeMetrics} />
+            <TimeMetricsResults
+              data={timeMetrics.data}
+              running={timeMetrics.running}
+              models={selection.models}
+              chartType={chartType}
+              sweep={sweep}
+            />
+          </div>
+        ),
+    },
+  ];
+
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6">
-      {/* Header */}
-      <div className="flex flex-col gap-1.5">
+      {/* Header — sticky so the page identity survives the long scroll through
+          the picker and the objective/time-metric chart grids. */}
+      <div
+        ref={headerRef}
+        className="sticky top-14 z-30 flex flex-col gap-1.5 rounded-xl border border-border bg-background px-4 py-3"
+      >
         <h1
           className="animate-hud-rise text-2xl font-bold tracking-tight text-foreground"
           style={{ animationDelay: "60ms" }}
@@ -815,47 +1030,9 @@ export default function ComparePage() {
       {loading ? (
         <PageSkeleton />
       ) : error ? (
-        <OfflinePanel message={error} />
+        <ErrorPanel {...error} />
       ) : (
-        <>
-          <ModelScenarioPicker
-            library={library}
-            onChange={onPickerChange}
-            lineMode={chartType === "line"}
-            sweepParam={sweep}
-          />
-
-          <Tabs defaultValue="objectives" className="w-full">
-            <TabsList className="mb-4">
-              <TabsTrigger value="objectives" className="text-sm">
-                Objectives
-              </TabsTrigger>
-              <TabsTrigger value="time" className="text-sm">
-                Time metrics
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="objectives">
-              <ObjectivesTab
-                selection={selection}
-                chartType={chartType}
-                onChartTypeChange={setChartType}
-                sweep={sweep}
-                onSweepChange={setSweep}
-              />
-            </TabsContent>
-
-            <TabsContent value="time">
-              <TimeMetricsTab
-                selection={selection}
-                chartType={chartType}
-                onChartTypeChange={setChartType}
-                sweep={sweep}
-                onSweepChange={setSweep}
-              />
-            </TabsContent>
-          </Tabs>
-        </>
+        <SectionPanelLayout sections={compareSections} stickyOffset={headerHeight} />
       )}
     </div>
   );

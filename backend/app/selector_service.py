@@ -10,6 +10,7 @@ NEVER imported.
 from __future__ import annotations
 
 import functools
+import threading
 from typing import Optional
 
 import os
@@ -97,7 +98,47 @@ def _resolve_model_key(scenario: str, model_key: Optional[str]) -> str:
     return resolved
 
 
-@functools.lru_cache(maxsize=8)
+# Single-flight guard for _load_selector. Without it, N simultaneous cache
+# MISSES for the same (scenario, resolved_model_key) each unpickle the same
+# ~160 MB selector in parallel — a burst of identical requests multiplies the
+# app's largest allocation by N and can OOM the container. A per-key lock
+# serializes the misses: the first loads and warms the lru_cache, the rest wait
+# and then hit the now-warm cache. Deadlock-free — only ever ONE lock is held at
+# a time (per key), released in a finally by ``with``; the guard below is taken
+# only briefly to fetch/create a key's lock and is never held across the load.
+_key_locks: dict = {}
+_key_locks_guard = threading.Lock()
+# Hard cap on retained key locks. get_selector reaches here after only a charset
+# check (_is_safe_scenario_name) and a NAME-derived model resolution — neither
+# touches disk — so an attacker can mint unlimited DISTINCT valid-looking names
+# (varying the numeric suffix: ..._nvisits_1, _nvisits_2, _g_9, ...) that never
+# correspond to a real pickle. Retaining a lock per name forever would leak the
+# same unbounded-growth class the run registry guards against. Bound it.
+_KEY_LOCKS_MAX = 2048
+
+
+def _get_key_lock(key: tuple) -> threading.Lock:
+    """Return the process-wide lock for one cache key, creating it on first use.
+
+    Bounded at _KEY_LOCKS_MAX entries: when the map is full, a new key drops it
+    wholesale (``clear``) rather than tracking per-key liveness. Clearing while
+    another thread still holds a just-handed-out lock is BENIGN — that thread
+    keeps its own reference, so the Lock object stays alive and valid; only the
+    dict's mapping to it is discarded. The one consequence is that a concurrent
+    miss for a just-cleared key can create a second lock for it, permitting at
+    most one non-deduped double-load of that scenario until the cache warms —
+    rare and harmless, versus an unbounded leak."""
+    with _key_locks_guard:
+        lock = _key_locks.get(key)
+        if lock is None:
+            if len(_key_locks) >= _KEY_LOCKS_MAX:
+                _key_locks.clear()
+            lock = threading.Lock()
+            _key_locks[key] = lock
+        return lock
+
+
+@functools.lru_cache(maxsize=settings.SELECTOR_CACHE_SIZE)
 def _load_selector(scenario: str, resolved_model_key: str) -> SolutionSelector:
     """
     Cached loader — keyed on (scenario, resolved_model_key).
@@ -147,8 +188,12 @@ def get_selector(scenario: str, model_key: Optional[str] = None) -> SolutionSele
     if not _is_safe_scenario_name(scenario):
         raise _SelectorNotFound(f"Unsafe or invalid scenario name: {scenario!r}")
     resolved = _resolve_model_key(scenario, model_key)
+    # Single-flight the (possibly cold) load: concurrent misses for the same key
+    # queue on its lock instead of each unpickling ~160 MB in parallel. The lock
+    # is keyed identically to the lru_cache, so the waiters hit the warm cache.
     try:
-        return _load_selector(scenario, resolved)
+        with _get_key_lock((scenario, resolved)):
+            return _load_selector(scenario, resolved)
     except FileNotFoundError as exc:
         raise _SelectorNotFound(str(exc)) from exc
 

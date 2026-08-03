@@ -6,6 +6,7 @@ are importable everywhere before the routers are loaded.
 """
 import app.rootpath  # side-effect: inserts repo root into sys.path
 
+import logging
 import math
 
 from fastapi import FastAPI, Request
@@ -17,7 +18,17 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app import settings
+from app.concurrency import BusyError
+from app.limits import BodySizeLimitMiddleware
 from app.ratelimit import limiter
+
+# Configure logging once, at import. Without this the app ran silent: a failed
+# run or an unhandled 500 left no server-side trace at all.
+logging.basicConfig(
+    level=settings.LOG_LEVEL,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger("sar")
 from app.routers import (
     fronts, library, models, scenarios, replay, playback, comparison, optimize,
     playground,
@@ -32,6 +43,16 @@ app = FastAPI(
 # playback.py, comparison.py), and the playground (routers/playground.py).
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# Every heavy endpoint takes a concurrency slot (app/concurrency.py) that refuses
+# rather than queues when full. Translating that to 503 here, once, means a route
+# only has to acquire the slot — it cannot forget the `except BusyError` arm and
+# turn a busy signal into an opaque 500. The messages are author-written and
+# carry no internals, so they are safe to pass through verbatim.
+@app.exception_handler(BusyError)
+async def _busy_handler(request: Request, exc: BusyError):
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
 def _json_safe(obj):
@@ -129,6 +150,15 @@ async def _validation_exception_handler(request: Request, exc: RequestValidation
         },
     )
 
+# Bound the request body regardless of framing. Unlike a Content-Length check,
+# this counts the bytes actually received, so a chunked body cannot slip past.
+# Added BEFORE CORS (Starlette applies middleware last-added-first, so CORS ends
+# up OUTSIDE this) on purpose: a 413 emitted outside CORSMiddleware carries no
+# Access-Control-Allow-Origin, and a cross-origin browser then reports an opaque
+# network failure instead of "that request is too large". CORS never reads the
+# body, so nothing is buffered ahead of this cap.
+app.add_middleware(BodySizeLimitMiddleware)
+
 # The API is anonymous (no cookies/auth), so credentialed CORS is disabled;
 # never re-enable it together with a wildcard or reflected origin.
 app.add_middleware(
@@ -140,24 +170,17 @@ app.add_middleware(
 )
 
 
+# Log any exception a route lets escape, with method + path, before it becomes an
+# opaque 500. Re-raised unchanged, so the response is exactly as before — this is
+# purely so a server-side 500 leaves a trace to debug from.
 @app.middleware("http")
-async def limit_upload_size(request: Request, call_next):
-    """Reject oversized request bodies before the route runs, based on the
-    Content-Length header. Requests without a Content-Length header (e.g.
-    chunked transfer-encoding) pass through unchecked here; body size for
-    those is bounded only by whatever the route itself enforces.
-    """
-    content_length = request.headers.get("content-length")
-    if content_length is not None:
-        try:
-            length = int(content_length)
-        except ValueError:
-            length = None
-        if length is not None and length > settings.MAX_UPLOAD_BYTES:
-            return JSONResponse(
-                status_code=413, content={"detail": "request body too large"}
-            )
-    return await call_next(request)
+async def _log_unhandled(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception:
+        logger.exception("unhandled error on %s %s", request.method, request.url.path)
+        raise
+
 
 app.include_router(models.router)
 app.include_router(scenarios.router)
@@ -170,9 +193,18 @@ app.include_router(optimize.router)
 app.include_router(playground.router)
 
 
+@app.on_event("startup")
+def _start_run_janitor() -> None:
+    """Start the background sweeper that bounds the temp .runs/ tree on a timer,
+    so disk stays bounded even when no new optimizations are being started."""
+    from app import optimizer_service
+    optimizer_service.start_janitor()
+
+
 @app.on_event("shutdown")
 def _shutdown_optimizer() -> None:
-    """Release the optimizer worker pool so the process can exit cleanly."""
+    """Stop the janitor and release the optimizer worker pool so the process can
+    exit cleanly (shutdown() also does a final sweep)."""
     from app import optimizer_service
     optimizer_service.shutdown(wait=False)
 

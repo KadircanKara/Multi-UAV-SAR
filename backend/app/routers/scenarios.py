@@ -4,11 +4,12 @@ POST /api/scenarios/validate  — validates scenario + derives PathInfo quantiti
 """
 import app.rootpath  # must come before any root-module import
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from PathInfo import PathInfo, default_scenario
 
 from app import models_registry, settings
 from app.model_aliases import to_display
+from app.ratelimit import limiter
 from app.schemas import (
     ScenarioConfig,
     ScenarioDerived,
@@ -26,7 +27,8 @@ def get_default_scenario() -> ScenarioConfig:
 
 
 @router.post("/api/scenarios/validate", response_model=ScenarioValidateResponse)
-def validate_scenario(req: ScenarioValidateRequest) -> ScenarioValidateResponse:
+@limiter.limit(lambda: settings.REPLAY_RATE_LIMIT)
+def validate_scenario(request: Request, req: ScenarioValidateRequest) -> ScenarioValidateResponse:
     """
     Validate a scenario config by constructing PathInfo and extracting
     derived quantities.  Optionally produces a scenario_str if model_key
@@ -57,6 +59,25 @@ def validate_scenario(req: ScenarioValidateRequest) -> ScenarioValidateResponse:
             detail=(
                 f"n_visits {req.scenario.n_visits} exceeds the cap of "
                 f"{settings.MAX_N_VISITS}"
+            ),
+        )
+    # cell_side_length x (1 / max_drone_speed) drives the realtime sub-sample
+    # count; keep this validation gate in step with OptimizeConfig so the UI never
+    # validates a scenario that /api/optimize would then reject.
+    if req.scenario.cell_side_length > settings.MAX_CELL_SIDE_LENGTH:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"cell_side_length {req.scenario.cell_side_length} exceeds the "
+                f"cap of {settings.MAX_CELL_SIDE_LENGTH}"
+            ),
+        )
+    if req.scenario.max_drone_speed < settings.MIN_DRONE_SPEED:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"max_drone_speed {req.scenario.max_drone_speed} is below the "
+                f"floor of {settings.MIN_DRONE_SPEED}"
             ),
         )
 

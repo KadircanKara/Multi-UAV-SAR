@@ -9,6 +9,7 @@ imported.
 import math
 import os
 import re
+import threading
 from typing import Optional
 
 import pandas as pd
@@ -170,6 +171,54 @@ def _sol_path(scenario: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Memoization
+# ---------------------------------------------------------------------------
+# list_scenarios() and model_grid() each re-unpickle every Objectives/*.pkl on
+# the box per call (hundreds of pd.read_pickle) — unthrottled, that is a cheap
+# way to peg a core. The set of those files only changes when a run is saved (a
+# new *-ObjectiveValues.pkl appears) or purged, and any such change bumps the
+# Objectives/ directory's mtime. So we key a cache on that mtime and rebuild only
+# when it moves: a save_run writing a new file busts it automatically, and
+# nothing else has to remember to invalidate.
+
+_cache_lock = threading.Lock()
+# Single-entry caches: a changed signature drops the old value wholesale, so the
+# cache can never grow unbounded.
+_list_cache: dict = {"key": None, "value": None}
+_grid_cache: dict = {"key": None, "value": {}}  # value: {storage_model_key: grid}
+
+
+def _objectives_sig() -> tuple:
+    """A cheap signature that changes whenever the Objectives/ file set changes.
+
+    Uses the directory's nanosecond mtime — any create/delete of a pickle bumps
+    the directory entry. Includes the directory PATH so a test that repoints
+    RESULTS_ROOT never serves another root's cache. A missing/unreadable dir maps
+    to a stable sentinel."""
+    d = _objectives_dir()
+    try:
+        return (d, os.stat(d).st_mtime_ns)
+    except OSError:
+        return (d, None)
+
+
+def _bust_scenario_memos() -> None:
+    """Drop the list/grid memoized caches wholesale.
+
+    The _objectives_sig signature only moves when a pickle is CREATED or DELETED
+    in Objectives/ (that bumps the directory mtime). An in-place OVERWRITE of an
+    existing pickle — possible only under ALLOW_LIBRARY_SAVE=1 via save_run —
+    keeps the same filename, so the directory mtime may not change and the memo
+    would keep serving the old stats. save_run calls this explicitly after
+    copying the new pickles in, mirroring its _load_selector.cache_clear()."""
+    with _cache_lock:
+        _list_cache["key"] = None
+        _list_cache["value"] = None
+        _grid_cache["key"] = None
+        _grid_cache["value"] = {}
+
+
+# ---------------------------------------------------------------------------
 # Private shared helper
 # ---------------------------------------------------------------------------
 
@@ -244,7 +293,26 @@ def list_scenarios() -> list[dict]:
       - merge parsed params
 
     Returns a list of dicts matching ScenarioSummary.
+
+    Memoized on the Objectives/ directory mtime: the heavy per-file unpickle only
+    reruns when the file set changes (a save or a purge), so back-to-back library
+    listings are served from cache.
     """
+    sig = _objectives_sig()
+    with _cache_lock:
+        if _list_cache["key"] == sig and _list_cache["value"] is not None:
+            # Return a shallow copy so a caller mutating the list (append/sort)
+            # cannot corrupt the shared cached value for the next request.
+            return list(_list_cache["value"])
+    rows = _scan_scenarios()
+    with _cache_lock:
+        _list_cache["key"] = sig
+        _list_cache["value"] = rows
+    return list(rows)
+
+
+def _scan_scenarios() -> list[dict]:
+    """Uncached core of list_scenarios (see it for the contract)."""
     obj_dir = _objectives_dir()
     if not os.path.isdir(obj_dir):
         return []
@@ -336,14 +404,38 @@ def model_grid(model_key: str) -> Optional[dict]:
     objectives (-1 polarity).
 
     Returns None if the model_key is unknown or no seeded scenarios exist.
+
+    Memoized on the Objectives/ directory mtime, per resolved model key: the
+    per-file unpickle only reruns when the file set changes (a save or a purge).
     """
+    # A display key (TCDV) may arrive from the route; normalize to storage so the
+    # cache key and the `resolved != model_key` filter both match on-disk names.
+    model_key = to_storage(model_key)
+
+    sig = _objectives_sig()
+    with _cache_lock:
+        if _grid_cache["key"] != sig:
+            _grid_cache["key"] = sig
+            _grid_cache["value"] = {}
+        elif model_key in _grid_cache["value"]:
+            return _grid_cache["value"][model_key]
+
+    result = _compute_model_grid(model_key)
+
+    with _cache_lock:
+        # Store only under the signature we computed against — if the mtime moved
+        # while we scanned, a newer reader already reset the bucket, so drop ours.
+        if _grid_cache["key"] == sig:
+            _grid_cache["value"][model_key] = result
+    return result
+
+
+def _compute_model_grid(model_key: str) -> Optional[dict]:
+    """Uncached core of model_grid (see it for the contract). Expects a STORAGE
+    model key (the public wrapper normalizes display → storage)."""
     # Lazy import to avoid circular; selector_service imports library_service,
     # so we import at call-time not at module load.
     from app.selector_service import get_polarities  # noqa: PLC0415
-
-    # A display key (TCDV) may arrive from the route; normalize to storage so the
-    # `resolved != model_key` filter below matches resolve_model_key's output.
-    model_key = to_storage(model_key)
 
     if not models_registry.known(model_key):
         return None
