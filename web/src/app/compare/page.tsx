@@ -153,6 +153,24 @@ function capToCombos(
   return out;
 }
 
+/**
+ * How long the Objectives tab waits after the picker settles before fetching.
+ *
+ * Every model, drones, comm and n_visits toggle changes the scenario set, and
+ * a reader working through the picker clicks several in a row a few hundred ms
+ * apart. At 250ms each of those clicks was its own POST /api/comparison, so a
+ * normal pass through the picker burned the endpoint's 10/minute budget and
+ * the page reported a rate-limit error. At 600ms a burst of clicks coalesces
+ * into one request while a single deliberate change still feels immediate.
+ *
+ * This is NOT a rate-limit control — it runs in the browser, and a client that
+ * does not want to wait simply does not. The server's own guards (the limiter,
+ * the 360/144 payload caps, the comparison concurrency slot) are what bound
+ * the cost; this only stops our own UI spending that budget on intermediate
+ * states nobody asked to see.
+ */
+const OBJECTIVES_DEBOUNCE_MS = 600;
+
 function OverflowNote({ shown, total }: { shown: number; total: number }) {
   return (
     <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
@@ -296,6 +314,7 @@ function ObjectivesResults({
   const [error, setError] = useState<PanelError | null>(null);
 
   // Fetch the comparison whenever the resolved scenario set changes (debounced).
+  // See OBJECTIVES_DEBOUNCE_MS for why the wait is as long as it is.
   const scenarioKey = useMemo(() => [...scenarios].sort().join("|"), [scenarios]);
   useEffect(() => {
     if (scenarios.length === 0) {
@@ -321,7 +340,7 @@ function ObjectivesResults({
             setLoading(false);
           }
         });
-    }, 250);
+    }, OBJECTIVES_DEBOUNCE_MS);
     return () => {
       cancelled = true;
       clearTimeout(handle);
