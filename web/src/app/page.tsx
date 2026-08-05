@@ -218,7 +218,16 @@ export default function LandingPage() {
               height={1536}
               priority
               sizes="(max-width: 1024px) 100vw, 1024px"
-              className="h-auto w-full"
+              className="h-auto w-full dark:hidden"
+            />
+            <Image
+              src="/sar-scenario-dark.png"
+              alt=""
+              aria-hidden
+              width={2740}
+              height={1536}
+              sizes="(max-width: 1024px) 100vw, 1024px"
+              className="hidden h-auto w-full dark:block"
             />
           </div>
           <figcaption className="max-w-3xl text-sm leading-relaxed text-muted-foreground">
