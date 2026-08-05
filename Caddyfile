@@ -8,6 +8,13 @@
 # own. That needs port 80 reachable from the internet (the ACME challenge) and a
 # DNS A record already pointing here, so bring DNS up before this container.
 #
+# ONE hostname is served, and every name in the site block below needs its own
+# DNS record: Caddy manages a certificate per name, and a name that does not
+# resolve fails issuance and keeps retrying on every renewal. If the deploy is a
+# project subdomain (sar.example.com) there is no www to add. If it is ever
+# moved to a bare domain, add www.{$SAR_DOMAIN} to the site block AND the
+# matching DNS record together.
+#
 # SAR_DOMAIN and SAR_ACME_EMAIL come from the .env file next to
 # docker-compose.prod.yml.
 {
@@ -18,7 +25,7 @@
 	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
 }
 
-{$SAR_DOMAIN}, www.{$SAR_DOMAIN} {
+{$SAR_DOMAIN} {
 	encode zstd gzip
 
 	# Hard ceiling on request bodies, enforced on the actual byte count. Caddy
