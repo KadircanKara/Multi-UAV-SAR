@@ -50,6 +50,20 @@ function OptimizeGlyph() {
   );
 }
 
+// Mirrors the sidebar's AnalysisIcon so the card and the nav entry for
+// /analysis read as the same destination, at this deck's weight.
+function AnalysisGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="6" />
+      <line x1="15.5" y1="15.5" x2="20" y2="20" />
+      <line x1="8.5" y1="12.5" x2="10.5" y2="10" />
+      <line x1="10.5" y1="10" x2="12.5" y2="12" />
+      <line x1="12.5" y1="12" x2="14" y2="8.5" />
+    </svg>
+  );
+}
+
 function ArrowIcon() {
   return (
     <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -368,10 +382,12 @@ export default function LandingPage() {
         </p>
       </div>
 
-      <div className="mt-12 grid grid-cols-1 gap-5 md:grid-cols-3">
+      {/* Two across, not four: at max-w-5xl a fourth column leaves ~240px per
+          card, which is narrower than this description copy wants. */}
+      <div className="mt-12 grid grid-cols-1 gap-5 md:grid-cols-2">
         <DeckCard
           href="/missions"
-          title="Mission Select"
+          title="Explore Missions"
           description="Pick a model to explore its parameter sweeps, trade-offs, merging strategies, and live mission animations."
           bullets={[
             "Parameter-effect analysis",
@@ -383,19 +399,19 @@ export default function LandingPage() {
         />
         <DeckCard
           href="/optimize"
-          title="Optimizer"
-          description="Configure and run your own optimization — then analyze any exported run right on the page."
+          title="Optimize"
+          description="Configure and run your own optimization, and watch the front take shape while the generations advance."
           bullets={[
             "SOO & MOO (NSGA-II / NSGA-III / MOEA/D)",
             "Weighted-sum with custom weights",
-            "Live progress + single-run analysis",
+            "Live progress, then hand off to Analysis",
           ]}
           glyph={<OptimizeGlyph />}
           delay={280}
         />
         <DeckCard
           href="/compare"
-          title="Model Comparison"
+          title="Compare Models"
           description="Put models head-to-head across every objective and sensing time-metric — even objectives a model never optimised."
           bullets={[
             "Bar, line & table views",
@@ -404,6 +420,18 @@ export default function LandingPage() {
           ]}
           glyph={<CompareGlyph />}
           delay={360}
+        />
+        <DeckCard
+          href="/analysis"
+          title="Analyze a Run"
+          description="Open one finished run — handed over from the optimizer, or uploaded as the JSON it exported — and dig through the front it produced."
+          bullets={[
+            "Upload an export, or arrive from Optimize",
+            "Run summary & best objective values",
+            "Pareto front, solution select & playback",
+          ]}
+          glyph={<AnalysisGlyph />}
+          delay={440}
         />
       </div>
     </div>
