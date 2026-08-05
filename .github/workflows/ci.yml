@@ -52,6 +52,16 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      # arm64 so the images can run on an Ampere box (Oracle A1, Hetzner CAX).
+      # The runner is amd64, so arm64 is built under QEMU emulation — correct,
+      # but several times slower, which is what the build cache below is for.
+      # GitHub's native ubuntu-*-arm runners would avoid emulation entirely and
+      # are free on PUBLIC repos; this one is private, where they bill minutes.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
       - name: Log in to GHCR
         if: github.event_name == 'push'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -68,23 +78,37 @@ jobs:
           echo "backend=ghcr.io/$repo/backend" >> "$GITHUB_OUTPUT"
           echo "web=ghcr.io/$repo/web" >> "$GITHUB_OUTPUT"
 
+      # push is conditional rather than the step being skipped, so a PR still
+      # builds BOTH architectures and proves them — the point of running this
+      # job on pull requests at all.
       - name: Build backend image
-        run: |
-          docker build -f backend/Dockerfile \
-            -t "${{ steps.names.outputs.backend }}:latest" \
-            -t "${{ steps.names.outputs.backend }}:${{ github.sha }}" .
+        uses: docker/build-push-action@1104d471370f9806843c095c1db02b5a90c5f8b6 # v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ steps.names.outputs.backend }}:latest
+            ${{ steps.names.outputs.backend }}:${{ github.sha }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+          # Without this the manifest list gains an "unknown/unknown" entry for
+          # the attestation, which reads as a broken platform in the GHCR UI.
+          provenance: false
 
       # No NEXT_PUBLIC_API_BASE: the image defaults to same-origin relative
       # URLs, which is what the production stack serves. Baking a domain in
       # here would make the artifact environment-specific.
       - name: Build web image
-        run: |
-          docker build \
-            -t "${{ steps.names.outputs.web }}:latest" \
-            -t "${{ steps.names.outputs.web }}:${{ github.sha }}" web
-
-      - name: Push images
-        if: github.event_name == 'push'
-        run: |
-          docker push --all-tags "${{ steps.names.outputs.backend }}"
-          docker push --all-tags "${{ steps.names.outputs.web }}"
+        uses: docker/build-push-action@1104d471370f9806843c095c1db02b5a90c5f8b6 # v6
+        with:
+          context: web
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ steps.names.outputs.web }}:latest
+            ${{ steps.names.outputs.web }}:${{ github.sha }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+          provenance: false

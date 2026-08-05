@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
 # Prepare a fresh Ubuntu box to run the production stack.
 #
-#   ssh sar-prod
-#   curl -fsSL https://raw.githubusercontent.com/KadircanKara/Multi-UAV-SAR/main/scripts/bootstrap-box.sh | sudo bash
+# Copy it up alongside the rest of the deploy files, then run it there:
 #
-# or, from a checkout:  sudo ./scripts/bootstrap-box.sh
+#   scp docker-compose.prod.yml Caddyfile .env \
+#       scripts/bootstrap-box.sh scripts/fetch-data.sh  root@<box>:/opt/sar/
+#   ssh root@<box> 'sudo /opt/sar/bootstrap-box.sh'
+#
+# NOT via curl from raw.githubusercontent.com: this repository is private, so
+# an unauthenticated fetch 404s, and authenticating it would need a token with
+# `repo` scope — read/write over every private repo — parked on a public-facing
+# server. The only credential this box should ever hold is a `read:packages`
+# token for pulling the images, and even that can be dropped after the pull.
+#
+# From a checkout on the box, if you ever have one:  sudo ./scripts/bootstrap-box.sh
 #
 # Installs Docker, creates the data directory with the right ownership, and adds
 # swap. Safe to re-run — every step checks before acting.
