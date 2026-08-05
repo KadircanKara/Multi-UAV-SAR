@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- The sidebar wordmark's tile (site-sidebar.tsx Wordmark): a rounded square
+       filled with the foreground colour, holding DroneIcon in the background
+       colour. Both invert with the theme, so the favicon follows the BROWSER's
+       colour scheme to match — a foreground-on-background tile that ignored it
+       would be a dark square on a dark tab strip. Colours are the literal
+       foreground / background token values from globals.css (written there as
+       CSS custom properties, which are not reachable from inside a standalone
+       SVG), so they are inlined here and must be updated alongside the tokens.
+       Note XML forbids a double hyphen inside a comment, so the tokens cannot
+       be named with their leading dashes. -->
+  <style>
+    .tile { fill: #0F172A }
+    .mark { stroke: #FFFFFF }
+    @media (prefers-color-scheme: dark) {
+      .tile { fill: #F1F5F9 }
+      .mark { stroke: #080D18 }
+    }
+  </style>
+
+  <rect class="tile" width="32" height="32" rx="9" />
+
+  <!-- DroneIcon's 24-unit artwork, scaled to a 22px inset and centred. Its
+       stroke is heavier than the sidebar's 1.6: at a 16px tab the original
+       renders under one device pixel and the propellers disappear. -->
+  <g class="mark" transform="translate(5 5) scale(0.9167)"
+     fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="2.5" y1="6" x2="9.5" y2="6" />
+    <line x1="14.5" y1="6" x2="21.5" y2="6" />
+    <line x1="6" y1="6" x2="7.5" y2="10" />
+    <line x1="18" y1="6" x2="16.5" y2="10" />
+    <rect x="7" y="10" width="10" height="3.4" rx="1.7" />
+    <line x1="12" y1="13.4" x2="12" y2="14.3" />
+    <circle cx="12" cy="16" r="1.7" />
+  </g>
+</svg>
