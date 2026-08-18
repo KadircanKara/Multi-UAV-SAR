@@ -24,6 +24,7 @@ import app.rootpath  # side-effect: inserts repo root into sys.path
 
 from app.all_objectives import read_all_objectives
 from app.library_service import (
+    _is_safe_scenario_name,
     _obj_path,
     _objectives_sig,
     _parse_comm_range_value,
@@ -218,6 +219,15 @@ def _scenario_stats(scenario: str) -> Optional[dict]:
 
 def _compute_scenario_stats(scenario: str) -> Optional[dict]:
     """Uncached core of _scenario_stats. Expects a STORAGE scenario name."""
+    # resolve_model_key() is a pure string split — it does not validate the
+    # name, and below we build filesystem paths from it (_obj_path /
+    # all_objectives.read_all_objectives). The selector path used to get this
+    # check for free from get_selector() -> _is_safe_scenario_name(); now that
+    # we read the sibling directly, we must perform it ourselves before any
+    # path is built, or a request body could steer a traversal string past
+    # os.path.isfile()/pd.read_pickle().
+    if not _is_safe_scenario_name(scenario):
+        return None
     try:
         model_key = resolve_model_key(scenario)
     except Exception:

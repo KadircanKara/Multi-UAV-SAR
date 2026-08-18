@@ -97,3 +97,25 @@ def test_bust_invalidates_the_memo(seeded):
                            f"{seeded}{all_objectives.SUFFIX}"))
     library_service._bust_scenario_memos()
     assert comparison_service._scenario_stats(seeded) is None
+
+
+def test_traversal_scenario_name_is_skipped_without_touching_the_path(seeded, monkeypatch):
+    """The old path validated via get_selector; the sibling path must validate
+    itself, or a request body can steer os.path.isfile/read_pickle out of the
+    results root."""
+    import app.comparison_service as cs
+
+    def _boom(*a, **kw):
+        raise AssertionError("must not build a path for an unsafe name")
+
+    monkeypatch.setattr(cs, "_obj_path", _boom)
+    evil = "MOO_NSGA2_TC_g_8_a_50_n_4_v_2.5_r_2_nvisits_2/../../../../etc/passwd"
+    assert cs._scenario_stats(evil) is None
+
+
+def test_traversal_name_is_reported_as_skipped(seeded):
+    import app.comparison_service as cs
+    evil = "MOO_NSGA2_TC_g_8_a_50_n_4_v_2.5_r_2_nvisits_2/../../../../etc/passwd"
+    result = cs.compare_objectives([evil])
+    assert result["scenarios"] == []
+    assert result["skipped"] == [evil]
