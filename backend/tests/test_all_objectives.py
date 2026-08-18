@@ -143,3 +143,68 @@ def test_written_frame_is_float64(results_root):
                                      f"SCEN{all_objectives.SUFFIX}"))
     assert all(str(dt) == "float64" for dt in df.dtypes)
     assert df["Max Mean TBV"].isna().all()
+
+
+def _write_seed_scenario(root, scenario, n_rows):
+    """Lay down the two files the backfill walks: the objective table it
+    discovers scenarios from, and the solutions it reads values off."""
+    obj_dir = os.path.join(root, "Objectives")
+    sol_dir = os.path.join(root, "Solutions")
+    os.makedirs(obj_dir, exist_ok=True)
+    os.makedirs(sol_dir, exist_ok=True)
+    pd.DataFrame({"Mission Time": [1.0] * n_rows}).to_pickle(
+        os.path.join(obj_dir, f"{scenario}-ObjectiveValues.pkl"))
+    pd.to_pickle([_full_solution() for _ in range(n_rows)],
+                 os.path.join(sol_dir, f"{scenario}-SolutionObjects.pkl"))
+
+
+def test_backfill_writes_one_sibling_per_scenario(results_root):
+    from scripts import backfill_all_objectives as bf
+    _write_seed_scenario(results_root, "SCEN_A", 2)
+    _write_seed_scenario(results_root, "SCEN_B", 1)
+    assert bf.main(force=False, dry_run=False) == 2
+    assert all_objectives.read_all_objectives("SCEN_A", expected_rows=2)
+    assert all_objectives.read_all_objectives("SCEN_B", expected_rows=1)
+
+
+def test_backfill_is_idempotent(results_root):
+    from scripts import backfill_all_objectives as bf
+    _write_seed_scenario(results_root, "SCEN_A", 1)
+    assert bf.main(force=False, dry_run=False) == 1
+    assert bf.main(force=False, dry_run=False) == 0
+
+
+def test_backfill_force_rewrites(results_root):
+    from scripts import backfill_all_objectives as bf
+    _write_seed_scenario(results_root, "SCEN_A", 1)
+    bf.main(force=False, dry_run=False)
+    assert bf.main(force=True, dry_run=False) == 1
+
+
+def test_backfill_dry_run_writes_nothing(results_root):
+    from scripts import backfill_all_objectives as bf
+    _write_seed_scenario(results_root, "SCEN_A", 1)
+    assert bf.main(force=False, dry_run=True) == 1
+    assert all_objectives.read_all_objectives("SCEN_A") is None
+
+
+def test_backfill_aborts_when_an_objective_is_not_cached(results_root):
+    from scripts import backfill_all_objectives as bf
+    sol = _full_solution()
+    del sol.max_mean_tbv
+    os.makedirs(os.path.join(results_root, "Objectives"), exist_ok=True)
+    os.makedirs(os.path.join(results_root, "Solutions"), exist_ok=True)
+    pd.DataFrame({"Mission Time": [1.0]}).to_pickle(
+        os.path.join(results_root, "Objectives", "SCEN_A-ObjectiveValues.pkl"))
+    pd.to_pickle([sol], os.path.join(results_root, "Solutions",
+                                     "SCEN_A-SolutionObjects.pkl"))
+    with pytest.raises(all_objectives.MissingCachedObjective):
+        bf.main(force=False, dry_run=False)
+
+
+def test_backfill_skips_a_scenario_with_no_solutions_file(results_root):
+    from scripts import backfill_all_objectives as bf
+    os.makedirs(os.path.join(results_root, "Objectives"), exist_ok=True)
+    pd.DataFrame({"Mission Time": [1.0]}).to_pickle(
+        os.path.join(results_root, "Objectives", "SCEN_A-ObjectiveValues.pkl"))
+    assert bf.main(force=False, dry_run=False) == 0
