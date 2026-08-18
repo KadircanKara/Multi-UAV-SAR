@@ -13,9 +13,12 @@ cloned pickles on teardown.
 import os
 import shutil
 
+import numpy as np
+import pandas as pd
 import pytest
 
 from app import models_registry, settings
+from app.all_objectives import all_objectives_path, write_all_objectives
 
 # resolve_model_key("MOO_NSGA2_ZZ_g_...") -> "ZZ_MOO_NSGA2" (a non-preset key).
 CUSTOM_KEY = "ZZ_MOO_NSGA2"
@@ -56,6 +59,15 @@ def custom_scenario(client):
 
     shutil.copyfile(_obj(src), _obj(CUSTOM_SCENARIO))
     shutil.copyfile(_sol(src), _sol(CUSTOM_SCENARIO))
+
+    # The comparison objectives endpoint reads ONLY the precomputed
+    # -AllObjectives.pkl sibling (no selector fallback — that is what let the
+    # scenario cap be removed). A cloned scenario needs one too, mirroring
+    # what save_run() writes in production.
+    raw = list(pd.read_pickle(_sol(CUSTOM_SCENARIO)))
+    sols = [s[0] if isinstance(s, np.ndarray) else s for s in raw]
+    write_all_objectives(CUSTOM_SCENARIO, sols)
+
     models_registry.register(CUSTOM_KEY, CUSTOM_MODEL)
 
     from app.selector_service import _load_selector
@@ -63,7 +75,7 @@ def custom_scenario(client):
     try:
         yield CUSTOM_SCENARIO
     finally:
-        for p in (_obj(CUSTOM_SCENARIO), _sol(CUSTOM_SCENARIO)):
+        for p in (_obj(CUSTOM_SCENARIO), _sol(CUSTOM_SCENARIO), all_objectives_path(CUSTOM_SCENARIO)):
             if os.path.isfile(p):
                 os.remove(p)
         if reg_backup is not None:
