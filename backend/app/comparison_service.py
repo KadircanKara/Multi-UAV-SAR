@@ -211,8 +211,16 @@ def _scenario_stats(scenario: str) -> Optional[dict]:
 
     with _stats_lock:
         # Only store under the key we computed against — if the tree moved while
-        # we read, a newer reader already reset the bucket, so drop ours.
-        if _stats_cache["key"] == key:
+        # we read, a newer reader already reset the bucket, so drop ours. And
+        # only store a SUCCESSFUL computation: the key barely ever changes in
+        # production (only when Objectives/ changes), so memoizing a None would
+        # let a request body grow this dict once per distinct junk/unsafe/
+        # unresolvable name it supplies, unbounded across requests. A real
+        # scenario that fails only because its sibling is transiently missing
+        # or row-mismatched just gets recomputed next time — two cheap file
+        # checks, nothing next to unbounded growth. Do not add negative
+        # caching here.
+        if _stats_cache["key"] == key and stats is not None:
             _stats_cache["value"][scenario] = stats
     return stats
 

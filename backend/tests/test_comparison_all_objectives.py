@@ -154,3 +154,26 @@ def test_save_run_writes_the_sibling(tmp_path, monkeypatch):
         "Mean Disconnected Time": 0.5,
         "Max Mean TBV": 20.0,
     }]
+
+
+def test_unresolvable_names_do_not_grow_the_memo(seeded):
+    """The memo key only moves when Objectives/ changes, so caching misses
+    would let a request body grow this dict without bound."""
+    import app.comparison_service as cs
+
+    cs._scenario_stats(seeded)                      # one real entry
+    before = len(cs._stats_cache["value"])
+    for i in range(50):
+        assert cs._scenario_stats(f"NOT_A_SCENARIO_{i}") is None
+    assert len(cs._stats_cache["value"]) == before
+
+
+def test_successful_lookups_are_still_memoized(seeded, monkeypatch):
+    import app.comparison_service as cs
+    cs._scenario_stats(seeded)
+
+    def _boom(*a, **kw):
+        raise AssertionError("should have been served from the memo")
+
+    monkeypatch.setattr(cs, "read_all_objectives", _boom)
+    assert cs._scenario_stats(seeded)["n_solutions"] == 2
