@@ -57,7 +57,9 @@ chown -R "$APP_UID:$APP_UID" "$DEST"
 
 echo
 echo "done:"
-echo "  objectives : $(find "$DEST/Objectives" -name '*.pkl' | wc -l | tr -d ' ')"
+# Count scenarios, not files: Objectives/ also holds one -AllObjectives.pkl
+# sibling per scenario, so a bare *.pkl count reports double.
+echo "  scenarios  : $(find "$DEST/Objectives" -name '*-ObjectiveValues.pkl' | wc -l | tr -d ' ')"
 echo "  solutions  : $(find "$DEST/Solutions"  -name '*.pkl' | wc -l | tr -d ' ')"
 echo "  total size : $(du -sh "$DEST" | cut -f1)"
 echo "  owned by   : uid $APP_UID"

@@ -1,13 +1,19 @@
 """
 Comparison service: compares precomputed scenarios across ALL objectives —
-including objectives a given model did NOT optimise.
+including objectives a given model did NOT optimise — and compares
+sensing-replay time metrics across scenarios for one shared config.
 
-For each requested scenario it loads the (LRU-cached) SolutionSelector, reads
-every objective from each solution via ``objective_values()`` — which fills any
-uncached objective with ``compute_all_objectives()`` and is a no-op on the
-already-complete seeded solutions — then aggregates min/max/mean/best per
-objective across the front. ``best`` honours each objective's polarity
-(max for maximize / -1, min for minimize / +1).
+The two halves read from different places. The objectives path
+(``compare_objectives`` / ``_scenario_stats``) reads each scenario's
+precomputed ``-AllObjectives.pkl`` sibling (see ``app.all_objectives``) — a
+small frame carrying all five natural-unit objectives per solution — and
+aggregates min/max/mean/best per objective across the front; it never loads a
+selector or a solution object. ``best`` honours each objective's polarity
+(max for maximize / -1, min for minimize / +1). The time-metrics path
+(``compare_time_metrics``) still loads the (LRU-cached) SolutionSelector per
+scenario, picks one solution per the requested strategy, and runs a real
+sensing replay to read its four time metrics — genuinely expensive, which is
+why it alone is bounded by ``_within_budget``.
 
 Import-safety: builds only on selector_service + library_service + PathFuncDict;
 never imports PathAlgorithm / PathUnitTest / main.
@@ -15,14 +21,22 @@ never imports PathAlgorithm / PathUnitTest / main.
 from __future__ import annotations
 
 import math
+import os
+import threading
 import time
 from typing import Optional
 
 import app.rootpath  # side-effect: inserts repo root into sys.path
 
+from app.all_objectives import read_all_objectives
 from app.library_service import (
+    _is_safe_scenario_name,
+    _obj_path,
+    _objectives_sig,
     _parse_comm_range_value,
     _safe_float,
+    _sol_path,
+    memo_epoch,
     parse_scenario_params,
     resolve_model_key,
 )
@@ -37,7 +51,7 @@ from app.selector_service import (
 from PathOptimizationModel import (
     get_objectives_from_weighted_sum_model,
 )
-from PathFuncDict import model_metric_info, objective_values
+from PathFuncDict import model_metric_info
 from SensingReplay import METRIC_COLUMNS
 
 # Only for TYPE_CHECKING-style hints in signatures; playground_reconstruct is
@@ -61,15 +75,12 @@ _TBV_OBJECTIVE = "Max Mean TBV"
 
 
 def _within_budget(ordered: list[str], skipped: list[str]):
-    """Yield the scenarios a single comparison request is allowed to process.
+    """Yield the scenarios one TIME-metrics comparison is allowed to process.
 
-    Two ceilings bound the per-request cost, and both are the same policy, so
-    both comparison endpoints drive them through here rather than each keeping
-    its own copy:
+    Two ceilings bound the per-request cost:
 
       * COMPARISON_MAX_SCENARIOS — how MANY distinct scenarios are attempted at
-        all. Each one is a ~160 MB selector unpickle (compare_objectives) or a
-        full sensing replay (compare_time_metrics), and the schema caps bound the
+        all. Each one is a full sensing replay, and the schema caps bound the
         request BODY, not the work.
       * COMPARISON_TIME_BUDGET_SECONDS — a wall-clock stop, because a cold
         selector cache costs ~50x a warm one per scenario, so a count that is
@@ -80,6 +91,10 @@ def _within_budget(ordered: list[str], skipped: list[str]):
     not on the first, so at least one scenario always runs — that keeps an
     all-skipped result attributable to genuinely unloadable input rather than to
     the clock.
+
+    The objectives endpoint no longer routes through here: it reads precomputed
+    -AllObjectives.pkl frames, so its per-scenario cost no longer justifies a
+    ceiling.
     """
     head = ordered[: max(1, settings.COMPARISON_MAX_SCENARIOS)]
     skipped.extend(ordered[len(head):])
@@ -159,21 +174,76 @@ def stats_from_objective_dicts(
     return objective_stats
 
 
-def _scenario_stats(scenario: str) -> Optional[dict]:
-    """Load one scenario and aggregate ALL objectives across its front.
+# ---------------------------------------------------------------------------
+# Per-scenario stats memo
+# ---------------------------------------------------------------------------
+# The sibling reads are individually small, but one request may name all 216
+# seeded scenarios, and the aggregation is identical every time until the
+# Objectives/ tree changes. Key on the same signature library_service uses, plus
+# its memo epoch so an in-place overwrite invalidates us too. Single-entry: a
+# changed key drops the whole dict, so it cannot grow unbounded.
+_stats_lock = threading.Lock()
+_stats_cache: dict = {"key": None, "value": {}}
 
-    Returns None if the scenario cannot be resolved / loaded (so the caller can
-    skip it rather than fail the whole comparison).
+
+def _stats_key() -> tuple:
+    return (_objectives_sig(), memo_epoch())
+
+
+def _scenario_stats(scenario: str) -> Optional[dict]:
+    """Aggregate ALL objectives for one scenario, from its precomputed sibling.
+
+    Reads Objectives/<scenario>-AllObjectives.pkl — a small frame carrying all
+    five objectives for every solution — instead of unpickling the ~160 MB
+    SolutionObjects file and reading the values off the solutions. That is what
+    lets one request cover every seeded scenario.
+
+    Returns None (caller skips the scenario) when the model cannot be resolved,
+    or when the sibling is absent, unreadable, or disagrees with the scenario's
+    -ObjectiveValues.pkl row count. A stale sibling must be skipped, not
+    aggregated as though it were complete.
     """
     # Normalize a display alias (…TCDV…) to storage so resolve/parse operate on
     # the real on-disk name; outputs are displayified again below.
     scenario = to_storage(scenario)
 
-    try:
-        selector = get_selector(scenario)
-    except _SelectorNotFound:
-        return None
+    key = _stats_key()
+    with _stats_lock:
+        if _stats_cache["key"] != key:
+            _stats_cache["key"] = key
+            _stats_cache["value"] = {}
+        elif scenario in _stats_cache["value"]:
+            return _stats_cache["value"][scenario]
 
+    stats = _compute_scenario_stats(scenario)
+
+    with _stats_lock:
+        # Only store under the key we computed against — if the tree moved while
+        # we read, a newer reader already reset the bucket, so drop ours. And
+        # only store a SUCCESSFUL computation: the key barely ever changes in
+        # production (only when Objectives/ changes), so memoizing a None would
+        # let a request body grow this dict once per distinct junk/unsafe/
+        # unresolvable name it supplies, unbounded across requests. A real
+        # scenario that fails only because its sibling is transiently missing
+        # or row-mismatched just gets recomputed next time — two cheap file
+        # checks, nothing next to unbounded growth. Do not add negative
+        # caching here.
+        if _stats_cache["key"] == key and stats is not None:
+            _stats_cache["value"][scenario] = stats
+    return stats
+
+
+def _compute_scenario_stats(scenario: str) -> Optional[dict]:
+    """Uncached core of _scenario_stats. Expects a STORAGE scenario name."""
+    # resolve_model_key() is a pure string split — it does not validate the
+    # name, and below we build filesystem paths from it (_obj_path /
+    # all_objectives.read_all_objectives). The selector path used to get this
+    # check for free from get_selector() -> _is_safe_scenario_name(); now that
+    # we read the sibling directly, we must perform it ourselves before any
+    # path is built, or a request body could steer a traversal string past
+    # os.path.isfile()/pd.read_pickle().
+    if not _is_safe_scenario_name(scenario):
+        return None
     try:
         model_key = resolve_model_key(scenario)
     except Exception:
@@ -182,14 +252,29 @@ def _scenario_stats(scenario: str) -> Optional[dict]:
     if model is None:
         return None
 
+    # Row-count oracle: the model's own objective table is row-aligned with the
+    # solutions and costs almost nothing to read, so it catches a stale or
+    # truncated sibling without reloading the solutions we are avoiding.
+    expected_rows = _objective_table_rows(scenario)
+    if expected_rows is None:
+        return None
+
+    # source_path is a stat-only staleness check against the scenario's
+    # -SolutionObjects.pkl — read_all_objectives never opens or unpickles it,
+    # which preserves the whole point of the sibling (avoiding the ~160 MB
+    # solutions load). A MISSING solutions file cannot contradict a stamp (a
+    # stamp records what the source looked like when the sibling was written,
+    # and a file that no longer exists can't be checked against that), so it
+    # does not invalidate the sibling — it just isn't checked.
+    obj_dicts = read_all_objectives(
+        scenario, expected_rows=expected_rows, source_path=_sol_path(scenario))
+    if obj_dicts is None:
+        return None
+
     params = parse_scenario_params(scenario)
     n_visits = (
         params.get("variant_value") if params.get("variant") == "nvisits" else None
     )
-
-    # Collect each objective's values across every solution in the front, then
-    # hand off to the shared aggregator.
-    obj_dicts = [objective_values(sol) for sol in selector.solutions]
     objective_stats = stats_from_objective_dicts(obj_dicts, model, n_visits)
 
     comm_range_raw = params.get("comm_range")
@@ -210,9 +295,24 @@ def _scenario_stats(scenario: str) -> Optional[dict]:
         "comm_range": comm_range_raw,
         "comm_range_value": comm_range_value,
         "n_visits": n_visits,
-        "n_solutions": int(len(selector.solutions)),
+        "n_solutions": len(obj_dicts),
         "objective_stats": objective_stats,
     }
+
+
+def _objective_table_rows(scenario: str) -> Optional[int]:
+    """Row count of the scenario's own -ObjectiveValues.pkl, or None if it is
+    missing or unreadable."""
+    import pandas as pd  # noqa: PLC0415  (module-level import kept out of the
+                         # import-safety surface documented at the top)
+
+    path = _obj_path(scenario)
+    if not os.path.isfile(path):
+        return None
+    try:
+        return int(pd.read_pickle(path).shape[0])
+    except Exception:
+        return None
 
 
 def compare_objectives(scenarios: list[str]) -> dict:
@@ -232,7 +332,13 @@ def compare_objectives(scenarios: list[str]) -> dict:
 
     results: list[dict] = []
     skipped: list[str] = []
-    for scenario in _within_budget(ordered, skipped):
+    # No budget gate here. Each scenario is now a small precomputed-frame read
+    # (memoized on the Objectives/ signature), not a ~160 MB selector unpickle,
+    # so the work is bounded by the request BODY cap (schemas.py: 360) rather
+    # than by a scenario ceiling — and the point of the artifact is that the
+    # Compare page can show every seeded scenario at once. compare_time_metrics
+    # still gates: its replays are genuinely expensive.
+    for scenario in ordered:
         stats = _scenario_stats(scenario)
         if stats is None:
             skipped.append(scenario)

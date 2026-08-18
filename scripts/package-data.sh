@@ -33,9 +33,11 @@ if (( ${#missing[@]} )); then
     exit 1
 fi
 
-n_obj=$(find "$SRC/Objectives" -name '*.pkl' | wc -l | tr -d ' ')
+# Count scenarios, not files: Objectives/ also holds one -AllObjectives.pkl
+# sibling per scenario, so a bare *.pkl count reports double.
+n_obj=$(find "$SRC/Objectives" -name '*-ObjectiveValues.pkl' | wc -l | tr -d ' ')
 n_sol=$(find "$SRC/Solutions"  -name '*.pkl' | wc -l | tr -d ' ')
-echo "packaging $n_obj objective sets, $n_sol solution sets from '$SRC'..."
+echo "packaging $n_obj scenarios, $n_sol solution sets from '$SRC'..."
 
 if [[ "$n_obj" == "0" || "$n_sol" == "0" ]]; then
     echo "error: refusing to build an empty archive" >&2

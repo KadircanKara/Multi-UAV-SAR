@@ -187,6 +187,12 @@ _cache_lock = threading.Lock()
 _list_cache: dict = {"key": None, "value": None}
 _grid_cache: dict = {"key": None, "value": {}}  # value: {storage_model_key: grid}
 
+# Bumped by _bust_scenario_memos(). Other modules memoize on
+# (_objectives_sig(), memo_epoch()) so an in-place OVERWRITE — which may not
+# move the directory mtime — invalidates their caches too, without importing
+# them here (comparison_service imports library_service, not the reverse).
+_memo_epoch = 0
+
 
 def _objectives_sig() -> tuple:
     """A cheap signature that changes whenever the Objectives/ file set changes.
@@ -202,6 +208,12 @@ def _objectives_sig() -> tuple:
         return (d, None)
 
 
+def memo_epoch() -> int:
+    """Monotonic counter bumped whenever the scenario memos are busted."""
+    with _cache_lock:
+        return _memo_epoch
+
+
 def _bust_scenario_memos() -> None:
     """Drop the list/grid memoized caches wholesale.
 
@@ -210,12 +222,17 @@ def _bust_scenario_memos() -> None:
     existing pickle — possible only under ALLOW_LIBRARY_SAVE=1 via save_run —
     keeps the same filename, so the directory mtime may not change and the memo
     would keep serving the old stats. save_run calls this explicitly after
-    copying the new pickles in, mirroring its _load_selector.cache_clear()."""
+    copying the new pickles in, mirroring its _load_selector.cache_clear().
+
+    Also bumps _memo_epoch so memos in other modules (comparison_service) that
+    key on it drop their entries at the same instant."""
+    global _memo_epoch
     with _cache_lock:
         _list_cache["key"] = None
         _list_cache["value"] = None
         _grid_cache["key"] = None
         _grid_cache["value"] = {}
+        _memo_epoch += 1
 
 
 # ---------------------------------------------------------------------------

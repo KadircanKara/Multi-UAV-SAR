@@ -2,6 +2,8 @@
 import time
 import pytest
 
+from app.all_objectives import all_objectives_path
+
 BASE_SCENARIO = {"number_of_drones": 4, "n_visits": 2}
 
 
@@ -344,6 +346,9 @@ def test_save_empty_run_is_rejected(client, monkeypatch):
         shutil.rmtree(run_dir, ignore_errors=True)
         if os.path.isfile(obj):
             os.remove(obj)
+        all_obj = all_objectives_path(scenario_name)
+        if os.path.isfile(all_obj):
+            os.remove(all_obj)
         # Restore the registry in case the guard ever regresses and registers it.
         if reg_backup is not None:
             with open(reg_path, "wb") as fh:
@@ -407,7 +412,7 @@ def test_finished_run_recovers_from_disk_after_restart(client, monkeypatch):
     finally:
         optimizer_service._jobs.pop(run_id, None)
         shutil.rmtree(run_dir, ignore_errors=True)
-        for p in (obj_lib, sol_lib):
+        for p in (obj_lib, sol_lib, all_objectives_path(scenario)):
             if os.path.isfile(p):
                 os.remove(p)
         if reg_backup is not None:
@@ -479,7 +484,7 @@ def test_save_overwrites_existing_scenario_and_writes_sidecar(client, monkeypatc
     finally:
         optimizer_service._jobs.pop(run_id, None)
         shutil.rmtree(run_dir, ignore_errors=True)
-        for p in (existing_obj, existing_sol, meta_dst):
+        for p in (existing_obj, existing_sol, meta_dst, all_objectives_path(scenario)):
             if os.path.isfile(p):
                 os.remove(p)
         if reg_backup is not None:
@@ -546,6 +551,7 @@ def test_save_run_makes_it_browsable(client, monkeypatch):
 
     obj_pkl = os.path.join(settings.RESULTS_ROOT, "Objectives", f"{scenario}-ObjectiveValues.pkl")
     sol_pkl = os.path.join(settings.RESULTS_ROOT, "Solutions", f"{scenario}-SolutionObjects.pkl")
+    meta_json = os.path.join(settings.RESULTS_ROOT, "Metadata", f"{scenario}.json")
     try:
         monkeypatch.setattr("app.settings.ALLOW_LIBRARY_SAVE", True)
         save = client.post(f"/api/optimize/{run_id}/save", json={"overwrite": True})
@@ -563,7 +569,7 @@ def test_save_run_makes_it_browsable(client, monkeypatch):
             assert front.status_code == 200
             assert "Mission Time" in front.json()["objectives"]
     finally:
-        for p in (obj_pkl, sol_pkl):
+        for p in (obj_pkl, sol_pkl, meta_json, all_objectives_path(scenario)):
             if os.path.isfile(p):
                 os.remove(p)
 

@@ -156,8 +156,8 @@ def _merge_soo_ws(seed_results: list) -> tuple:
 # ── persistence ───────────────────────────────────────────────────────────────
 
 def _results_root() -> str:
-    from app.config import get_settings
-    return get_settings().RESULTS_ROOT
+    from app import settings
+    return settings.RESULTS_ROOT
 
 
 def _exists(scenario_name: str, results_root: str) -> bool:
@@ -177,9 +177,34 @@ def _save_cell(scenario_name: str, model_key: str, model_dict: dict,
     for d in (obj_dir, sol_dir, meta_dir):
         os.makedirs(d, exist_ok=True)
 
+    sol_dst = os.path.join(sol_dir, f"{scenario_name}-SolutionObjects.pkl")
     pd.DataFrame(np.array(F_np), columns=model_dict["F"]).to_pickle(
         os.path.join(obj_dir, f"{scenario_name}-ObjectiveValues.pkl"))
-    pd.to_pickle(sols, os.path.join(sol_dir, f"{scenario_name}-SolutionObjects.pkl"))
+    pd.to_pickle(sols, sol_dst)
+
+    # Compare reads ONLY the -AllObjectives.pkl sibling, never falling back to
+    # the solution objects — a cell without one is silently invisible there.
+    # Unlike optimizer_service.save_run (an interactive save that must not fail
+    # over a derived file), this is a batch producer: if the sibling can't be
+    # written, the operator needs to know now, not discover missing scenarios
+    # later. Deliberately NOT best-effort — let the exception propagate. But the
+    # pickles above have already been (re)written, so a leftover sibling from a
+    # previous save of this same cell must not survive an aborted write: it
+    # could still match the new row count and serve stale numbers forever.
+    from app.all_objectives import all_objectives_path, write_all_objectives
+    # SolutionObjects rows can be 1-element numpy arrays (PathUnitTest.py).
+    solutions = [s[0] if isinstance(s, np.ndarray) else s for s in sols]
+    try:
+        write_all_objectives(scenario_name, solutions, source_path=sol_dst)
+    except Exception:
+        try:
+            p = all_objectives_path(scenario_name)
+            if os.path.isfile(p):
+                os.unlink(p)
+        except OSError:
+            pass
+        raise
+
     with open(os.path.join(meta_dir, f"{scenario_name}.json"), "w") as fh:
         json.dump({
             "scenario_name": scenario_name, "model_key": model_key,
