@@ -68,15 +68,12 @@ _TBV_OBJECTIVE = "Max Mean TBV"
 
 
 def _within_budget(ordered: list[str], skipped: list[str]):
-    """Yield the scenarios a single comparison request is allowed to process.
+    """Yield the scenarios one TIME-metrics comparison is allowed to process.
 
-    Two ceilings bound the per-request cost, and both are the same policy, so
-    both comparison endpoints drive them through here rather than each keeping
-    its own copy:
+    Two ceilings bound the per-request cost:
 
       * COMPARISON_MAX_SCENARIOS — how MANY distinct scenarios are attempted at
-        all. Each one is a ~160 MB selector unpickle (compare_objectives) or a
-        full sensing replay (compare_time_metrics), and the schema caps bound the
+        all. Each one is a full sensing replay, and the schema caps bound the
         request BODY, not the work.
       * COMPARISON_TIME_BUDGET_SECONDS — a wall-clock stop, because a cold
         selector cache costs ~50x a warm one per scenario, so a count that is
@@ -87,6 +84,10 @@ def _within_budget(ordered: list[str], skipped: list[str]):
     not on the first, so at least one scenario always runs — that keeps an
     all-skipped result attributable to genuinely unloadable input rather than to
     the clock.
+
+    The objectives endpoint no longer routes through here: it reads precomputed
+    -AllObjectives.pkl frames, so its per-scenario cost no longer justifies a
+    ceiling.
     """
     head = ordered[: max(1, settings.COMPARISON_MAX_SCENARIOS)]
     skipped.extend(ordered[len(head):])
@@ -316,7 +317,13 @@ def compare_objectives(scenarios: list[str]) -> dict:
 
     results: list[dict] = []
     skipped: list[str] = []
-    for scenario in _within_budget(ordered, skipped):
+    # No budget gate here. Each scenario is now a small precomputed-frame read
+    # (memoized on the Objectives/ signature), not a ~160 MB selector unpickle,
+    # so the work is bounded by the request BODY cap (schemas.py: 360) rather
+    # than by a scenario ceiling — and the point of the artifact is that the
+    # Compare page can show every seeded scenario at once. compare_time_metrics
+    # still gates: its replays are genuinely expensive.
+    for scenario in ordered:
         stats = _scenario_stats(scenario)
         if stats is None:
             skipped.append(scenario)

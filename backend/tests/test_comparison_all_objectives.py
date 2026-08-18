@@ -177,3 +177,31 @@ def test_successful_lookups_are_still_memoized(seeded, monkeypatch):
 
     monkeypatch.setattr(cs, "read_all_objectives", _boom)
     assert cs._scenario_stats(seeded)["n_solutions"] == 2
+
+
+def test_objectives_endpoint_ignores_the_scenario_cap(seeded, monkeypatch):
+    """The cap existed because each scenario cost a ~160 MB unpickle. Reading
+    the precomputed sibling does not, so naming more scenarios than the old cap
+    must no longer truncate the answer."""
+    monkeypatch.setattr(settings, "COMPARISON_MAX_SCENARIOS", 1)
+    # The real scenario is SECOND on purpose: under the old cap of 1 the head is
+    # ["NOT_A_SCENARIO"] and the real scenario is skipped unread, so this fails.
+    # Putting it first would pass either way and prove nothing.
+    result = comparison_service.compare_objectives(["NOT_A_SCENARIO", seeded])
+    assert [s["scenario"] for s in result["scenarios"]] == [seeded]
+    assert result["skipped"] == ["NOT_A_SCENARIO"]
+
+
+def test_objectives_endpoint_ignores_the_time_budget(seeded, monkeypatch):
+    monkeypatch.setattr(settings, "COMPARISON_TIME_BUDGET_SECONDS", 0)
+    result = comparison_service.compare_objectives([seeded])
+    assert len(result["scenarios"]) == 1
+
+
+def test_time_endpoint_still_honours_the_cap(monkeypatch):
+    """Time metrics run real sensing replays; their cap must survive."""
+    monkeypatch.setattr(settings, "COMPARISON_MAX_SCENARIOS", 1)
+    skipped = []
+    got = list(comparison_service._within_budget(["a", "b", "c"], skipped))
+    assert got == ["a"]
+    assert skipped == ["b", "c"]
