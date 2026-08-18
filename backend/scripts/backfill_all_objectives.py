@@ -28,11 +28,29 @@ _OBJ_SUFFIX = "-ObjectiveValues.pkl"
 
 
 def _is_current(scenario: str, sol_path: str) -> bool:
-    """True when a sibling already exists and is at least as new as the
-    solutions it was derived from."""
+    """True when a sibling already exists and matches the solutions it was
+    derived from.
+
+    Prefers the source stamp (exact: size + mtime_ns of the solutions file at
+    write time) when the sibling carries one. Falls back to the mtime
+    heuristic (sibling no older than the solutions file) for siblings written
+    before the stamp existed.
+    """
     dst = all_objectives_path(scenario)
     if not os.path.isfile(dst):
         return False
+    try:
+        df = pd.read_pickle(dst)
+    except Exception:
+        return False
+    stamp = df.attrs.get("source")
+    if stamp is not None:
+        try:
+            st = os.stat(sol_path)
+        except OSError:
+            return False
+        return (int(stamp.get("size", -1)) == st.st_size
+                and int(stamp.get("mtime_ns", -1)) == st.st_mtime_ns)
     return os.path.getmtime(dst) >= os.path.getmtime(sol_path)
 
 
@@ -57,7 +75,7 @@ def main(force: bool, dry_run: bool) -> int:
         # SolutionObjects rows can be 1-element numpy arrays (PathUnitTest.py).
         solutions = [s[0] if hasattr(s, "shape") and getattr(s, "shape", None) == (1,)
                      else s for s in solutions]
-        n = write_all_objectives(scenario, solutions)
+        n = write_all_objectives(scenario, solutions, source_path=sol_path)
         print(f"  {scenario}: {n} rows")
         written += 1
 

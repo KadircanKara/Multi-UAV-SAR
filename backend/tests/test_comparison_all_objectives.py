@@ -144,7 +144,7 @@ def test_save_run_writes_the_sibling(tmp_path, monkeypatch):
     pd.DataFrame({"Mission Time": [10.0]}).to_pickle(run_dir / "Objectives.pkl")
     pd.to_pickle([_SiblingTestSolution()], run_dir / "Solutions.pkl")
 
-    optimizer_service._write_run_sibling("SCEN_NEW", str(run_dir))
+    optimizer_service._write_run_sibling("SCEN_NEW", str(run_dir), str(tmp_path / "Solutions" / "SCEN_NEW-SolutionObjects.pkl"))
 
     rows = all_objectives.read_all_objectives("SCEN_NEW", expected_rows=1)
     assert rows == [{
@@ -219,12 +219,50 @@ def test_failed_sibling_write_removes_the_stale_one(tmp_path, monkeypatch):
     os.makedirs(run_dir)
     pd.to_pickle([_SiblingTestSolution()], run_dir / "Solutions.pkl")
 
-    osvc._write_run_sibling("SCEN_X", str(run_dir))
+    osvc._write_run_sibling("SCEN_X", str(run_dir), str(run_dir / "Solutions.pkl"))
     assert all_objectives.read_all_objectives("SCEN_X") is not None
 
     def _boom(*a, **kw):
         raise OSError("disk full")
 
     monkeypatch.setattr(all_objectives, "write_all_objectives", _boom)
-    osvc._write_run_sibling("SCEN_X", str(run_dir))
+    osvc._write_run_sibling("SCEN_X", str(run_dir), str(run_dir / "Solutions.pkl"))
     assert not os.path.isfile(all_objectives.all_objectives_path("SCEN_X"))
+
+
+def test_compute_scenario_stats_skips_a_stale_sibling(tmp_path, monkeypatch):
+    """The sibling's values derive from -SolutionObjects.pkl, but until the
+    source stamp exists a same-length replacement of that file is
+    undetectable. _compute_scenario_stats must catch it via the stamp,
+    without ever reading the solutions file itself (stat only)."""
+    from app import optimizer_service
+
+    monkeypatch.setattr(settings, "RESULTS_ROOT", str(tmp_path))
+    os.makedirs(tmp_path / "Objectives")
+    os.makedirs(tmp_path / "Solutions")
+    scenario = "MOO_NSGA2_TCD_g_8_a_50_n_4_v_2.5_r_2_nvisits_2"
+
+    pd.DataFrame({"Mission Time": [1.0, 2.0]}).to_pickle(
+        tmp_path / "Objectives" / f"{scenario}-ObjectiveValues.pkl")
+
+    sol_path = library_service._sol_path(scenario)
+    pd.to_pickle(["fake", "solutions"], sol_path)
+
+    all_objectives.write_all_objectives(
+        scenario,
+        [_SiblingTestSolution(), _SiblingTestSolution()],
+        source_path=sol_path,
+    )
+    library_service._bust_scenario_memos()
+    assert comparison_service._compute_scenario_stats(scenario) is not None
+
+    # Replace the solutions file with different content (same or different
+    # length — here different, but the stamp catches either).
+    pd.to_pickle(["different", "content", "now"], sol_path)
+    library_service._bust_scenario_memos()
+
+    def _boom(*a, **kw):
+        raise AssertionError("must never unpickle the solutions file")
+
+    monkeypatch.setattr(optimizer_service, "_write_run_sibling", _boom)
+    assert comparison_service._compute_scenario_stats(scenario) is None

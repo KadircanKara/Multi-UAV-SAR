@@ -208,3 +208,67 @@ def test_backfill_skips_a_scenario_with_no_solutions_file(results_root):
     pd.DataFrame({"Mission Time": [1.0]}).to_pickle(
         os.path.join(results_root, "Objectives", "SCEN_A-ObjectiveValues.pkl"))
     assert bf.main(force=False, dry_run=False) == 0
+
+
+# ---------------------------------------------------------------------------
+# Source stamp: binds the sibling to the -SolutionObjects.pkl it was derived
+# from, so a same-length replacement of the source is detected instead of
+# being served silently (see write_all_objectives / read_all_objectives).
+# ---------------------------------------------------------------------------
+
+def test_write_with_source_path_carries_the_stamp(results_root, tmp_path):
+    src = tmp_path / "SCEN-SolutionObjects.pkl"
+    pd.to_pickle([_full_solution()], src)
+    all_objectives.write_all_objectives("SCEN", [_full_solution()], source_path=str(src))
+    df = pd.read_pickle(os.path.join(results_root, "Objectives",
+                                     f"SCEN{all_objectives.SUFFIX}"))
+    st = os.stat(src)
+    assert df.attrs["source"] == {"size": st.st_size, "mtime_ns": st.st_mtime_ns}
+
+
+def test_read_with_matching_source_path_succeeds(results_root, tmp_path):
+    src = tmp_path / "SCEN-SolutionObjects.pkl"
+    pd.to_pickle([_full_solution()], src)
+    all_objectives.write_all_objectives("SCEN", [_full_solution()], source_path=str(src))
+    rows = all_objectives.read_all_objectives("SCEN", source_path=str(src))
+    assert rows is not None
+    assert rows[0]["Mission Time"] == 665.685424949238
+
+
+def test_read_after_source_is_modified_returns_none(results_root, tmp_path):
+    src = tmp_path / "SCEN-SolutionObjects.pkl"
+    pd.to_pickle([_full_solution()], src)
+    all_objectives.write_all_objectives("SCEN", [_full_solution()], source_path=str(src))
+    # Rewrite the source with different content (and thus a different size),
+    # simulating a same-length-or-not replacement of the scenario's solutions.
+    pd.to_pickle([_full_solution(), _full_solution()], src)
+    assert all_objectives.read_all_objectives("SCEN", source_path=str(src)) is None
+
+
+def test_read_stamped_sibling_with_no_source_path_still_succeeds(results_root, tmp_path):
+    src = tmp_path / "SCEN-SolutionObjects.pkl"
+    pd.to_pickle([_full_solution()], src)
+    all_objectives.write_all_objectives("SCEN", [_full_solution()], source_path=str(src))
+    # Caller does not care about staleness (source_path omitted) -> still reads.
+    rows = all_objectives.read_all_objectives("SCEN")
+    assert rows is not None
+
+
+def test_read_unstamped_sibling_with_source_path_still_succeeds(results_root, tmp_path):
+    # Backward compatibility: every sibling written before this change (all
+    # 216 already on disk) has no stamp at all. Supplying source_path must not
+    # invalidate them.
+    src = tmp_path / "SCEN-SolutionObjects.pkl"
+    pd.to_pickle([_full_solution()], src)
+    all_objectives.write_all_objectives("SCEN", [_full_solution()])  # no source_path
+    rows = all_objectives.read_all_objectives("SCEN", source_path=str(src))
+    assert rows is not None
+
+
+def test_missing_source_file_does_not_invalidate_a_stamped_sibling(results_root, tmp_path):
+    src = tmp_path / "SCEN-SolutionObjects.pkl"
+    pd.to_pickle([_full_solution()], src)
+    all_objectives.write_all_objectives("SCEN", [_full_solution()], source_path=str(src))
+    os.unlink(src)
+    rows = all_objectives.read_all_objectives("SCEN", source_path=str(src))
+    assert rows is not None

@@ -868,24 +868,29 @@ def request_stop(run_id: str) -> dict:
     return {"run_id": run_id, "stopping": True}
 
 
-def _write_run_sibling(scenario_name: str, run_dir: str) -> None:
+def _write_run_sibling(scenario_name: str, run_dir: str, sol_dst: str) -> None:
     """Write the run's -AllObjectives.pkl next to its copied pickles.
 
     Without this a saved run is invisible to the Compare page: the objectives
     endpoint reads ONLY the sibling, precisely so it can never fall back to a
     ~160 MB solution load. Best-effort — a failure here must not fail an
     otherwise-successful save; the backfill script can repair it.
+
+    *sol_dst* is the library's -SolutionObjects.pkl (already written by the
+    caller before this runs) — the stamp is taken from THAT file, not the run
+    dir's copy, because that is the path the comparison consumer stats against.
     """
     import numpy as np  # noqa: PLC0415
     import pandas as pd  # noqa: PLC0415
 
     from app.all_objectives import all_objectives_path, write_all_objectives
 
+    sol_src = os.path.join(run_dir, "Solutions.pkl")
     try:
-        raw = list(pd.read_pickle(os.path.join(run_dir, "Solutions.pkl")))
+        raw = list(pd.read_pickle(sol_src))
         # SolutionObjects rows can be 1-element numpy arrays (PathUnitTest.py).
         solutions = [s[0] if isinstance(s, np.ndarray) else s for s in raw]
-        write_all_objectives(scenario_name, solutions)
+        write_all_objectives(scenario_name, solutions, source_path=sol_dst)
     except Exception:
         # A MISSING sibling is honest — the scenario is skipped by /compare and
         # backfill_all_objectives.py repairs it. A STALE one is not: on an
@@ -951,7 +956,7 @@ def save_run(run_id: str, overwrite: bool) -> dict:
             f"Run {run_id!r} is no longer available (its data was cleaned up)."
         ) from exc
 
-    _write_run_sibling(scenario_name, job["run_dir"])
+    _write_run_sibling(scenario_name, job["run_dir"], sol_dst)
 
     # Copy the RunConfig sidecar (present for worker-produced runs) into the library.
     cfg_src = os.path.join(job["run_dir"], "config.json")

@@ -35,6 +35,7 @@ from app.library_service import (
     _objectives_sig,
     _parse_comm_range_value,
     _safe_float,
+    _sol_path,
     memo_epoch,
     parse_scenario_params,
     resolve_model_key,
@@ -258,7 +259,15 @@ def _compute_scenario_stats(scenario: str) -> Optional[dict]:
     if expected_rows is None:
         return None
 
-    obj_dicts = read_all_objectives(scenario, expected_rows=expected_rows)
+    # source_path is a stat-only staleness check against the scenario's
+    # -SolutionObjects.pkl — read_all_objectives never opens or unpickles it,
+    # which preserves the whole point of the sibling (avoiding the ~160 MB
+    # solutions load). A MISSING solutions file cannot contradict a stamp (a
+    # stamp records what the source looked like when the sibling was written,
+    # and a file that no longer exists can't be checked against that), so it
+    # does not invalidate the sibling — it just isn't checked.
+    obj_dicts = read_all_objectives(
+        scenario, expected_rows=expected_rows, source_path=_sol_path(scenario))
     if obj_dicts is None:
         return None
 

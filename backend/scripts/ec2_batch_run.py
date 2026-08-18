@@ -177,9 +177,10 @@ def _save_cell(scenario_name: str, model_key: str, model_dict: dict,
     for d in (obj_dir, sol_dir, meta_dir):
         os.makedirs(d, exist_ok=True)
 
+    sol_dst = os.path.join(sol_dir, f"{scenario_name}-SolutionObjects.pkl")
     pd.DataFrame(np.array(F_np), columns=model_dict["F"]).to_pickle(
         os.path.join(obj_dir, f"{scenario_name}-ObjectiveValues.pkl"))
-    pd.to_pickle(sols, os.path.join(sol_dir, f"{scenario_name}-SolutionObjects.pkl"))
+    pd.to_pickle(sols, sol_dst)
 
     # Compare reads ONLY the -AllObjectives.pkl sibling, never falling back to
     # the solution objects — a cell without one is silently invisible there.
@@ -194,7 +195,7 @@ def _save_cell(scenario_name: str, model_key: str, model_dict: dict,
     # SolutionObjects rows can be 1-element numpy arrays (PathUnitTest.py).
     solutions = [s[0] if isinstance(s, np.ndarray) else s for s in sols]
     try:
-        write_all_objectives(scenario_name, solutions)
+        write_all_objectives(scenario_name, solutions, source_path=sol_dst)
     except Exception:
         try:
             p = all_objectives_path(scenario_name)

@@ -94,15 +94,29 @@ def rows_from_solutions(solutions: list) -> list[dict[str, Optional[float]]]:
     return rows
 
 
-def write_all_objectives(scenario: str, solutions: list) -> int:
+def write_all_objectives(
+    scenario: str,
+    solutions: list,
+    source_path: Optional[str] = None,
+) -> int:
     """Write the sibling for one scenario. Returns the row count.
 
     Atomic: writes a temp file in the destination directory and os.replace()s it
     in, so a concurrent reader sees either the old frame or the new one, never a
     half-written pickle.
+
+    When *source_path* is given and exists, its (size, mtime_ns) is stamped
+    onto the written frame's ``.attrs["source"]`` (pandas preserves ``.attrs``
+    through to_pickle/read_pickle). read_all_objectives can then detect a
+    source file that was replaced after the sibling was derived from it — see
+    that function's docstring. Pass the source path AFTER it has been written
+    to its final location, so the stamp matches the bytes actually on disk.
     """
     rows = rows_from_solutions(solutions)
     df = pd.DataFrame(rows, columns=COLUMNS).astype("float64")
+    if source_path is not None and os.path.isfile(source_path):
+        st = os.stat(source_path)
+        df.attrs["source"] = {"size": st.st_size, "mtime_ns": st.st_mtime_ns}
     dst = all_objectives_path(scenario)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dst), suffix=".tmp")
@@ -120,6 +134,7 @@ def write_all_objectives(scenario: str, solutions: list) -> int:
 def read_all_objectives(
     scenario: str,
     expected_rows: Optional[int] = None,
+    source_path: Optional[str] = None,
 ) -> Optional[list[dict[str, Optional[float]]]]:
     """Read one scenario's sibling as per-solution objective dicts.
 
@@ -127,6 +142,24 @@ def read_all_objectives(
     wrong columns, or disagrees with *expected_rows*. Callers treat None as
     "skip this scenario", which is honest: a stale or truncated sibling must not
     be aggregated into a comparison as if it were complete.
+
+    When *source_path* is given and the frame carries a ``source`` stamp (see
+    write_all_objectives), the stamp's (size, mtime_ns) is compared against
+    *source_path*'s current stat; a mismatch means the sibling was derived from
+    a since-replaced source and is treated as stale (returns None). This is a
+    stat-only check — the source file itself is never opened or unpickled, so
+    the whole point of the sibling (avoiding the ~160 MB solutions load) still
+    holds.
+
+    A frame with NO stamp — every sibling written before this check existed,
+    including all pre-existing backfilled siblings — is accepted regardless of
+    *source_path*. This keeps the check fully backward compatible: it detects
+    staleness only for siblings written after this change, never invalidates an
+    old unstamped one, and so requires no re-backfill.
+
+    Likewise, when *source_path* is given but does not exist on disk, the stamp
+    check is skipped (a missing source cannot contradict a stamp) — the sibling
+    is accepted rather than invalidated.
     """
     if not _is_safe_scenario_name(scenario):
         return None
@@ -141,6 +174,16 @@ def read_all_objectives(
         return None
     if expected_rows is not None and int(df.shape[0]) != int(expected_rows):
         return None
+    stamp = df.attrs.get("source")
+    if source_path is not None and stamp is not None:
+        try:
+            st = os.stat(source_path)
+        except OSError:
+            pass
+        else:
+            if (int(stamp.get("size", -1)) != st.st_size
+                    or int(stamp.get("mtime_ns", -1)) != st.st_mtime_ns):
+                return None
     rows: list[dict[str, Optional[float]]] = []
     for values in df.itertuples(index=False, name=None):
         row: dict[str, Optional[float]] = {}
