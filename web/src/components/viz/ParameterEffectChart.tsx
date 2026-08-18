@@ -58,6 +58,12 @@ export interface ParameterEffectChartProps {
   colorIndex?: number;
   /** tailwind height class for the plot area (grows with series count) */
   heightClass?: string;
+  /** Draw this chart's own legend. Set false when a grid of these charts shares
+   *  ONE legend above it — repeating an identical six-model legend over every
+   *  chart is noise. Colours stay index-based, so a shared legend is only
+   *  truthful while every chart receives the same series list in the same
+   *  order. */
+  showLegend?: boolean;
 }
 
 // ─── Palette: theme tokens first, then generated distinct hues ────────────────
@@ -143,6 +149,7 @@ export default function ParameterEffectChart({
   sweepLabel,
   series,
   colorIndex = 0,
+  showLegend = true,
   heightClass = "h-48",
 }: ParameterEffectChartProps) {
   const colors = useChartColors();
@@ -210,7 +217,7 @@ export default function ParameterEffectChart({
       </p>
       {/* HTML legend above the plot: wraps freely without ever overlapping the
           chart area (an in-SVG Recharts legend mis-reserves space when it wraps). */}
-      {multi && (
+      {multi && showLegend && (
         <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
           {series.map((s, i) => (
             <span

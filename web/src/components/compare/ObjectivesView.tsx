@@ -12,8 +12,6 @@
  * ModelScenarioPicker can react to line mode) and passes them down as
  * controlled props, along with `hideControls` so its own always-visible
  * switch (shown even while a comparison is loading) isn't duplicated, and
- * `models` so stacked-bar color/legend order stays anchored to the picker's
- * selection instead of first-seen order in the response.
  */
 
 import { useMemo, useState } from "react";
@@ -28,16 +26,12 @@ import {
   type ModelSeriesRow,
   type SweepParam,
 } from "@/components/compare/buildModelSeries";
-import {
-  buildStackedBars,
-  type StackedScenarioRow,
-  type StackedBarData,
-} from "@/components/compare/buildStackedBars";
-import type { CompareStackedBarChartProps } from "@/components/viz/CompareStackedBarChart";
 import type {
   ParameterEffectChartProps,
   EffectSeries,
 } from "@/components/viz/ParameterEffectChart";
+import { buildPalette } from "@/components/viz/CompareBarChart";
+import { useChartColors } from "@/hooks/useChartColors";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
@@ -55,10 +49,6 @@ export const ParameterEffectChart = dynamic<ParameterEffectChartProps>(
   { ssr: false, loading: () => <ChartSkeleton /> }
 );
 
-export const CompareStackedBarChart = dynamic<CompareStackedBarChartProps>(
-  () => import("@/components/viz/CompareStackedBarChart"),
-  { ssr: false, loading: () => <ChartSkeleton /> }
-);
 
 // ─── Types + constants ──────────────────────────────────────────────────────
 
@@ -71,16 +61,6 @@ export const SWEEP_LABELS: Record<SweepParam, string> = {
   n_visits: "n_visits",
 };
 
-// Bars on a stacked-bar chart = parameter combinations on the x-axis (models are
-// stacked within each bar). Mirrors the breakpoint used by the seeded compare
-// page's Time Metrics tab.
-const BARS_PER_ROW_BREAKPOINT = 12;
-
-export function barGridClass(comboCount: number): string {
-  return comboCount > BARS_PER_ROW_BREAKPOINT
-    ? "grid gap-6 grid-cols-1"
-    : "grid gap-6 grid-cols-1 md:grid-cols-2";
-}
 
 export function ChartSkeleton() {
   return <Skeleton className="h-48 w-full rounded" />;
@@ -98,6 +78,39 @@ export function entityLabel(s: {
   if (s.comm_range != null) parts.push(`r${s.comm_range}`);
   if (s.n_visits != null) parts.push(`v${s.n_visits}`);
   return parts.join(" · ");
+}
+
+// The bar view fixes every parameter but the model, so that combination is
+// stated once above the grid instead of repeated in each bar's label. Returns
+// null when the selection is not a single combination (nothing to state).
+export function comboCaption(
+  scenarios: {
+    number_of_drones: number | null;
+    comm_range: string | null;
+    n_visits: number | null;
+  }[],
+  /** Dimension to leave out because the chart already varies it on its x-axis
+   *  (the line view's sweep parameter). Omit for the bar view, where every
+   *  dimension is fixed. */
+  skip?: SweepParam
+): string | null {
+  if (scenarios.length === 0) return null;
+  const first = scenarios[0]!;
+  const same = scenarios.every(
+    (s) =>
+      (skip === "drones" || s.number_of_drones === first.number_of_drones) &&
+      (skip === "comm_range" || s.comm_range === first.comm_range) &&
+      (skip === "n_visits" || s.n_visits === first.n_visits)
+  );
+  if (!same) return null;
+  const parts: string[] = [];
+  if (first.number_of_drones != null && skip !== "drones")
+    parts.push(`${first.number_of_drones} drones`);
+  if (first.comm_range != null && skip !== "comm_range")
+    parts.push(`comm range ${first.comm_range}`);
+  if (first.n_visits != null && skip !== "n_visits")
+    parts.push(`n_visits ${first.n_visits}`);
+  return parts.length ? parts.join(" · ") : null;
 }
 
 export function ChartTypeSwitch({
@@ -166,6 +179,47 @@ const TBV_NA_MESSAGE =
   "visits. Increase n_visits to compare it.";
 
 // A titled placeholder shown in a chart slot (no data, or metric not applicable).
+/**
+ * One caption + one legend above a grid of line charts.
+ *
+ * ParameterEffectChart colours its series by ARRAY INDEX, so this is only
+ * truthful while every chart in the grid is handed the same series list in the
+ * same order — which is why the line branch stopped filtering empty series.
+ */
+export function LineGridHeader({
+  caption,
+  series,
+}: {
+  caption: string | null;
+  series: { key: string; label: string }[];
+}) {
+  const colors = useChartColors();
+  const palette = buildPalette(colors.series, series.length);
+  if (!caption && series.length < 2) return null;
+  return (
+    <div className="flex flex-col gap-2">
+      {caption && <p className="text-xs text-muted-foreground">{caption}</p>}
+      {series.length > 1 && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          {series.map((s, i) => (
+            <span
+              key={s.key}
+              className="flex items-center gap-1.5 text-xs text-foreground"
+            >
+              <span
+                className="inline-block h-0.5 w-3 rounded-full"
+                style={{ backgroundColor: palette[i] ?? colors.series[0] }}
+                aria-hidden="true"
+              />
+              {s.label}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ChartEmptyNote({ title, message }: { title: string; message: string }) {
   return (
     <div className="flex flex-col gap-1">
@@ -197,10 +251,6 @@ export interface ObjectivesViewProps {
   onChartTypeChange?: (v: ChartType) => void;
   sweep?: SweepParam;
   onSweepChange?: (v: SweepParam) => void;
-  /** Stack/legend order for the bar view. Defaults to the model keys present in
-   *  `data`, in first-seen order. Pass the full picker selection to keep
-   *  colors/order anchored to it rather than to response order. */
-  models?: string[];
   /** Hide the internal Bar|Line|Table + sweep-param controls — pass this
    *  when the caller renders its own copy elsewhere (e.g. to keep the switch
    *  visible above a loading skeleton, before `data` exists). */
@@ -213,7 +263,6 @@ export function ObjectivesView({
   onChartTypeChange,
   sweep: sweepProp,
   onSweepChange,
-  models: modelsProp,
   hideControls = false,
 }: ObjectivesViewProps) {
   const [internalChartType, setInternalChartType] = useState<ChartType>("bar");
@@ -228,10 +277,6 @@ export function ObjectivesView({
 
   const nVisitsNA = useMemo(() => onlyNVisits1(data.scenarios), [data]);
 
-  const models = useMemo(
-    () => modelsProp ?? Array.from(new Set(data.scenarios.map((s) => s.model_key))),
-    [modelsProp, data]
-  );
 
   const metrics = useMemo<CompareMetric[]>(
     () =>
@@ -246,12 +291,15 @@ export function ObjectivesView({
     () =>
       data.scenarios.map((s) => ({
         key: s.scenario,
-        label: entityLabel(s),
+        // Bar mode pins one parameter combination, so the model name alone
+        // identifies a bar; the combination is stated once in the caption.
+        label: chartType === "bar" ? s.model_key : entityLabel(s),
         values: Object.fromEntries(
           data.objectives.map((o) => [o, s.objective_stats[o]?.[statKey] ?? null])
         ),
       })),
-    [data]
+    // chartType matters: it decides whether a bar is labelled by model alone.
+    [data, chartType]
   );
 
   const metricOptimizedBy = useMemo<Record<string, Set<string>>>(() => {
@@ -268,6 +316,10 @@ export function ObjectivesView({
   // Line view: one chart per objective; one line per (model × non-swept combo).
   const lineSeriesByObjective = useMemo<Record<string, EffectSeries[]>>(() => {
     const out: Record<string, EffectSeries[]> = {};
+    // When every series shares the same non-swept parameters, the caption above
+    // the grid states them, so repeating them in each label is noise. When they
+    // differ there is no caption and the suffix is what tells series apart.
+    const captioned = comboCaption(data.scenarios, sweep) !== null;
     for (const o of data.objectives) {
       const polarity = data.polarities[o] ?? 1;
       const rows: ModelSeriesRow[] = data.scenarios.map((s) => ({
@@ -278,34 +330,21 @@ export function ObjectivesView({
         n_visits: s.n_visits,
         value: s.objective_stats[o]?.[statKey] ?? null,
       }));
-      out[o] = buildModelComboSeries(rows, sweep, polarity);
+      out[o] = buildModelComboSeries(rows, sweep, polarity, captioned);
     }
     return out;
   }, [data, sweep]);
 
+  // buildModelComboSeries groups the same rows the same way for every objective
+  // and label-sorts the result, so each objective's series list is identical in
+  // content AND order. That is what lets one legend stand for the whole grid.
+  const lineLegendSeries = useMemo(
+    () => Object.values(lineSeriesByObjective)[0] ?? [],
+    [lineSeriesByObjective]
+  );
+
   // Stacked-bar view: one chart per objective, x = parameter combination,
   // stacked by model.
-  const stackedByObjective = useMemo<Record<string, StackedBarData>>(() => {
-    const out: Record<string, StackedBarData> = {};
-    for (const o of data.objectives) {
-      const rows: StackedScenarioRow[] = data.scenarios.map((s) => ({
-        model_key: s.model_key,
-        number_of_drones: s.number_of_drones,
-        comm_range: s.comm_range,
-        comm_range_value: s.comm_range_value,
-        n_visits: s.n_visits,
-        value: s.objective_stats[o]?.[statKey] ?? null,
-      }));
-      out[o] = buildStackedBars(rows, models);
-    }
-    return out;
-  }, [data, models]);
-
-  // Combo count = bars per chart (uniform across objectives — same scenarios).
-  const comboCount = useMemo(
-    () => Math.max(0, ...Object.values(stackedByObjective).map((sb) => sb.rows.length)),
-    [stackedByObjective]
-  );
 
   return (
     <div className="flex flex-col gap-5">
@@ -319,15 +358,22 @@ export function ObjectivesView({
       )}
 
       {chartType === "line" ? (
-        <div className="grid gap-6 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+        <div className="flex flex-col gap-4">
+          <LineGridHeader
+            caption={comboCaption(data.scenarios, sweep)}
+            series={lineLegendSeries}
+          />
+          <div className="grid gap-6 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
           {data.objectives.map((o, idx) => {
             if (isTbvName(o) && nVisitsNA) {
               return <ChartEmptyNote key={o} title={o} message={TBV_NA_MESSAGE} />;
             }
-            const series = (lineSeriesByObjective[o] ?? []).filter(
-              (s) => s.points.length > 0
-            );
-            if (series.length === 0) {
+            // NOT filtered to non-empty series: the palette is index-based, so
+            // dropping a model here would shift every later model's colour in
+            // THIS chart only — and the single shared legend above would then be
+            // wrong for it. Empty series simply draw no line.
+            const series = lineSeriesByObjective[o] ?? [];
+            if (series.every((s) => s.points.length === 0)) {
               return (
                 <ChartEmptyNote
                   key={o}
@@ -345,36 +391,11 @@ export function ObjectivesView({
                 series={series}
                 colorIndex={idx}
                 heightClass="h-60"
+                showLegend={false}
               />
             );
           })}
-        </div>
-      ) : chartType === "bar" ? (
-        <div className={barGridClass(comboCount)}>
-          {data.objectives.map((o) => {
-            if (isTbvName(o) && nVisitsNA) {
-              return <ChartEmptyNote key={o} title={o} message={TBV_NA_MESSAGE} />;
-            }
-            const sb = stackedByObjective[o];
-            if (!sb || sb.models.length === 0 || sb.rows.length === 0) {
-              return (
-                <ChartEmptyNote
-                  key={o}
-                  title={o}
-                  message="No data for the current selection."
-                />
-              );
-            }
-            return (
-              <CompareStackedBarChart
-                key={o}
-                metric={o}
-                polarity={data.polarities[o] ?? 1}
-                rows={sb.rows}
-                models={sb.models}
-              />
-            );
-          })}
+          </div>
         </div>
       ) : (
         <MetricComparisonView
@@ -382,6 +403,9 @@ export function ObjectivesView({
           entities={entities}
           chartType={chartType}
           metricOptimizedBy={metricOptimizedBy}
+          {...(chartType === "bar"
+            ? { caption: comboCaption(data.scenarios) ?? undefined }
+            : {})}
         />
       )}
 

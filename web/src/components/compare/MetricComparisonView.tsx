@@ -8,7 +8,8 @@
  * CompareEntity data shapes.
  */
 
-import CompareBarChart from "@/components/viz/CompareBarChart";
+import CompareBarChart, { buildPalette } from "@/components/viz/CompareBarChart";
+import { useChartColors } from "@/hooks/useChartColors";
 import CompareMetricTable from "@/components/compare/CompareMetricTable";
 
 // ─── Shared data shapes ───────────────────────────────────────────────────────
@@ -36,6 +37,10 @@ export interface MetricComparisonViewProps {
   metricOptimizedBy?: Record<string, Set<string>>;
   /** tailwind height class forwarded to bar charts */
   heightClass?: string;
+  /** Bar view only: a line describing the fixed scenario every bar shares
+   *  (e.g. "8 drones · comm √8 · n_visits 3"). Rendered once above the grid
+   *  instead of repeated in every bar's x-label. */
+  caption?: string;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -46,7 +51,9 @@ export default function MetricComparisonView({
   chartType,
   metricOptimizedBy,
   heightClass,
+  caption,
 }: MetricComparisonViewProps) {
+  const colors = useChartColors();
   if (entities.length === 0) {
     return (
       <p className="text-xs font-mono text-muted-foreground border border-dashed border-border rounded px-4 py-3">
@@ -63,9 +70,35 @@ export default function MetricComparisonView({
     return <CompareMetricTable metrics={merged} entities={entities} />;
   }
 
-  // chartType === "bar" → one chart per metric in a responsive grid
+  const legendPalette = buildPalette(colors.series, entities.length);
+
+  // chartType === "bar" → one chart per metric in a responsive grid.
+  // The bar charts hide their x-axis, so identity lives here: one legend and one
+  // caption above the whole grid, rather than the same six rotated labels
+  // repeated under every chart.
   return (
-    <div className="grid gap-6 grid-cols-1 md:grid-cols-2">
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-2">
+        {caption && (
+          <p className="text-xs text-muted-foreground">{caption}</p>
+        )}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          {entities.map((e, i) => (
+            <span
+              key={e.key}
+              className="flex items-center gap-1.5 text-xs text-foreground"
+            >
+              <span
+                className="inline-block size-2.5 rounded-[2px]"
+                style={{ backgroundColor: legendPalette[i] ?? colors.series[0] }}
+                aria-hidden="true"
+              />
+              {e.label}
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="grid gap-6 grid-cols-1 md:grid-cols-2">
       {metrics.map((m) => {
         const points = entities.map((e) => ({
           key: e.key,
@@ -82,6 +115,7 @@ export default function MetricComparisonView({
           />
         );
       })}
+      </div>
     </div>
   );
 }

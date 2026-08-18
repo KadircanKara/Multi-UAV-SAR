@@ -9,11 +9,13 @@
  *   • Time Metrics — sensing-replay time metrics from POST /api/comparison/time
  *                    (run on demand against a shared sensing config + strategy).
  *
- * Each tab offers a Bar | Line | Table chart-type switcher. Bar renders
- * one CompareStackedBarChart per objective/metric (x = parameter combination,
- * stacked by model); Line renders one ParameterEffectChart per objective/metric
- * with one line per (model × non-swept-param combo), built by buildModelComboSeries;
- * Table goes through the shared MetricComparisonView. Stat is always "best".
+ * Each tab offers a Bar | Line | Table chart-type switcher. Bar renders one bar
+ * per model at a SINGLE parameter combination (the picker collapses drones /
+ * comm / n_visits to one value each in bar mode), so its x-axis is the model
+ * list; Line renders one ParameterEffectChart per objective/metric with one line
+ * per (model × non-swept-param combo), built by buildModelComboSeries; Table
+ * goes through the shared MetricComparisonView. Bar and Table both render via
+ * MetricComparisonView. Stat is always "best".
  *
  * Layout: everything that filters/drives the charts — the tab switch, the
  * Bar|Line|Table switch, the model/parameter picker, and (for Time Metrics)
@@ -56,10 +58,10 @@ import ModelScenarioPicker, {
 import {
   ObjectivesView,
   ParameterEffectChart,
-  CompareStackedBarChart,
   SWEEP_LABELS,
-  barGridClass,
   entityLabel,
+  comboCaption,
+  LineGridHeader,
   ChartTypeSwitch,
   SweepParamSelect,
   ChartEmptyNote,
@@ -74,11 +76,6 @@ import {
   type ModelSeriesRow,
   type SweepParam,
 } from "@/components/compare/buildModelSeries";
-import {
-  buildStackedBars,
-  type StackedScenarioRow,
-  type StackedBarData,
-} from "@/components/compare/buildStackedBars";
 import type { EffectSeries } from "@/components/viz/ParameterEffectChart";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -110,9 +107,9 @@ import {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-// Comparison batches are capped by BARS (parameter combinations on the x-axis),
-// not raw scenarios — models stack within a bar, so the bar count is what the user
-// reads. Both tabs cap at 36 bars. A scenario ceiling still bounds the total
+// Comparison batches are capped by parameter COMBINATIONS, not raw scenarios —
+// a combination carries one value per model, so it is the unit the reader thinks
+// in. Bar mode shows exactly one combination; Line and Table span up to 36. A scenario ceiling still bounds the total
 // model×combo payload sent to the backend (and matches its max_length): objectives
 // read cached fronts (cheap, generous ceiling); the time tab runs one sensing
 // replay per scenario, so its ceiling is tighter.
@@ -307,7 +304,7 @@ function ObjectivesResults({
   sweep,
   onSweepChange,
 }: ObjectivesResultsProps) {
-  const { scenarios: allScenarios, models } = selection;
+  const { scenarios: allScenarios } = selection;
   // Cap by whole combos so bars stay complete; objectives read cached fronts.
   const scenarios = useMemo(
     () => capToCombos(allScenarios, MAX_COMPARE_BARS, MAX_OBJ_SCENARIOS),
@@ -378,7 +375,6 @@ function ObjectivesResults({
           onChartTypeChange={onChartTypeChange}
           sweep={sweep}
           onSweepChange={onSweepChange}
-          models={models}
           hideControls
         />
       )}
@@ -728,7 +724,6 @@ interface TimeMetricsResultsProps {
 function TimeMetricsResults({
   data,
   running,
-  models,
   chartType,
   sweep,
 }: TimeMetricsResultsProps) {
@@ -742,14 +737,18 @@ function TimeMetricsResults({
     if (!data) return [];
     return data.scenarios.map((s) => ({
       key: s.scenario,
-      label: entityLabel(s),
+      // Bar mode pins one parameter combination, so the model name alone
+      // identifies a bar; the combination is stated once in the caption.
+      label: chartType === "bar" ? s.model_key : entityLabel(s),
       values: Object.fromEntries(
         data.metrics.map((m) => [m, s.metric_values[m] ?? null])
       ),
     }));
-  }, [data]);
+  }, [data, chartType]);
 
   const lineSeriesByMetric = useMemo<Record<string, EffectSeries[]>>(() => {
+    // See ObjectivesView: drop the combo suffix when the caption carries it.
+    const captionedTime = data ? comboCaption(data.scenarios, sweep) !== null : false;
     if (!data) return {};
     const out: Record<string, EffectSeries[]> = {};
     for (const m of data.metrics) {
@@ -762,35 +761,13 @@ function TimeMetricsResults({
         value: s.metric_values[m] ?? null,
       }));
       // Time metrics are all lower-is-better (polarity 1).
-      out[m] = buildModelComboSeries(rows, sweep, 1);
+      out[m] = buildModelComboSeries(rows, sweep, 1, captionedTime);
     }
     return out;
   }, [data, sweep]);
 
   // Stacked-bar view: one chart per metric, x = parameter combination,
   // stacked by model.
-  const stackedByMetric = useMemo<Record<string, StackedBarData>>(() => {
-    if (!data) return {};
-    const out: Record<string, StackedBarData> = {};
-    for (const m of data.metrics) {
-      const rows: StackedScenarioRow[] = data.scenarios.map((s) => ({
-        model_key: s.model_key,
-        number_of_drones: s.number_of_drones,
-        comm_range: s.comm_range,
-        comm_range_value: s.comm_range_value,
-        n_visits: s.n_visits,
-        value: s.metric_values[m] ?? null,
-      }));
-      out[m] = buildStackedBars(rows, models);
-    }
-    return out;
-  }, [data, models]);
-
-  // Combo count = bars per chart (uniform across metrics — same scenarios).
-  const comboCount = useMemo(
-    () => Math.max(0, ...Object.values(stackedByMetric).map((sb) => sb.rows.length)),
-    [stackedByMetric]
-  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -810,12 +787,18 @@ function TimeMetricsResults({
       {!running && data && (
         <div className="flex flex-col gap-5">
           {chartType === "line" ? (
+            <div className="flex flex-col gap-4">
+            <LineGridHeader
+              caption={comboCaption(data.scenarios, sweep)}
+              series={Object.values(lineSeriesByMetric)[0] ?? []}
+            />
             <div className="grid gap-6 grid-cols-1 md:grid-cols-2">
               {data.metrics.map((m, idx) => {
-                const series = (lineSeriesByMetric[m] ?? []).filter(
-                  (s) => s.points.length > 0
-                );
-                if (series.length === 0) {
+                // Unfiltered on purpose: the palette is index-based, so dropping
+                // an empty series here would shift later models' colours in this
+                // chart alone and the shared legend above would misdescribe it.
+                const series = lineSeriesByMetric[m] ?? [];
+                if (series.every((s) => s.points.length === 0)) {
                   return (
                     <ChartEmptyNote
                       key={m}
@@ -833,39 +816,20 @@ function TimeMetricsResults({
                     series={series}
                     colorIndex={idx}
                     heightClass="h-60"
+                    showLegend={false}
                   />
                 );
               })}
             </div>
-          ) : chartType === "bar" ? (
-            <div className={barGridClass(comboCount)}>
-              {data.metrics.map((m) => {
-                const sb = stackedByMetric[m];
-                if (!sb || sb.models.length === 0 || sb.rows.length === 0) {
-                  return (
-                    <ChartEmptyNote
-                      key={m}
-                      title={m}
-                      message="No data for the current selection."
-                    />
-                  );
-                }
-                return (
-                  <CompareStackedBarChart
-                    key={m}
-                    metric={m}
-                    polarity={1}
-                    rows={sb.rows}
-                    models={sb.models}
-                  />
-                );
-              })}
             </div>
           ) : (
             <MetricComparisonView
               metrics={metrics}
               entities={entities}
               chartType={chartType}
+              {...(chartType === "bar" && data
+                ? { caption: comboCaption(data.scenarios) ?? undefined }
+                : {})}
             />
           )}
 
@@ -1032,6 +996,7 @@ export default function ComparePage() {
             library={library}
             onChange={onPickerChange}
             lineMode={chartType === "line"}
+            barMode={chartType === "bar"}
             sweepParam={sweep}
             initial={restoredSelection}
           />

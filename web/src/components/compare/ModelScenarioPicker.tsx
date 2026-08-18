@@ -49,6 +49,11 @@ interface Props {
    *  select to keep the line plot legible — only the sweep dimension and the
    *  models stay multi-select. */
   lineMode?: boolean;
+  /** When true (bar chart active), EVERY comparison dimension collapses to a
+   *  single value: the bar view compares models at one parameter combination, so
+   *  its x-axis is the model list and nothing else. Only the models stay
+   *  multi-select. */
+  barMode?: boolean;
   /** The active sweep dimension (line-view x-axis); stays multi-select. */
   sweepParam?: SweepParam;
   /** Selections to start from instead of the library-derived defaults — the
@@ -225,16 +230,19 @@ export default function ModelScenarioPicker({
   library,
   onChange,
   lineMode = false,
+  barMode = false,
   sweepParam = "drones",
   initial,
 }: Props) {
   const allModels = useMemo(() => distinctModels(library), [library]);
 
   // Which parameter rows are single-select right now: in line mode every
-  // comparison dimension except the sweep one collapses to a single value.
-  const dronesSingle = lineMode && sweepParam !== "drones";
-  const commSingle = lineMode && sweepParam !== "comm_range";
-  const nVisitsSingle = lineMode && sweepParam !== "n_visits";
+  // comparison dimension except the sweep one collapses to a single value; in
+  // bar mode they all do, because that view plots one bar per model at a single
+  // parameter combination.
+  const dronesSingle = (lineMode && sweepParam !== "drones") || !!barMode;
+  const commSingle = (lineMode && sweepParam !== "comm_range") || !!barMode;
+  const nVisitsSingle = (lineMode && sweepParam !== "n_visits") || !!barMode;
 
   // Selection state (string keys throughout).
   const [selModels, setSelModels] = useState<string[]>([]);

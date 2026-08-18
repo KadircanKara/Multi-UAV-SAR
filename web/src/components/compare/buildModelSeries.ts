@@ -134,7 +134,13 @@ function comboParts(row: ModelSeriesRow, sweep: SweepParam): string {
 export function buildModelComboSeries(
   rows: ModelSeriesRow[],
   sweep: SweepParam,
-  polarity: number
+  polarity: number,
+  /** Drop the "· <non-swept params>" suffix from the display label. Pass this
+   *  when the caller states those parameters once above the chart grid, so the
+   *  legend reads "CONN" rather than "CONN · rsqrt(8)·v3" six times over. Only
+   *  the LABEL changes — grouping still keys on the full combination, so two
+   *  combos of one model never merge. */
+  labelWithoutCombo = false
 ): EffectSeries[] {
   const byGroup = new Map<
     string,
@@ -148,7 +154,10 @@ export function buildModelComboSeries(
     let group = byGroup.get(groupKey);
     if (!group) {
       group = {
-        label: parts ? `${row.model_key} · ${parts}` : row.model_key,
+        label:
+          parts && !labelWithoutCombo
+            ? `${row.model_key} · ${parts}`
+            : row.model_key,
         xMap: new Map(),
       };
       byGroup.set(groupKey, group);
