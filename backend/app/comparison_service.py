@@ -1,13 +1,19 @@
 """
 Comparison service: compares precomputed scenarios across ALL objectives —
-including objectives a given model did NOT optimise.
+including objectives a given model did NOT optimise — and compares
+sensing-replay time metrics across scenarios for one shared config.
 
-For each requested scenario it loads the (LRU-cached) SolutionSelector, reads
-every objective from each solution via ``objective_values()`` — which fills any
-uncached objective with ``compute_all_objectives()`` and is a no-op on the
-already-complete seeded solutions — then aggregates min/max/mean/best per
-objective across the front. ``best`` honours each objective's polarity
-(max for maximize / -1, min for minimize / +1).
+The two halves read from different places. The objectives path
+(``compare_objectives`` / ``_scenario_stats``) reads each scenario's
+precomputed ``-AllObjectives.pkl`` sibling (see ``app.all_objectives``) — a
+small frame carrying all five natural-unit objectives per solution — and
+aggregates min/max/mean/best per objective across the front; it never loads a
+selector or a solution object. ``best`` honours each objective's polarity
+(max for maximize / -1, min for minimize / +1). The time-metrics path
+(``compare_time_metrics``) still loads the (LRU-cached) SolutionSelector per
+scenario, picks one solution per the requested strategy, and runs a real
+sensing replay to read its four time metrics — genuinely expensive, which is
+why it alone is bounded by ``_within_budget``.
 
 Import-safety: builds only on selector_service + library_service + PathFuncDict;
 never imports PathAlgorithm / PathUnitTest / main.
