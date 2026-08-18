@@ -102,7 +102,7 @@ def write_all_objectives(scenario: str, solutions: list) -> int:
     half-written pickle.
     """
     rows = rows_from_solutions(solutions)
-    df = pd.DataFrame(rows, columns=COLUMNS)
+    df = pd.DataFrame(rows, columns=COLUMNS).astype("float64")
     dst = all_objectives_path(scenario)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dst), suffix=".tmp")
@@ -145,6 +145,10 @@ def read_all_objectives(
     for values in df.itertuples(index=False, name=None):
         row: dict[str, Optional[float]] = {}
         for name, v in zip(COLUMNS, values):
+            # The frame is float64 (write_all_objectives coerces via
+            # .astype("float64")), so v is a float/NaN, not None; the guard
+            # is defensive only, in case an older or hand-built pickle ever
+            # carries an object-dtype column with a literal None in it.
             if v is None:
                 row[name] = None
                 continue

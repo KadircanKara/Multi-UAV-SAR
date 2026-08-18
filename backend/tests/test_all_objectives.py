@@ -134,3 +134,12 @@ def test_write_overwrites_in_place(results_root):
     rows = all_objectives.read_all_objectives("SCEN")
     assert len(rows) == 2
     assert rows[0]["Mission Time"] == 1.0
+
+
+def test_written_frame_is_float64(results_root):
+    all_objectives.write_all_objectives(
+        "SCEN", [_full_solution(max_mean_tbv=float("inf"))])
+    df = pd.read_pickle(os.path.join(results_root, "Objectives",
+                                     f"SCEN{all_objectives.SUFFIX}"))
+    assert all(str(dt) == "float64" for dt in df.dtypes)
+    assert df["Max Mean TBV"].isna().all()
