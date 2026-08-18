@@ -156,8 +156,8 @@ def _merge_soo_ws(seed_results: list) -> tuple:
 # ── persistence ───────────────────────────────────────────────────────────────
 
 def _results_root() -> str:
-    from app.config import get_settings
-    return get_settings().RESULTS_ROOT
+    from app import settings
+    return settings.RESULTS_ROOT
 
 
 def _exists(scenario_name: str, results_root: str) -> bool:
