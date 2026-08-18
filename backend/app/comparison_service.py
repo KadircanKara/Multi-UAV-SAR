@@ -15,14 +15,20 @@ never imports PathAlgorithm / PathUnitTest / main.
 from __future__ import annotations
 
 import math
+import os
+import threading
 import time
 from typing import Optional
 
 import app.rootpath  # side-effect: inserts repo root into sys.path
 
+from app.all_objectives import read_all_objectives
 from app.library_service import (
+    _obj_path,
+    _objectives_sig,
     _parse_comm_range_value,
     _safe_float,
+    memo_epoch,
     parse_scenario_params,
     resolve_model_key,
 )
@@ -159,21 +165,59 @@ def stats_from_objective_dicts(
     return objective_stats
 
 
-def _scenario_stats(scenario: str) -> Optional[dict]:
-    """Load one scenario and aggregate ALL objectives across its front.
+# ---------------------------------------------------------------------------
+# Per-scenario stats memo
+# ---------------------------------------------------------------------------
+# The sibling reads are individually small, but one request may name all 216
+# seeded scenarios, and the aggregation is identical every time until the
+# Objectives/ tree changes. Key on the same signature library_service uses, plus
+# its memo epoch so an in-place overwrite invalidates us too. Single-entry: a
+# changed key drops the whole dict, so it cannot grow unbounded.
+_stats_lock = threading.Lock()
+_stats_cache: dict = {"key": None, "value": {}}
 
-    Returns None if the scenario cannot be resolved / loaded (so the caller can
-    skip it rather than fail the whole comparison).
+
+def _stats_key() -> tuple:
+    return (_objectives_sig(), memo_epoch())
+
+
+def _scenario_stats(scenario: str) -> Optional[dict]:
+    """Aggregate ALL objectives for one scenario, from its precomputed sibling.
+
+    Reads Objectives/<scenario>-AllObjectives.pkl — a small frame carrying all
+    five objectives for every solution — instead of unpickling the ~160 MB
+    SolutionObjects file and reading the values off the solutions. That is what
+    lets one request cover every seeded scenario.
+
+    Returns None (caller skips the scenario) when the model cannot be resolved,
+    or when the sibling is absent, unreadable, or disagrees with the scenario's
+    -ObjectiveValues.pkl row count. A stale sibling must be skipped, not
+    aggregated as though it were complete.
     """
     # Normalize a display alias (…TCDV…) to storage so resolve/parse operate on
     # the real on-disk name; outputs are displayified again below.
     scenario = to_storage(scenario)
 
-    try:
-        selector = get_selector(scenario)
-    except _SelectorNotFound:
-        return None
+    key = _stats_key()
+    with _stats_lock:
+        if _stats_cache["key"] != key:
+            _stats_cache["key"] = key
+            _stats_cache["value"] = {}
+        elif scenario in _stats_cache["value"]:
+            return _stats_cache["value"][scenario]
 
+    stats = _compute_scenario_stats(scenario)
+
+    with _stats_lock:
+        # Only store under the key we computed against — if the tree moved while
+        # we read, a newer reader already reset the bucket, so drop ours.
+        if _stats_cache["key"] == key:
+            _stats_cache["value"][scenario] = stats
+    return stats
+
+
+def _compute_scenario_stats(scenario: str) -> Optional[dict]:
+    """Uncached core of _scenario_stats. Expects a STORAGE scenario name."""
     try:
         model_key = resolve_model_key(scenario)
     except Exception:
@@ -182,14 +226,21 @@ def _scenario_stats(scenario: str) -> Optional[dict]:
     if model is None:
         return None
 
+    # Row-count oracle: the model's own objective table is row-aligned with the
+    # solutions and costs almost nothing to read, so it catches a stale or
+    # truncated sibling without reloading the solutions we are avoiding.
+    expected_rows = _objective_table_rows(scenario)
+    if expected_rows is None:
+        return None
+
+    obj_dicts = read_all_objectives(scenario, expected_rows=expected_rows)
+    if obj_dicts is None:
+        return None
+
     params = parse_scenario_params(scenario)
     n_visits = (
         params.get("variant_value") if params.get("variant") == "nvisits" else None
     )
-
-    # Collect each objective's values across every solution in the front, then
-    # hand off to the shared aggregator.
-    obj_dicts = [objective_values(sol) for sol in selector.solutions]
     objective_stats = stats_from_objective_dicts(obj_dicts, model, n_visits)
 
     comm_range_raw = params.get("comm_range")
@@ -210,9 +261,24 @@ def _scenario_stats(scenario: str) -> Optional[dict]:
         "comm_range": comm_range_raw,
         "comm_range_value": comm_range_value,
         "n_visits": n_visits,
-        "n_solutions": int(len(selector.solutions)),
+        "n_solutions": len(obj_dicts),
         "objective_stats": objective_stats,
     }
+
+
+def _objective_table_rows(scenario: str) -> Optional[int]:
+    """Row count of the scenario's own -ObjectiveValues.pkl, or None if it is
+    missing or unreadable."""
+    import pandas as pd  # noqa: PLC0415  (module-level import kept out of the
+                         # import-safety surface documented at the top)
+
+    path = _obj_path(scenario)
+    if not os.path.isfile(path):
+        return None
+    try:
+        return int(pd.read_pickle(path).shape[0])
+    except Exception:
+        return None
 
 
 def compare_objectives(scenarios: list[str]) -> dict:
