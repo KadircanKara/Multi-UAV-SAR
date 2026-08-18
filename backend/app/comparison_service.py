@@ -50,7 +50,7 @@ from app.selector_service import (
 from PathOptimizationModel import (
     get_objectives_from_weighted_sum_model,
 )
-from PathFuncDict import model_metric_info, objective_values
+from PathFuncDict import model_metric_info
 from SensingReplay import METRIC_COLUMNS
 
 # Only for TYPE_CHECKING-style hints in signatures; playground_reconstruct is
