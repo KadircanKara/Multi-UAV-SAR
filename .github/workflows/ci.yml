@@ -44,20 +44,45 @@ jobs:
     runs-on: ubuntu-latest
     # Gate on the tests: without this the job runs in parallel with them and
     # pushes :latest even when they fail, so "the server pulls a tested
-    # artifact" would not actually hold.
+    # artifact" would not actually hold. BOTH images gate on BOTH suites — the
+    # stack is deployed as a unit, so a green web image beside a red backend
+    # test is not something we want published.
     needs: [backend-tests, web-build]
     permissions:
       contents: read
       packages: write
+    # One job per image. They used to share a job, which meant a finished
+    # backend image sat unpublishable behind a still-running web build — in the
+    # worst observed case the backend was ready in 9 minutes and the job was
+    # cancelled at ~3 hours. fail-fast: false so one image failing does not
+    # cancel the other.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: backend
+            context: .
+            file: backend/Dockerfile
+            # arm64 kept: most of this image's install is prebuilt wheels, so
+            # emulation costs ~9 minutes, which is affordable insurance if the
+            # backend ever needs to run on an Ampere box.
+            platforms: linux/amd64,linux/arm64
+          - image: web
+            context: web
+            file: web/Dockerfile
+            # amd64 ONLY, deliberately. A Next build is CPU-bound JS
+            # compilation and QEMU punishes exactly that: the arm64 half ran
+            # for ~3 hours before being cancelled, against ~2 minutes native,
+            # and the deploy target is x86_64 — nothing ever pulled the arm64
+            # variant. If an arm64 web image is needed later, build it on a
+            # native arm64 runner; do not restore emulation here.
+            platforms: linux/amd64
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      # arm64 so the images can run on an Ampere box (Oracle A1, Hetzner CAX).
-      # The runner is amd64, so arm64 is built under QEMU emulation — correct,
-      # but several times slower, which is what the build cache below is for.
-      # GitHub's native ubuntu-*-arm runners would avoid emulation entirely and
-      # are free on PUBLIC repos; this one is private, where they bill minutes.
+      # Only needed to emulate a foreign architecture.
       - name: Set up QEMU
+        if: contains(matrix.platforms, 'arm64')
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
       - name: Set up Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -71,44 +96,33 @@ jobs:
           # Provided automatically by Actions — no secret to configure.
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compute image names
+      - name: Compute image name
         id: names
         run: |
           repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          echo "backend=ghcr.io/$repo/backend" >> "$GITHUB_OUTPUT"
-          echo "web=ghcr.io/$repo/web" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/$repo/${{ matrix.image }}" >> "$GITHUB_OUTPUT"
 
       # push is conditional rather than the step being skipped, so a PR still
-      # builds BOTH architectures and proves them — the point of running this
-      # job on pull requests at all.
-      - name: Build backend image
+      # builds the image and proves it — the point of running this job on pull
+      # requests at all.
+      #
+      # On the GHA cache: Actions caches are branch-scoped. A PR branch can read
+      # its base branch's caches, but main cannot read a PR branch's, so the
+      # first build on main after a merge — the one that publishes :latest — is
+      # always cold. The cache still pays for itself on repeat pushes to main
+      # and on PR iterations; just do not expect it to speed up a merge.
+      - name: Build ${{ matrix.image }} image
         uses: docker/build-push-action@1104d471370f9806843c095c1db02b5a90c5f8b6 # v6
         with:
-          context: .
-          file: backend/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: ${{ matrix.platforms }}
           push: ${{ github.event_name == 'push' }}
           tags: |
-            ${{ steps.names.outputs.backend }}:latest
-            ${{ steps.names.outputs.backend }}:${{ github.sha }}
-          cache-from: type=gha,scope=backend
-          cache-to: type=gha,mode=max,scope=backend
+            ${{ steps.names.outputs.image }}:latest
+            ${{ steps.names.outputs.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
           # Without this the manifest list gains an "unknown/unknown" entry for
           # the attestation, which reads as a broken platform in the GHCR UI.
-          provenance: false
-
-      # No NEXT_PUBLIC_API_BASE: the image defaults to same-origin relative
-      # URLs, which is what the production stack serves. Baking a domain in
-      # here would make the artifact environment-specific.
-      - name: Build web image
-        uses: docker/build-push-action@1104d471370f9806843c095c1db02b5a90c5f8b6 # v6
-        with:
-          context: web
-          platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name == 'push' }}
-          tags: |
-            ${{ steps.names.outputs.web }}:latest
-            ${{ steps.names.outputs.web }}:${{ github.sha }}
-          cache-from: type=gha,scope=web
-          cache-to: type=gha,mode=max,scope=web
           provenance: false
