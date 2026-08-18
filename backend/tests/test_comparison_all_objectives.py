@@ -119,3 +119,38 @@ def test_traversal_name_is_reported_as_skipped(seeded):
     result = cs.compare_objectives([evil])
     assert result["scenarios"] == []
     assert result["skipped"] == [evil]
+
+
+class _SiblingTestSolution:
+    """Module-level (not local-to-test) so pandas/pickle can serialize it."""
+    mission_time = 10.0
+    percentage_connectivity = 0.8
+    max_disconnected_time = 1.0
+    mean_disconnected_time = 0.5
+    max_mean_tbv = 20.0
+
+
+def test_save_run_writes_the_sibling(tmp_path, monkeypatch):
+    """A saved run that has no sibling would be invisible to Compare, since the
+    objectives path reads nothing else."""
+    from app import optimizer_service
+
+    monkeypatch.setattr(settings, "RESULTS_ROOT", str(tmp_path))
+    os.makedirs(tmp_path / "Objectives")
+    os.makedirs(tmp_path / "Solutions")
+
+    run_dir = tmp_path / "run"
+    os.makedirs(run_dir)
+    pd.DataFrame({"Mission Time": [10.0]}).to_pickle(run_dir / "Objectives.pkl")
+    pd.to_pickle([_SiblingTestSolution()], run_dir / "Solutions.pkl")
+
+    optimizer_service._write_run_sibling("SCEN_NEW", str(run_dir))
+
+    rows = all_objectives.read_all_objectives("SCEN_NEW", expected_rows=1)
+    assert rows == [{
+        "Mission Time": 10.0,
+        "Percentage Connectivity": 0.8,
+        "Max Disconnected Time": 1.0,
+        "Mean Disconnected Time": 0.5,
+        "Max Mean TBV": 20.0,
+    }]
