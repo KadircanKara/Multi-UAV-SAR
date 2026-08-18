@@ -41,7 +41,9 @@ def _seeded_scenarios():
 
 @pytest.mark.needs_seed_data
 def test_every_seeded_scenario_has_a_sibling():
-    missing = [s for s in _seeded_scenarios() if read_all_objectives(s) is None]
+    scenarios = _seeded_scenarios()
+    assert scenarios, "no seeded scenarios found"
+    missing = [s for s in scenarios if read_all_objectives(s) is None]
     assert missing == [], (
         f"{len(missing)} scenario(s) have no readable -AllObjectives.pkl; "
         f"run backend/scripts/backfill_all_objectives.py. First few: "
@@ -73,7 +75,9 @@ def test_sibling_stats_match_the_selector_path_exactly():
         if cheap != live:
             mismatches.append((scenario, live, cheap))
 
-        # Keep peak RSS flat: one ~160 MB selector at a time.
+        # Keep peak RSS flat: one ~160 MB selector at a time. Clearing the
+        # module-global LRU here is a deliberate, accepted side effect for any
+        # later test in the same pytest session (it just forces a cache miss).
         from app.selector_service import _load_selector
         _load_selector.cache_clear()
 
