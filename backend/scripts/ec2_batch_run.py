@@ -180,6 +180,18 @@ def _save_cell(scenario_name: str, model_key: str, model_dict: dict,
     pd.DataFrame(np.array(F_np), columns=model_dict["F"]).to_pickle(
         os.path.join(obj_dir, f"{scenario_name}-ObjectiveValues.pkl"))
     pd.to_pickle(sols, os.path.join(sol_dir, f"{scenario_name}-SolutionObjects.pkl"))
+
+    # Compare reads ONLY the -AllObjectives.pkl sibling, never falling back to
+    # the solution objects — a cell without one is silently invisible there.
+    # Unlike optimizer_service.save_run (an interactive save that must not fail
+    # over a derived file), this is a batch producer: if the sibling can't be
+    # written, the operator needs to know now, not discover missing scenarios
+    # later. Deliberately NOT best-effort — let the exception propagate.
+    from app.all_objectives import write_all_objectives
+    # SolutionObjects rows can be 1-element numpy arrays (PathUnitTest.py).
+    solutions = [s[0] if isinstance(s, np.ndarray) else s for s in sols]
+    write_all_objectives(scenario_name, solutions)
+
     with open(os.path.join(meta_dir, f"{scenario_name}.json"), "w") as fh:
         json.dump({
             "scenario_name": scenario_name, "model_key": model_key,
