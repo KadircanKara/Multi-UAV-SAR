@@ -879,7 +879,7 @@ def _write_run_sibling(scenario_name: str, run_dir: str) -> None:
     import numpy as np  # noqa: PLC0415
     import pandas as pd  # noqa: PLC0415
 
-    from app.all_objectives import write_all_objectives
+    from app.all_objectives import all_objectives_path, write_all_objectives
 
     try:
         raw = list(pd.read_pickle(os.path.join(run_dir, "Solutions.pkl")))
@@ -887,6 +887,17 @@ def _write_run_sibling(scenario_name: str, run_dir: str) -> None:
         solutions = [s[0] if isinstance(s, np.ndarray) else s for s in raw]
         write_all_objectives(scenario_name, solutions)
     except Exception:
+        # A MISSING sibling is honest — the scenario is skipped by /compare and
+        # backfill_all_objectives.py repairs it. A STALE one is not: on an
+        # overwrite the pickles have already been replaced, so a leftover
+        # sibling from the previous save can still match the new row count and
+        # would serve the old run's numbers forever. Remove it.
+        try:
+            p = all_objectives_path(scenario_name)
+            if os.path.isfile(p):
+                os.unlink(p)
+        except OSError:
+            pass
         logger.exception(
             "failed to write -AllObjectives.pkl for %s; the scenario will not "
             "appear in comparisons until backfill_all_objectives.py is run",

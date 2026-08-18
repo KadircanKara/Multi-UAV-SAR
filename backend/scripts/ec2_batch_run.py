@@ -186,11 +186,23 @@ def _save_cell(scenario_name: str, model_key: str, model_dict: dict,
     # Unlike optimizer_service.save_run (an interactive save that must not fail
     # over a derived file), this is a batch producer: if the sibling can't be
     # written, the operator needs to know now, not discover missing scenarios
-    # later. Deliberately NOT best-effort — let the exception propagate.
-    from app.all_objectives import write_all_objectives
+    # later. Deliberately NOT best-effort — let the exception propagate. But the
+    # pickles above have already been (re)written, so a leftover sibling from a
+    # previous save of this same cell must not survive an aborted write: it
+    # could still match the new row count and serve stale numbers forever.
+    from app.all_objectives import all_objectives_path, write_all_objectives
     # SolutionObjects rows can be 1-element numpy arrays (PathUnitTest.py).
     solutions = [s[0] if isinstance(s, np.ndarray) else s for s in sols]
-    write_all_objectives(scenario_name, solutions)
+    try:
+        write_all_objectives(scenario_name, solutions)
+    except Exception:
+        try:
+            p = all_objectives_path(scenario_name)
+            if os.path.isfile(p):
+                os.unlink(p)
+        except OSError:
+            pass
+        raise
 
     with open(os.path.join(meta_dir, f"{scenario_name}.json"), "w") as fh:
         json.dump({

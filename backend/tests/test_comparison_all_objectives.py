@@ -205,3 +205,26 @@ def test_time_endpoint_still_honours_the_cap(monkeypatch):
     got = list(comparison_service._within_budget(["a", "b", "c"], skipped))
     assert got == ["a"]
     assert skipped == ["b", "c"]
+
+
+def test_failed_sibling_write_removes_the_stale_one(tmp_path, monkeypatch):
+    """A stale sibling can pass the row-count check and serve the previous
+    run's numbers forever; a missing one is skipped honestly."""
+    import app.optimizer_service as osvc
+    from app import all_objectives
+
+    monkeypatch.setattr(settings, "RESULTS_ROOT", str(tmp_path))
+    os.makedirs(tmp_path / "Objectives")
+    run_dir = tmp_path / "run"
+    os.makedirs(run_dir)
+    pd.to_pickle([_SiblingTestSolution()], run_dir / "Solutions.pkl")
+
+    osvc._write_run_sibling("SCEN_X", str(run_dir))
+    assert all_objectives.read_all_objectives("SCEN_X") is not None
+
+    def _boom(*a, **kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(all_objectives, "write_all_objectives", _boom)
+    osvc._write_run_sibling("SCEN_X", str(run_dir))
+    assert not os.path.isfile(all_objectives.all_objectives_path("SCEN_X"))
