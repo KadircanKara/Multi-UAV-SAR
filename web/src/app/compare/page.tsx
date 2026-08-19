@@ -54,6 +54,7 @@ import type {
 } from "@/lib/types";
 import ModelScenarioPicker, {
   type PickerSelection,
+  type PickerChangeReason,
 } from "@/components/compare/ModelScenarioPicker";
 import {
   ObjectivesView,
@@ -95,6 +96,8 @@ import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
 import type { PanelSection } from "@/components/layout/PanelSection";
 import SectionPanelLayout from "@/components/layout/SectionPanelLayout";
+import { useStagedFilters } from "@/hooks/useStagedFilters";
+import ApplyFiltersBar from "@/components/filters/ApplyFiltersBar";
 import { useElementHeight } from "@/hooks/useElementHeight";
 import {
   useInitialSearchParams,
@@ -158,23 +161,13 @@ function capToCombos(
   return out;
 }
 
-/**
- * How long the Objectives tab waits after the picker settles before fetching.
- *
- * Every model, drones, comm and n_visits toggle changes the scenario set, and
- * a reader working through the picker clicks several in a row a few hundred ms
- * apart. At 250ms each of those clicks was its own POST /api/comparison, so a
- * normal pass through the picker burned the endpoint's 10/minute budget and
- * the page reported a rate-limit error. At 600ms a burst of clicks coalesces
- * into one request while a single deliberate change still feels immediate.
- *
- * This is NOT a rate-limit control — it runs in the browser, and a client that
- * does not want to wait simply does not. The server's own guards (the limiter,
- * the 360/144 payload caps, the comparison concurrency slot) are what bound
- * the cost; this only stops our own UI spending that budget on intermediate
- * states nobody asked to see.
+/* The Objectives fetch used to be debounced by 600ms, because every chip click
+ * was its own POST /api/comparison and a normal pass through the picker burned
+ * the endpoint's 10/minute budget. The picker's chips are now staged behind
+ * Apply (see useStagedFilters), so intermediate selections never reach this
+ * component at all and the timer has nothing left to coalesce — keeping it
+ * would only add 600ms of nothing to a button the reader pressed deliberately.
  */
-const OBJECTIVES_DEBOUNCE_MS = 600;
 
 function OverflowNote({ shown, total }: { shown: number; total: number }) {
   return (
@@ -318,8 +311,8 @@ function ObjectivesResults({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<PanelError | null>(null);
 
-  // Fetch the comparison whenever the resolved scenario set changes (debounced).
-  // See OBJECTIVES_DEBOUNCE_MS for why the wait is as long as it is.
+  // Fetch whenever the APPLIED scenario set changes — which, for a reader
+  // editing chips, is once per Apply.
   const scenarioKey = useMemo(() => [...scenarios].sort().join("|"), [scenarios]);
   useEffect(() => {
     if (scenarios.length === 0) {
@@ -329,26 +322,23 @@ function ObjectivesResults({
       return;
     }
     let cancelled = false;
-    const handle = setTimeout(() => {
-      setLoading(true);
-      setError(null);
-      compareObjectives(scenarios)
-        .then((res) => {
-          if (!cancelled) {
-            setData(res);
-            setLoading(false);
-          }
-        })
-        .catch((err: unknown) => {
-          if (!cancelled) {
-            setError(toPanelError(err));
-            setLoading(false);
-          }
-        });
-    }, OBJECTIVES_DEBOUNCE_MS);
+    setLoading(true);
+    setError(null);
+    compareObjectives(scenarios)
+      .then((res) => {
+        if (!cancelled) {
+          setData(res);
+          setLoading(false);
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setError(toPanelError(err));
+          setLoading(false);
+        }
+      });
     return () => {
       cancelled = true;
-      clearTimeout(handle);
     };
     // scenarioKey captures the scenario set; scenarios is its source.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -550,7 +540,15 @@ function useTimeMetricsComparison(selection: PickerSelection): TimeMetricsState 
   };
 }
 
-function TimeMetricsControls({ tm }: { tm: TimeMetricsState }) {
+function TimeMetricsControls({
+  tm,
+  onRun,
+}: {
+  tm: TimeMetricsState;
+  /** Runs the comparison AND applies the picker draft — see the page's
+   *  `runTimeComparison`. */
+  onRun: () => void;
+}) {
   return (
     <Card>
       <CardHeader>
@@ -693,7 +691,7 @@ function TimeMetricsControls({ tm }: { tm: TimeMetricsState }) {
         <div className="md:col-span-2 flex flex-col gap-3">
           <Separator />
           <Button
-            onClick={tm.runComparison}
+            onClick={onRun}
             disabled={!tm.canRun}
             size="sm"
             className="w-full text-sm font-semibold"
@@ -865,19 +863,33 @@ export default function ComparePage() {
   // output from then on.
   const initialParams = useInitialSearchParams();
 
-  // Picker selection (resolved scenarios + selected models).
-  const [selection, setSelection] = useState<PickerSelection>({
+  // Picker selection, staged: the reader's chip clicks edit `draft`, and only
+  // Apply moves them into `applied` — which is what the comparison fetch, the
+  // time-metrics run and the URL all read. One pass through the picker is one
+  // POST /api/comparison instead of one per chip.
+  //
+  // The picker's own re-selections (seeding, pruning, sweep-range) arrive with
+  // reason "auto" and land on both halves at once: they are not edits awaiting
+  // confirmation, and staging them would leave the page rendering a selection
+  // the panel no longer shows.
+  const filters = useStagedFilters<PickerSelection>({
     scenarios: [],
     models: [],
     params: {
       drones: [], comm_range: [], n_visits: [], speed: [], grid: [], cell: [],
     },
   });
+  const selection = filters.applied;
+  const { setDraft: setDraftSelection, commit: commitSelection } = filters;
 
   // Keep a stable onChange so the picker effect doesn't re-fire spuriously.
-  const onPickerChange = useCallback((sel: PickerSelection) => {
-    setSelection(sel);
-  }, []);
+  const onPickerChange = useCallback(
+    (sel: PickerSelection, reason: PickerChangeReason) => {
+      if (reason === "user") setDraftSelection(sel);
+      else commitSelection(sel);
+    },
+    [setDraftSelection, commitSelection]
+  );
 
   // Chart type + sweep param live here (shared across both tabs) so the parameter
   // picker can react to line mode: in line mode the non-sweep params go single-
@@ -934,9 +946,16 @@ export default function ComparePage() {
     cell: listParam(p.cell, []),
   });
 
-  // Time Metrics' sensing config + run state, called unconditionally so both
-  // the controls half (below) and the content half share one live instance.
-  const timeMetrics = useTimeMetricsComparison(selection);
+  // Time Metrics runs off the DRAFT, not the applied selection: this tab
+  // spends nothing until "Run comparison" is pressed, so that button IS its
+  // Apply — showing a second one would ask the reader to confirm twice. Run
+  // also lands the draft (below), so the URL and the Objectives tab agree with
+  // what was just run.
+  const timeMetrics = useTimeMetricsComparison(filters.draft);
+  const runTimeComparison = useCallback(() => {
+    filters.apply();
+    timeMetrics.runComparison();
+  }, [filters, timeMetrics]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1000,6 +1019,15 @@ export default function ComparePage() {
             sweepParam={sweep}
             initial={restoredSelection}
           />
+          {/* Objectives only: on the Time metrics tab "Run comparison" is the
+              apply step, and two buttons would be two ways to say go. */}
+          {tab === "objectives" && (
+            <ApplyFiltersBar
+              dirty={filters.dirty}
+              onApply={filters.apply}
+              className="w-full"
+            />
+          )}
         </>
       ),
       content:
@@ -1017,11 +1045,11 @@ export default function ComparePage() {
           // two-column card of sliders and would have to be rebuilt to fit a
           // 360px panel; the panel keeps what selects WHICH runs to compare.
           <div className="flex flex-col gap-6">
-            <TimeMetricsControls tm={timeMetrics} />
+            <TimeMetricsControls tm={timeMetrics} onRun={runTimeComparison} />
             <TimeMetricsResults
               data={timeMetrics.data}
               running={timeMetrics.running}
-              models={selection.models}
+              models={filters.draft.models}
               chartType={chartType}
               sweep={sweep}
             />

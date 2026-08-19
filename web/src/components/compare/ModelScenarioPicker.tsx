@@ -14,6 +14,14 @@
  * model_keys and the per-dimension value selections (the page needs both: the
  * scenario set for the snapshot views, the model list for the line view's
  * ≥2-models guard).
+ *
+ * Every emission says WHY it happened. The page stages the reader's own chip
+ * clicks behind an Apply button, but this component also re-selects on its own
+ * — seeding once the library arrives, pruning values a new model set no longer
+ * offers, re-selecting the full sweep range when the x-axis dimension changes.
+ * Those are not edits waiting to be confirmed; staging them would leave the
+ * page showing a selection its own controls no longer display. Hence
+ * `reason`: "user" is stageable, "auto" must land at once.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -42,9 +50,12 @@ export interface PickerSelection {
   };
 }
 
+/** Why the picker emitted — see the file doc comment. */
+export type PickerChangeReason = "user" | "auto";
+
 interface Props {
   library: ScenarioSummary[];
-  onChange: (sel: PickerSelection) => void;
+  onChange: (sel: PickerSelection, reason: PickerChangeReason) => void;
   /** When true (line chart active), the non-sweep parameter rows become single-
    *  select to keep the line plot legible — only the sweep dimension and the
    *  models stay multi-select. */
@@ -402,32 +413,53 @@ export default function ModelScenarioPicker({
     [library, selModels, selDrones, selComm, selNVisits, selSpeed, selGrid, selCell]
   );
 
+  // Set by the chip handlers below and consumed by the very next emission —
+  // React flushes this effect after the state update those handlers make, so
+  // the flag is still standing when the emission it describes goes out.
+  const reasonRef = useRef<PickerChangeReason>("auto");
+
   useEffect(() => {
-    onChange({
-      scenarios: resolved,
-      models: selModels,
-      params: {
-        drones: selDrones,
-        comm_range: selComm,
-        n_visits: selNVisits,
-        speed: selSpeed,
-        grid: selGrid,
-        cell: selCell,
+    const reason = reasonRef.current;
+    reasonRef.current = "auto";
+    onChange(
+      {
+        scenarios: resolved,
+        models: selModels,
+        params: {
+          drones: selDrones,
+          comm_range: selComm,
+          n_visits: selNVisits,
+          speed: selSpeed,
+          grid: selGrid,
+          cell: selCell,
+        },
       },
-    });
+      reason
+    );
   }, [
     onChange, resolved, selModels, selDrones, selComm, selNVisits,
     selSpeed, selGrid, selCell,
   ]);
 
   // Toggle guards: never allow an empty model set; keep ≥1 value per dimension.
+  // Each marks the emission that follows as the reader's own edit.
   function onToggleModels(values: string[]) {
     if (values.length === 0) return;
+    reasonRef.current = "user";
     setSelModels(values);
   }
   function guardDim(setter: (v: string[]) => void) {
     return (values: string[]) => {
       if (values.length === 0) return;
+      reasonRef.current = "user";
+      setter(values);
+    };
+  }
+  // Speed / grid / cell are single-select and cannot go empty, so they skip the
+  // guard — but they are still reader edits.
+  function userSet(setter: (v: string[]) => void) {
+    return (values: string[]) => {
+      reasonRef.current = "user";
       setter(values);
     };
   }
@@ -470,21 +502,21 @@ export default function ModelScenarioPicker({
           label="Speed"
           options={speedOpts}
           value={selSpeed}
-          onChange={setSelSpeed}
+          onChange={userSet(setSelSpeed)}
         />
         <ChipRow
           single
           label="Grid"
           options={gridOpts}
           value={selGrid}
-          onChange={setSelGrid}
+          onChange={userSet(setSelGrid)}
         />
         <ChipRow
           single
           label="Cell"
           options={cellOpts}
           value={selCell}
-          onChange={setSelCell}
+          onChange={userSet(setSelCell)}
         />
 
         {resolved.length === 0 ? (

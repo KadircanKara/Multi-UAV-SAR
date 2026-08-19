@@ -33,6 +33,8 @@ import type { ModelGrid, ModelGridScenario } from "@/lib/types";
 import { useScenarioSections } from "@/components/explore/useScenarioSections";
 import SectionPanelLayout from "@/components/layout/SectionPanelLayout";
 import { useElementHeight } from "@/hooks/useElementHeight";
+import { useStagedFilters } from "@/hooks/useStagedFilters";
+import ApplyFiltersBar from "@/components/filters/ApplyFiltersBar";
 import {
   useInitialSearchParams,
   useUrlSync,
@@ -73,6 +75,7 @@ import type {
   EffectPoint,
   EffectSeries,
 } from "@/components/viz/ParameterEffectChart";
+import EffectLegend from "@/components/viz/EffectLegend";
 
 // ─── Dynamic (SSR-off) chart import ──────────────────────────────────────────
 
@@ -464,6 +467,19 @@ function CombinationSelect({ grid, selected, onSelectName }: CombinationSelectPr
   );
 }
 
+/** Everything in the panel that is staged behind Apply. String lists
+ *  throughout, matching the toggle-group values and the query string. */
+interface MissionFilters {
+  /** which values of the swept dimension appear on the x-axis */
+  x: string[];
+  drones: string[];
+  comm: string[];
+  nvisits: string[];
+  speed: string[];
+  grid: string[];
+  cell: string[];
+}
+
 // ─── Sweep controls (x-axis selector + multi-value overlays) ──────────────────
 
 interface SweepControlsProps {
@@ -578,7 +594,9 @@ function SweepControls({
       <p className="text-xs text-muted-foreground font-mono">
         Pick which <span className="text-foreground">X values</span> appear on
         the axis, and toggle overlay values to draw multiple trend lines — the
-        legend appears once more than one line is shown.
+        legend appears once more than one line is shown. Toggles are staged:
+        the charts update when you press{" "}
+        <span className="text-foreground">Apply filters</span>.
       </p>
     </div>
   );
@@ -642,20 +660,32 @@ export default function ModelPage() {
   // ref keeps them out of that effect's dependencies.
   const restoredRef = useRef(restored);
 
-  // Sweep state: x-axis dimension, which of its values appear on the axis, and
-  // the selected overlay values per non-swept dimension.
+  // The swept dimension is a VIEW control, not a filter: it picks which axis
+  // the same loaded data is plotted against, so it takes effect on click.
   const [sweep, setSweep] = useState<SweepParam>(restored.sweep);
-  const [sweepValueSel, setSweepValueSel] = useState<string[]>(restored.x);
-  const [seriesDrones, setSeriesDrones] = useState<string[]>(restored.drones);
-  const [seriesComm, setSeriesComm] = useState<string[]>(restored.comm);
-  const [seriesNVisits, setSeriesNVisits] = useState<string[]>(restored.nvisits);
 
-  // Scenario-parameter filters (speed / grid / cell). Constant for seeded models,
-  // but can vary across custom saved runs that share a model key — toggleable
-  // like the overlay dims, filtering which scenarios the analysis + table use.
-  const [selSpeed, setSelSpeed] = useState<string[]>(restored.speed);
-  const [selGrid, setSelGrid] = useState<string[]>(restored.grid);
-  const [selCell, setSelCell] = useState<string[]>(restored.cell);
+  // Everything else in the panel is staged. `draft` is what the chips show;
+  // `applied` is what the charts, the combinations table and the URL read, so
+  // a reader can set up a whole comparison and see it land in one step.
+  //
+  // Nothing here costs a request — the model grid is fetched once on mount and
+  // every filter is a client-side recompute — but the panel is the same panel
+  // as /compare's, and a control that means "stage this" on one page must not
+  // mean "do it now" on the other.
+  const filters = useStagedFilters<MissionFilters>({
+    x: restored.x,
+    drones: restored.drones,
+    comm: restored.comm,
+    nvisits: restored.nvisits,
+    speed: restored.speed,
+    grid: restored.grid,
+    cell: restored.cell,
+  });
+  const { draft, applied } = filters;
+  // Stable across renders (useCallback with no deps), so the grid fetch below
+  // can seed through it without re-running on every filter change.
+  const commitFilters = filters.commit;
+  const { setDraft } = filters;
 
   // Selected combination driving the Pareto/Sensing/Animation sections.
   const [selName, setSelName] = useState<string>(restored.run);
@@ -693,16 +723,17 @@ export default function ModelPage() {
           // the first scenario.
           const first = data.scenarios[0];
           if (first) {
-            setSeriesDrones(
+            const seeded: MissionFilters = {
+              x: [], drones: [], comm: [], nvisits: [], speed: [], grid: [], cell: [],
+            };
+            seeded.drones =
               keep(restored.drones, availableDimValues(data, "drones").map((o) => o.value)) ??
-                (first.number_of_drones != null
-                  ? [String(first.number_of_drones)]
-                  : [])
-            );
-            setSeriesComm(
+              (first.number_of_drones != null
+                ? [String(first.number_of_drones)]
+                : []);
+            seeded.comm =
               keep(restored.comm, availableDimValues(data, "comm_range").map((o) => o.value)) ??
-                (first.comm_range != null ? [first.comm_range] : [])
-            );
+              (first.comm_range != null ? [first.comm_range] : []);
             // The swept dimension always defaults to Drones. Max Mean TBV is
             // undefined at n_visits=1, so for TBV models seed the n_visits overlay
             // with the smallest value > 1 — that keeps the TBV plot populated even
@@ -716,19 +747,18 @@ export default function ModelPage() {
                   .filter((v): v is number => v != null && v > 1)
               )
             ).sort((a, b) => a - b);
-            setSeriesNVisits(
+            seeded.nvisits =
               keep(restored.nvisits, availableDimValues(data, "n_visits").map((o) => o.value)) ??
-                (hasTbv && nVisitsAboveOne.length > 0
-                  ? [String(nVisitsAboveOne[0])]
-                  : first.n_visits != null
-                  ? [String(first.n_visits)]
-                  : [])
-            );
+              (hasTbv && nVisitsAboveOne.length > 0
+                ? [String(nVisitsAboveOne[0])]
+                : first.n_visits != null
+                ? [String(first.n_visits)]
+                : []);
             const sweptDim = restored.sweep;
             setSweep(sweptDim);
             // Default the x-axis to ALL values of the swept dimension.
             const xOptions = availableDimValues(data, sweptDim).map((o) => o.value);
-            setSweepValueSel(keep(restored.x, xOptions) ?? xOptions);
+            seeded.x = keep(restored.x, xOptions) ?? xOptions;
             // Seed the scenario-parameter filters to all present values.
             const sp = new Set<number>();
             const gr = new Set<number>();
@@ -747,9 +777,13 @@ export default function ModelPage() {
               return v != null ? [String(v)] : [];
             };
             const asStrings = (v: Set<number>) => Array.from(v).map(String);
-            setSelSpeed(keep(restored.speed, asStrings(sp)) ?? smallest(sp));
-            setSelGrid(keep(restored.grid, asStrings(gr)) ?? smallest(gr));
-            setSelCell(keep(restored.cell, asStrings(ce)) ?? smallest(ce));
+            seeded.speed = keep(restored.speed, asStrings(sp)) ?? smallest(sp);
+            seeded.grid = keep(restored.grid, asStrings(gr)) ?? smallest(gr);
+            seeded.cell = keep(restored.cell, asStrings(ce)) ?? smallest(ce);
+            // Seeding is not the reader editing anything: land it on both
+            // halves, so a cold visit and a shared link both show charts
+            // rather than an empty page waiting to be Applied.
+            commitFilters(seeded);
           }
           setLoading(false);
         }
@@ -764,7 +798,7 @@ export default function ModelPage() {
     return () => {
       cancelled = true;
     };
-  }, [modelKey]);
+  }, [modelKey, commitFilters]);
 
   // Currently-selected scenario object for the explorer dropdowns.
   const selectedScenario = useMemo(
@@ -798,13 +832,13 @@ export default function ModelPage() {
   // exact view rather than an approximation of it.
   useUrlSync({
     sweep: scalarParam(sweep, "drones"),
-    x: listParam(sweepValueSel, []),
-    drones: listParam(seriesDrones, []),
-    comm: listParam(seriesComm, []),
-    nvisits: listParam(seriesNVisits, []),
-    speed: listParam(selSpeed, []),
-    grid: listParam(selGrid, []),
-    cell: listParam(selCell, []),
+    x: listParam(applied.x, []),
+    drones: listParam(applied.drones, []),
+    comm: listParam(applied.comm, []),
+    nvisits: listParam(applied.nvisits, []),
+    speed: listParam(applied.speed, []),
+    grid: listParam(applied.grid, []),
+    cell: listParam(applied.cell, []),
     run: scalarParam(selName, ""),
     sol: scalarParam(selectedIndex, 0),
   });
@@ -834,9 +868,9 @@ export default function ModelPage() {
   // selection means "all", so nothing is hidden during the initial seed window).
   const filteredGrid = useMemo<ModelGrid | null>(() => {
     if (!grid) return null;
-    const sp = new Set(selSpeed);
-    const gr = new Set(selGrid);
-    const ce = new Set(selCell);
+    const sp = new Set(applied.speed);
+    const gr = new Set(applied.grid);
+    const ce = new Set(applied.cell);
     const ok = (set: Set<string>, v: string) => set.size === 0 || set.has(v);
     const scenarios = grid.scenarios.filter((s) => {
       const p = scenarioParams(s.scenario);
@@ -846,18 +880,18 @@ export default function ModelPage() {
       );
     });
     return { ...grid, scenarios };
-  }, [grid, selSpeed, selGrid, selCell]);
+  }, [grid, applied.speed, applied.grid, applied.cell]);
 
   // Toggleable scenario-parameter filter rows (rendered like the overlay dims).
   const filterRows: {
     label: string;
     opts: { value: string; label: string }[];
     sel: string[];
-    set: (v: string[]) => void;
+    key: "speed" | "grid" | "cell";
   }[] = [
-    { label: "Speed", opts: extraDimOpts.speed, sel: selSpeed, set: setSelSpeed },
-    { label: "Grid", opts: extraDimOpts.grid, sel: selGrid, set: setSelGrid },
-    { label: "Cell", opts: extraDimOpts.cell, sel: selCell, set: setSelCell },
+    { label: "Speed", opts: extraDimOpts.speed, sel: draft.speed, key: "speed" },
+    { label: "Grid", opts: extraDimOpts.grid, sel: draft.grid, key: "grid" },
+    { label: "Cell", opts: extraDimOpts.cell, sel: draft.cell, key: "cell" },
   ];
 
   // Select a combination and bring the Pareto section into view (used by
@@ -942,29 +976,48 @@ export default function ModelPage() {
   }, [buildCombinationsTable, modelKey]);
 
   // Toggle overlay values for a dimension, keeping at least one selected.
-  const onToggleDim = useCallback((dim: SweepParam, values: string[]) => {
-    if (values.length === 0) return; // never allow an empty (zero-line) state
-    if (dim === "drones") setSeriesDrones(values);
-    else if (dim === "comm_range") setSeriesComm(values);
-    else setSeriesNVisits(values);
-  }, []);
+  const onToggleDim = useCallback(
+    (dim: SweepParam, values: string[]) => {
+      if (values.length === 0) return; // never allow an empty (zero-line) state
+      const key = dim === "drones" ? "drones" : dim === "comm_range" ? "comm" : "nvisits";
+      setDraft((d) => ({ ...d, [key]: values }));
+    },
+    [setDraft]
+  );
+
+  // Single-select scenario-parameter filters (speed / grid / cell).
+  const onToggleExtra = useCallback(
+    (key: "speed" | "grid" | "cell", value: string) => {
+      setDraft((d) => ({ ...d, [key]: [value] }));
+    },
+    [setDraft]
+  );
 
   // Change the swept dimension and reset its x-axis to all available values.
+  //
+  // Committed, not staged: the x-values belong to the dimension being swept, so
+  // leaving them pending would draw the new axis with the old dimension's
+  // values still selected. The reader's other pending edits stay pending.
   const handleSweepChange = useCallback(
     (next: SweepParam) => {
       setSweep(next);
       if (filteredGrid) {
-        setSweepValueSel(availableDimValues(filteredGrid, next).map((o) => o.value));
+        commitFilters({
+          x: availableDimValues(filteredGrid, next).map((o) => o.value),
+        });
       }
     },
-    [filteredGrid]
+    [filteredGrid, commitFilters]
   );
 
   // Toggle which sweep values appear on the x-axis, keeping at least one.
-  const onToggleSweepValues = useCallback((values: string[]) => {
-    if (values.length === 0) return;
-    setSweepValueSel(values);
-  }, []);
+  const onToggleSweepValues = useCallback(
+    (values: string[]) => {
+      if (values.length === 0) return;
+      setDraft((d) => ({ ...d, x: values }));
+    },
+    [setDraft]
+  );
 
   // Build one EffectSeries[] per objective, with overlay values ordered by the
   // natural parameter order (so legends read 2 → sqrt(8) → 4, etc.).
@@ -976,18 +1029,18 @@ export default function ModelPage() {
       return [...sel].sort((a, b) => order.indexOf(a) - order.indexOf(b));
     };
     const selByDim: Record<SweepParam, string[]> = {
-      drones: orderSel("drones", seriesDrones),
-      comm_range: orderSel("comm_range", seriesComm),
-      n_visits: hasNVisits ? orderSel("n_visits", seriesNVisits) : [],
+      drones: orderSel("drones", applied.drones),
+      comm_range: orderSel("comm_range", applied.comm),
+      n_visits: hasNVisits ? orderSel("n_visits", applied.nvisits) : [],
     };
     return buildSeriesByObjective(
       filteredGrid,
       sweep,
       selByDim,
-      sweepValueSel,
+      applied.x,
       filteredGrid.objectives
     );
-  }, [filteredGrid, sweep, seriesDrones, seriesComm, seriesNVisits, sweepValueSel]);
+  }, [filteredGrid, sweep, applied.drones, applied.comm, applied.nvisits, applied.x]);
 
   // Largest line count across objectives — drives plot height + grid columns.
   const lineCount = useMemo(() => {
@@ -999,6 +1052,13 @@ export default function ModelPage() {
     }
     return m;
   }, [grid, seriesByObj]);
+
+  // The legend stands for every chart in the grid, so it reads off any one
+  // objective — all objectives carry the same series list in the same order.
+  const legendSeries = useMemo(
+    () => Object.values(seriesByObj)[0] ?? [],
+    [seriesByObj]
+  );
 
   const hasAnyData = useMemo(() => {
     if (!grid) return false;
@@ -1043,19 +1103,19 @@ export default function ModelPage() {
                 sweep={sweep}
                 onSweep={handleSweepChange}
                 selByDim={{
-                  drones: seriesDrones,
-                  comm_range: seriesComm,
-                  n_visits: seriesNVisits,
+                  drones: draft.drones,
+                  comm_range: draft.comm,
+                  n_visits: draft.nvisits,
                 }}
                 onToggleDim={onToggleDim}
-                sweepValues={sweepValueSel}
+                sweepValues={draft.x}
                 onToggleSweepValues={onToggleSweepValues}
               />
 
               {/* Scenario-parameter filters (speed / grid / cell) — toggleable. */}
               {extraDimOpts.speed.length > 0 && (
                 <div className="flex flex-col gap-2">
-                  {filterRows.map(({ label, opts, sel, set }) => (
+                  {filterRows.map(({ label, opts, sel, key }) => (
                     <div key={label} className="flex flex-wrap items-center gap-2">
                       <span className="w-16 text-xs font-mono tracking-widest text-muted-foreground uppercase">
                         {label}
@@ -1064,7 +1124,7 @@ export default function ModelPage() {
                         type="single"
                         value={sel[0] ?? ""}
                         onValueChange={(v: string) => {
-                          if (v) set([v]); // single-select; ignore deselect
+                          if (v) onToggleExtra(key, v); // single-select; ignore deselect
                         }}
                         className="flex-wrap justify-start gap-1"
                       >
@@ -1082,6 +1142,14 @@ export default function ModelPage() {
                   ))}
                 </div>
               )}
+
+              {/* Apply sits at the BOTTOM of the panel, under the chips it
+                  commits — a reader works down the rows and ends on it. */}
+              <ApplyFiltersBar
+                dirty={filters.dirty}
+                onApply={filters.apply}
+                className="w-full"
+              />
             </div>
           ),
           content: (
@@ -1106,12 +1174,22 @@ export default function ModelPage() {
                     No data for this selection. Try different overlay values.
                   </p>
                 ) : (
+                  <div className="flex flex-col gap-4">
+                  {/* ONE legend for the whole grid — repeating an identical
+                      overlay legend above every objective is noise. Truthful
+                      only because buildSeriesByObjective hands every objective
+                      the same combos in the same order and the charts colour by
+                      array index; that is also why nothing below filters the
+                      series list. */}
+                  <EffectLegend
+                    series={legendSeries}
+                    sticky
+                    surfaceClass="bg-card"
+                  />
                   <div className={cn("grid gap-6", gridColsClass)}>
                     {grid.objectives.map((obj, idx) => {
-                      const objSeries = (seriesByObj[obj] ?? []).filter(
-                        (s) => s.points.length > 0
-                      );
-                      if (objSeries.length === 0) {
+                      const objSeries = seriesByObj[obj] ?? [];
+                      if (objSeries.every((s) => s.points.length === 0)) {
                         return (
                           <div key={obj} className="flex flex-col gap-1">
                             <p className="text-xs font-mono tracking-wide text-foreground">
@@ -1134,9 +1212,11 @@ export default function ModelPage() {
                           series={objSeries}
                           colorIndex={idx}
                           heightClass={heightClass}
+                          showLegend={false}
                         />
                       );
                     })}
+                  </div>
                   </div>
                 )}
 

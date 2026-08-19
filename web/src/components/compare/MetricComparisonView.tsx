@@ -8,7 +8,8 @@
  * CompareEntity data shapes.
  */
 
-import CompareBarChart, { buildPalette } from "@/components/viz/CompareBarChart";
+import CompareBarChart from "@/components/viz/CompareBarChart";
+import { buildPalette, StickyLegendBar } from "@/components/viz/EffectLegend";
 import { useChartColors } from "@/hooks/useChartColors";
 import CompareMetricTable from "@/components/compare/CompareMetricTable";
 
@@ -78,26 +79,25 @@ export default function MetricComparisonView({
   // repeated under every chart.
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2">
-        {caption && (
-          <p className="text-xs text-muted-foreground">{caption}</p>
-        )}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-          {entities.map((e, i) => (
+      {/* Caption and legend are siblings of the grid, not wrapped together: a
+          sticky element is clipped to its parent, so a wrapper would cap the
+          legend's travel at its own height. */}
+      {caption && <p className="text-xs text-muted-foreground">{caption}</p>}
+      <StickyLegendBar sticky className="gap-x-4">
+        {entities.map((e, i) => (
+          <span
+            key={e.key}
+            className="flex items-center gap-1.5 text-xs text-foreground"
+          >
             <span
-              key={e.key}
-              className="flex items-center gap-1.5 text-xs text-foreground"
-            >
-              <span
-                className="inline-block size-2.5 rounded-[2px]"
-                style={{ backgroundColor: legendPalette[i] ?? colors.series[0] }}
-                aria-hidden="true"
-              />
-              {e.label}
-            </span>
-          ))}
-        </div>
-      </div>
+              className="inline-block size-2.5 rounded-[2px]"
+              style={{ backgroundColor: legendPalette[i] ?? colors.series[0] }}
+              aria-hidden="true"
+            />
+            {e.label}
+          </span>
+        ))}
+      </StickyLegendBar>
       <div className="grid gap-6 grid-cols-1 md:grid-cols-2">
       {metrics.map((m) => {
         const points = entities.map((e) => ({

@@ -30,8 +30,7 @@ import type {
   ParameterEffectChartProps,
   EffectSeries,
 } from "@/components/viz/ParameterEffectChart";
-import { buildPalette } from "@/components/viz/CompareBarChart";
-import { useChartColors } from "@/hooks/useChartColors";
+import EffectLegend from "@/components/viz/EffectLegend";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
@@ -193,30 +192,16 @@ export function LineGridHeader({
   caption: string | null;
   series: { key: string; label: string }[];
 }) {
-  const colors = useChartColors();
-  const palette = buildPalette(colors.series, series.length);
-  if (!caption && series.length < 2) return null;
+  // NOT wrapped in a positioned box of its own: a sticky element pins within
+  // its nearest scroll container but is CLIPPED to its parent, so a wrapper
+  // around these two would let the legend travel the wrapper's own 40-odd px
+  // and no further. Both are returned as siblings of the chart grid instead —
+  // the caption scrolls away with the intro, the legend pins.
   return (
-    <div className="flex flex-col gap-2">
+    <>
       {caption && <p className="text-xs text-muted-foreground">{caption}</p>}
-      {series.length > 1 && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-          {series.map((s, i) => (
-            <span
-              key={s.key}
-              className="flex items-center gap-1.5 text-xs text-foreground"
-            >
-              <span
-                className="inline-block h-0.5 w-3 rounded-full"
-                style={{ backgroundColor: palette[i] ?? colors.series[0] }}
-                aria-hidden="true"
-              />
-              {s.label}
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
+      <EffectLegend series={series} sticky />
+    </>
   );
 }
 

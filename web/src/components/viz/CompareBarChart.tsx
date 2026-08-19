@@ -26,24 +26,11 @@ import {
   percentString,
   percentTick,
 } from "@/lib/objective-format";
+// One palette for every chart family: the shared legends above the bar and line
+// grids colour their swatches from the SAME sequence the marks use, and a
+// second copy of the helper would drift the moment either side changed.
+import { buildPalette } from "@/components/viz/EffectLegend";
 
-// ─── Palette: theme tokens first, then generated distinct hues ────────────────
-// (copied from ParameterEffectChart's buildPalette golden-angle helper)
-//
-// Exported so the shared legend above the bar grid colours its swatches from the
-// SAME sequence the bars use — a legend computed independently would drift the
-// moment either side changed.
-
-export function buildPalette(base: string[], n: number): string[] {
-  if (n <= base.length) return base.slice(0, Math.max(n, 1));
-  const out = [...base];
-  for (let i = base.length; i < n; i++) {
-    // golden-angle hue spacing → maximally distinct categorical colors
-    const hue = Math.round((i * 137.508) % 360);
-    out.push(`hsl(${hue} 70% 58%)`);
-  }
-  return out;
-}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

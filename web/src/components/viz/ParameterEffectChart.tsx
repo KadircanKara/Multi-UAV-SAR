@@ -20,6 +20,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { alpha, axisStyles, useChartColors } from "@/hooks/useChartColors";
+import EffectLegend, { buildPalette } from "@/components/viz/EffectLegend";
 import { cn } from "@/lib/utils";
 import {
   clampObjectiveDomain,
@@ -66,18 +67,6 @@ export interface ParameterEffectChartProps {
   showLegend?: boolean;
 }
 
-// ─── Palette: theme tokens first, then generated distinct hues ────────────────
-
-function buildPalette(base: string[], n: number): string[] {
-  if (n <= base.length) return base.slice(0, Math.max(n, 1));
-  const out = [...base];
-  for (let i = base.length; i < n; i++) {
-    // golden-angle hue spacing → maximally distinct categorical colors
-    const hue = Math.round((i * 137.508) % 360);
-    out.push(`hsl(${hue} 70% 58%)`);
-  }
-  return out;
-}
 
 // ─── Custom tooltip ───────────────────────────────────────────────────────────
 
@@ -215,25 +204,7 @@ export default function ParameterEffectChart({
           {betterHint})
         </span>
       </p>
-      {/* HTML legend above the plot: wraps freely without ever overlapping the
-          chart area (an in-SVG Recharts legend mis-reserves space when it wraps). */}
-      {multi && showLegend && (
-        <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
-          {series.map((s, i) => (
-            <span
-              key={s.key}
-              className="flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground"
-            >
-              <span
-                className="inline-block h-0.5 w-3 rounded-full"
-                style={{ backgroundColor: colorFor(i) }}
-                aria-hidden="true"
-              />
-              {s.label || objective}
-            </span>
-          ))}
-        </div>
-      )}
+      {showLegend && <EffectLegend series={series} fallbackLabel={objective} />}
       <div className={cn("w-full", heightClass)}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
