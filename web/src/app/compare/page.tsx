@@ -1024,7 +1024,6 @@ export default function ComparePage() {
           {tab === "objectives" && (
             <ApplyFiltersBar
               dirty={filters.dirty}
-              changeCount={filters.changeCount}
               onApply={filters.apply}
               className="w-full"
             />

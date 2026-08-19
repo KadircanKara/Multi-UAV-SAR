@@ -3,23 +3,19 @@
 /**
  * The Apply button for a staged filter panel (see useStagedFilters).
  *
- * Disabled when nothing is pending — the disabled state IS the "you are
- * looking at your own selection" signal, so the panel needs no separate
- * clean/dirty badge. When something is pending it says how much, because a
- * reader who toggled four chips and scrolled away needs to know the charts
- * below are still the old selection.
+ * Two states, both carried by the label and the disabled attribute together:
+ * pending edits ("Apply filters", enabled) or none ("Filters applied",
+ * disabled). The panel needs no separate clean/dirty badge.
  */
 
 import { Button } from "@/components/ui/button";
 
 export default function ApplyFiltersBar({
   dirty,
-  changeCount,
   onApply,
   className,
 }: {
   dirty: boolean;
-  changeCount: number;
   onApply: () => void;
   className?: string;
 }) {
@@ -31,9 +27,7 @@ export default function ApplyFiltersBar({
       disabled={!dirty}
       className={className}
     >
-      {dirty
-        ? `Apply filters · ${changeCount} change${changeCount === 1 ? "" : "s"}`
-        : "Filters applied"}
+      {dirty ? "Apply filters" : "Filters applied"}
     </Button>
   );
 }

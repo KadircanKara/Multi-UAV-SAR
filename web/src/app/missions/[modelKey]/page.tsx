@@ -1147,7 +1147,6 @@ export default function ModelPage() {
                   commits — a reader works down the rows and ends on it. */}
               <ApplyFiltersBar
                 dirty={filters.dirty}
-                changeCount={filters.changeCount}
                 onApply={filters.apply}
                 className="w-full"
               />

@@ -30,8 +30,6 @@ export interface StagedFilters<T extends object> {
   /** what the page renders and fetches from */
   applied: T;
   dirty: boolean;
-  /** how many fields differ — the Apply button says this out loud */
-  changeCount: number;
   setDraft: React.Dispatch<React.SetStateAction<T>>;
   apply: () => void;
   /** patch both halves at once — seeding and structural changes only */
@@ -56,21 +54,13 @@ export function useStagedFilters<T extends object>(initial: T): StagedFilters<T>
     setApplied((a) => ({ ...a, ...patch }));
   }, []);
 
-  const changeCount = useMemo(() => {
-    let n = 0;
-    for (const key of Object.keys(draft) as (keyof T)[]) {
-      if (!sameValue(draft[key], applied[key])) n++;
-    }
-    return n;
-  }, [draft, applied]);
+  const dirty = useMemo(
+    () =>
+      (Object.keys(draft) as (keyof T)[]).some(
+        (key) => !sameValue(draft[key], applied[key])
+      ),
+    [draft, applied]
+  );
 
-  return {
-    draft,
-    applied,
-    dirty: changeCount > 0,
-    changeCount,
-    setDraft,
-    apply,
-    commit,
-  };
+  return { draft, applied, dirty, setDraft, apply, commit };
 }
