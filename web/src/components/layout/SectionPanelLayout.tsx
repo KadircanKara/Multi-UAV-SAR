@@ -37,29 +37,17 @@ import {
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import {
+  DESKTOP_QUERY, HEADER_GAP_PX, StickyTopProvider, useHeaderOffset,
+} from "@/components/layout/stickyOffsets";
 import { useScrollSpy } from "@/hooks/useScrollSpy";
 import { cn } from "@/lib/utils";
 import type { PanelSection } from "./PanelSection";
 
 const DEFAULT_ESTIMATED_HEIGHT = 480;
 
-/**
- * Height of the app's own top bar — which exists only BELOW `lg`. At `lg` and
- * above the app nav is a fixed left sidebar that takes no vertical space, so
- * anything pinning to the viewport top starts at 0 there. Must switch at the
- * same width as DESKTOP_QUERY below and as the `lg:top-0` on each route's
- * pinned header.
- */
-const MOBILE_NAV_PX = 56;
-/** Breathing room between the page's pinned header and the panel below it. */
-const HEADER_GAP_PX = 8;
 /** Space left under the panel so it doesn't run to the exact viewport edge. */
 const PANEL_BOTTOM_PX = 24;
-
-// Matches Tailwind's default `lg` breakpoint, which the outer grid below
-// still switches on via CSS — the two must agree so the aside/Sheet choice
-// (JS) and the column geometry (CSS) never disagree about "desktop."
-const DESKTOP_QUERY = "(min-width: 1024px)";
 
 interface Props {
   sections: PanelSection[];
@@ -83,10 +71,13 @@ export default function SectionPanelLayout({
   const ids = sections.map((s) => s.id);
   const isDesktop = useMediaQuery(DESKTOP_QUERY);
 
-  // No app top bar at lg and above — the nav is the left sidebar there.
-  const navPx = isDesktop ? 0 : MOBILE_NAV_PX;
-  const stickyTop =
-    navPx + (stickyOffset > 0 ? stickyOffset + HEADER_GAP_PX : 0);
+  // Where the page's own header ends. Published to the sections below, so
+  // anything their content pins (the shared chart legend) lands clear of it
+  // without every intervening component passing the number along.
+  const headerOffset = useHeaderOffset(stickyOffset);
+  // The panel itself floats a gap below that header rather than butting
+  // against it — it is a bordered box, not an opaque bar.
+  const stickyTop = headerOffset + (stickyOffset > 0 ? HEADER_GAP_PX : 0);
 
   const { activeId, seenIds, register } = useScrollSpy(
     ids,
@@ -165,6 +156,7 @@ export default function SectionPanelLayout({
       ))}
 
       {/* Content column */}
+      <StickyTopProvider value={headerOffset}>
       <div className="flex min-w-0 flex-col gap-10">
         {sections.map((section) => (
           <section
@@ -191,6 +183,7 @@ export default function SectionPanelLayout({
           </section>
         ))}
       </div>
+      </StickyTopProvider>
     </div>
   );
 }

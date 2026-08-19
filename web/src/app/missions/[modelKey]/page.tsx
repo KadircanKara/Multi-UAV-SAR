@@ -73,6 +73,7 @@ import type {
   EffectPoint,
   EffectSeries,
 } from "@/components/viz/ParameterEffectChart";
+import EffectLegend from "@/components/viz/EffectLegend";
 
 // ─── Dynamic (SSR-off) chart import ──────────────────────────────────────────
 
@@ -1000,6 +1001,13 @@ export default function ModelPage() {
     return m;
   }, [grid, seriesByObj]);
 
+  // The legend stands for every chart in the grid, so it reads off any one
+  // objective — all objectives carry the same series list in the same order.
+  const legendSeries = useMemo(
+    () => Object.values(seriesByObj)[0] ?? [],
+    [seriesByObj]
+  );
+
   const hasAnyData = useMemo(() => {
     if (!grid) return false;
     return grid.objectives.some((obj) =>
@@ -1106,12 +1114,22 @@ export default function ModelPage() {
                     No data for this selection. Try different overlay values.
                   </p>
                 ) : (
+                  <div className="flex flex-col gap-4">
+                  {/* ONE legend for the whole grid — repeating an identical
+                      overlay legend above every objective is noise. Truthful
+                      only because buildSeriesByObjective hands every objective
+                      the same combos in the same order and the charts colour by
+                      array index; that is also why nothing below filters the
+                      series list. */}
+                  <EffectLegend
+                    series={legendSeries}
+                    sticky
+                    surfaceClass="bg-card"
+                  />
                   <div className={cn("grid gap-6", gridColsClass)}>
                     {grid.objectives.map((obj, idx) => {
-                      const objSeries = (seriesByObj[obj] ?? []).filter(
-                        (s) => s.points.length > 0
-                      );
-                      if (objSeries.length === 0) {
+                      const objSeries = seriesByObj[obj] ?? [];
+                      if (objSeries.every((s) => s.points.length === 0)) {
                         return (
                           <div key={obj} className="flex flex-col gap-1">
                             <p className="text-xs font-mono tracking-wide text-foreground">
@@ -1134,9 +1152,11 @@ export default function ModelPage() {
                           series={objSeries}
                           colorIndex={idx}
                           heightClass={heightClass}
+                          showLegend={false}
                         />
                       );
                     })}
+                  </div>
                   </div>
                 )}
 
