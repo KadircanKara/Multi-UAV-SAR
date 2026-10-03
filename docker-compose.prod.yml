@@ -55,6 +55,20 @@ services:
       # Caddy is the only thing that talks to this container; trust its
       # forwarded headers so per-IP limits see the real client.
       FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-172.16.0.0/12}
+      # One BLAS thread per process. Unset, OpenBLAS sizes its pool from the
+      # host's core count, so every optimizer child and every threadpool replay
+      # would each claim all the cores — N workers x N cores of oversubscription,
+      # which costs more in context switching than the threads ever win back.
+      # backend/scripts/*.py already do this for the batch tooling; the serving
+      # path needs it too, and more so as SAR_OPTIMIZE_WORKERS grows. Container
+      # env is set before the interpreter starts, which is the requirement:
+      # these are read by OpenBLAS at import, so setting them later has no
+      # effect.
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+      VECLIB_MAXIMUM_THREADS: "1"
       SAR_OPTIMIZE_WORKERS: ${SAR_OPTIMIZE_WORKERS:-2}
       SAR_OPTIMIZE_QUEUE_MAX: ${SAR_OPTIMIZE_QUEUE_MAX:-8}
       SAR_OPTIMIZE_MAX_PER_CLIENT: ${SAR_OPTIMIZE_MAX_PER_CLIENT:-1}
