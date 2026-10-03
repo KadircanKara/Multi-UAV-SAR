@@ -1,5 +1,8 @@
-# Production stack: Caddy terminates TLS on one hostname and proxies to the two
-# app containers, which are NOT reachable from outside.
+# Production stack: the two app containers, which publish NO ports. TLS and
+# routing are handled by the VM's shared edge Caddy (site block in
+# deploy/edge/sites/multiuavsar.caddy), which reaches them over the external
+# Docker network "proxy" via the aliases sar-web and sar-backend. Create that
+# network once per host: `docker network create proxy`.
 #
 #   docker compose -f docker-compose.prod.yml pull
 #   docker compose -f docker-compose.prod.yml up -d
@@ -10,42 +13,13 @@
 #
 # Configuration lives in a .env file beside this one; start from .env.example.
 services:
-  caddy:
-    image: caddy:2-alpine
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data # certificates — losing this re-issues from scratch
-      - caddy_config:/config
-      - caddy_logs:/var/log/caddy
-    environment:
-      SAR_DOMAIN: ${SAR_DOMAIN:?set SAR_DOMAIN in .env}
-      SAR_ACME_EMAIL: ${SAR_ACME_EMAIL:?set SAR_ACME_EMAIL in .env}
-    depends_on:
-      backend:
-        condition: service_healthy
-      web:
-        condition: service_healthy
-    restart: unless-stopped
-    # Drop every capability except the one a proxy actually needs — binding the
-    # privileged ports 80/443 — and forbid privilege escalation.
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - NET_BIND_SERVICE
-    logging: &logging
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
   backend:
     image: ghcr.io/${SAR_IMAGE_REPO:-kadircankara/multi-uav-sar}/backend:${SAR_IMAGE_TAG:-latest}
-    # No ports: only Caddy reaches this, over the compose network.
+    # No ports: only the edge Caddy reaches this, over the proxy network.
+    networks:
+      default:
+      proxy:
+        aliases: [sar-backend]
     volumes:
       - ${SAR_DATA_DIR:-/opt/sar/Results}:/app/Results
     environment:
@@ -99,7 +73,11 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    logging: *logging
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       resources:
         limits:
@@ -112,9 +90,12 @@ services:
 
   web:
     image: ghcr.io/${SAR_IMAGE_REPO:-kadircankara/multi-uav-sar}/web:${SAR_IMAGE_TAG:-latest}
+    networks:
+      default:
+      proxy:
+        aliases: [sar-web]
     restart: unless-stopped
-    # So Caddy can wait for the UI to be ready (depends_on above) instead of
-    # proxying to a dead port and serving 502s during a rollout.
+    # Lets `docker compose up --wait` and rollouts know when the UI is ready.
     healthcheck:
       test:
         - CMD
@@ -136,7 +117,6 @@ services:
           memory: 512m
           pids: 256
 
-volumes:
-  caddy_data:
-  caddy_config:
-  caddy_logs:
+networks:
+  proxy:
+    external: true
